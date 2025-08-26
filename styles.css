@@ -129,11 +129,14 @@ body {
 }
 /* Панель участников (мобильная) */
 .members-list {
+    display: flex;
+    flex-direction: column;
     flex: 1;
     padding: 8px;
     overflow-y: auto;
 }
 .member-item {
+    width: 100%;
     padding: 8px;
     display: flex;
     align-items: center;
@@ -177,7 +180,6 @@ body {
     background: #72767d;
     box-shadow: none;
 }
-
 /* Сайдбар (десктоп) */
 .sidebar {
     width: 240px;
@@ -204,7 +206,6 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
 }
-
 /* Кнопки */
 .server-select-btn, .settings-btn, .mobile-btn {
     width: 36px;
@@ -226,7 +227,6 @@ body {
     color: #ffffff;
     transform: scale(1.05);
 }
-
 /* Заголовок чата */
 .chat-header {
     display: flex;
@@ -256,7 +256,6 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
 }
-
 /* Основной чат */
 .main-content {
     flex: 1;
@@ -338,7 +337,6 @@ body {
     line-height: 1.4;
     word-wrap: break-word;
 }
-
 /* Ввод сообщений */
 .input-area {
     padding: 12px;
@@ -365,7 +363,6 @@ body {
 .input-box::placeholder {
     color: #72767d;
 }
-
 /* Микрофон */
 .mic-control {
     padding: 12px;
@@ -395,7 +392,6 @@ body {
 .mic-button.active:hover {
     background: #2f8a4c;
 }
-
 /* Панель участников (десктоп) */
 .members-panel-desktop {
     width: 220px;
@@ -414,11 +410,12 @@ body {
     border-bottom: 1px solid #2f3136;
 }
 .members-panel-desktop .members-list {
+    display: flex;
+    flex-direction: column;
     flex: 1;
     padding: 8px;
     overflow-y: auto;
 }
-
 /* Статус-бар */
 .status-bar {
     padding: 8px 12px;
@@ -450,7 +447,6 @@ body {
     50% { opacity: 0.5; }
     100% { opacity: 1; }
 }
-
 /* Настройки */
 .modal {
     display: none;
@@ -525,7 +521,6 @@ body {
 .apply-settings-btn:hover {
     background: #4752c4;
 }
-
 /* Мобильная версия */
 @media (max-width: 900px) {
     .sidebar {
@@ -554,7 +549,6 @@ body {
         z-index: 1;
     }
 }
-
 /* Десктопная версия */
 @media (min-width: 901px) {
     .mobile-btn {
