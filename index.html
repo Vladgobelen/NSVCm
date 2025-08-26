@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Voice Chat</title>
     <link rel="stylesheet" href="styles.css">
+    <!-- Иконки (опционально) -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
     <div class="app">
@@ -18,14 +20,12 @@
                 <button class="server-item add-server-btn" id="addServerBtn">
                     <span>+</span> Добавить сервер
                 </button>
-                <button class="server-item saved-server-btn" data-server-id="1">
-                    <span>🏠</span> Домашний сервер
-                </button>
-                <button class="server-item saved-server-btn" data-server-id="2">
-                    <span>🏢</span> Рабочий сервер
+                <button class="server-item saved-server-btn" data-server-id="default">
+                    <span>🏠</span> Основной сервер
                 </button>
             </div>
         </div>
+
         <!-- Панель комнат (в мобильной версии) -->
         <div class="panel-overlay room-selector-panel" id="roomSelectorPanel">
             <div class="panel-header">
@@ -38,6 +38,7 @@
                 <div class="room-item" data-room="conference">💼 Конференция</div>
             </div>
         </div>
+
         <!-- Панель участников (в мобильной версии) -->
         <div class="panel-overlay members-panel" id="membersPanel">
             <div class="panel-header">
@@ -128,7 +129,7 @@
     <!-- Статус-бар -->
     <div class="status-bar">
         <span class="status-indicator" id="statusIndicator"></span>
-        <span class="status-text" id="statusText">Готов к работе - ожидание подключения</span>
+        <span class="status-text" id="statusText">Ожидание подключения к серверу...</span>
     </div>
 
     <!-- Модальное окно настроек -->
@@ -156,7 +157,14 @@
         </div>
     </div>
 
+    <!-- ВАЖНО: Подключаем зависимости в правильном порядке -->
+    <!-- 1. Socket.IO Client (для чата) -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+    <!-- 2. mediasoup-client -->
     <script src="/mediasoup-client.min.js"></script>
+
+    <!-- 3. Твой основной скрипт -->
     <script src="app.js"></script>
 </body>
 </html>
