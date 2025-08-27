@@ -1,782 +1,659 @@
-class VoiceChatClient {
-    constructor() {
-        this.API_SERVER_URL = 'https://ns.fiber-gate.ru';
-        this.MEDIA_SERVER_URL = 'https://ns.fiber-gate.ru';
-        this.CHAT_API_URL = `${this.API_SERVER_URL}/api/chat/join`;
-        this.device = null;
-        this.clientID = this.generateClientID();
-        this.sendTransport = null;
-        this.recvTransport = null;
-        this.audioProducer = null;
-        this.consumers = new Map();
-        this.stream = null;
-        this.isMicActive = false;
-        this.isConnected = false;
-        this.currentRoom = 'general';
-        this.keepAliveInterval = null;
-        this.updateInterval = null;
-        this.bitrate = 32000;
-        this.dtxEnabled = true;
-        this.fecEnabled = true;
-        this.isConnecting = false;
-        this.socket = null;
-        this.ownProducerId = null;
-        window.voiceChatClient = this;
-        // === Основные элементы ===
-        this.micButton = document.getElementById('micButton');
-        this.micButtonText = document.getElementById('micButtonText');
-        this.statusText = document.getElementById('statusText');
-        this.statusIndicator = document.getElementById('statusIndicator');
-        this.messageInput = document.getElementById('messageInput');
-        this.systemTime = document.getElementById('systemTime');
-        this.roomItems = document.querySelectorAll('.room-item');
-        this.currentRoomTitle = document.getElementById('currentRoomTitle');
-        this.mobileMicBtn = document.getElementById('mobileMicBtn');
-        // === Панели ===
-        this.serverSelectorPanel = document.getElementById('serverSelectorPanel');
-        this.roomSelectorPanel = document.getElementById('roomSelectorPanel');
-        this.membersPanel = document.getElementById('membersPanel');
-        this.membersPanelDesktop = document.getElementById('membersPanelDesktop');
-        this.settingsModal = document.getElementById('settingsModal');
-        // === Кнопки ===
-        this.openServerSelectorBtn = document.getElementById('openServerSelectorBtn');
-        this.openServerBtnMobile = document.getElementById('openServerBtnMobile');
-        this.toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
-        this.openSettingsBtn = document.getElementById('openSettingsBtn');
-        this.openSettingsBtnMobile = document.getElementById('openSettingsBtnMobile');
-        this.closeSettingsModal = document.getElementById('closeSettingsModal');
-        this.closeServerPanelBtn = document.getElementById('closeServerPanelBtn');
-        this.closeRoomPanelBtn = document.getElementById('closeRoomPanelBtn');
-        this.closeMembersPanelBtn = document.getElementById('closeMembersPanelBtn');
-        this.addServerBtn = document.getElementById('addServerBtn');
-        this.toggleMembersBtn = document.getElementById('toggleMembersBtn');
-        // === Настройки ===
-        this.bitrateSlider = document.getElementById('bitrateSlider');
-        this.bitrateValue = document.getElementById('bitrateValue');
-        this.dtxCheckbox = document.getElementById('dtxCheckbox');
-        this.fecCheckbox = document.getElementById('fecCheckbox');
-        this.applySettingsBtn = document.getElementById('applySettingsBtn');
-        // === Участники ===
-        this.membersList = document.getElementById('membersList');
-        this.membersCount = document.getElementById('membersCount');
-        this.selfStatus = document.getElementById('selfStatus');
-        this.membersListDesktop = document.getElementById('membersListDesktop');
-        this.membersCountDesktop = document.getElementById('membersCountDesktop');
-        this.selfStatusDesktop = document.getElementById('selfStatusDesktop');
-        // === Чат ===
-        this.messagesContainer = document.getElementById('messagesContainer');
-        // === Инициализация UI ===
-        [this.serverSelectorPanel, this.roomSelectorPanel, this.membersPanel].forEach(panel => {
-            if (panel) {
-                panel.style.display = 'none';
-                panel.classList.remove('visible');
-            }
-        });
-        this.settingsModal.style.display = 'none';
-        this.updateSystemTime();
-        setInterval(() => this.updateSystemTime(), 60000);
-        // === Обработчики событий ===
-        if (this.messageInput) {
-            this.messageInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    this.sendMessage();
-                }
-            });
-        }
-        this.roomItems.forEach(item => {
-            item.addEventListener('click', () => {
-                this.roomItems.forEach(r => r.classList.remove('active'));
-                item.classList.add('active');
-                const roomId = item.dataset.room;
-                const roomName = this.getRoomName(roomId);
-                this.currentRoomTitle.textContent = roomName;
-                this.closePanel(this.roomSelectorPanel);
-                this.reconnectToRoom(roomId);
-            });
-        });
-        if (this.mobileMicBtn) {
-            this.mobileMicBtn.onclick = null;
-            this.mobileMicBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (!this.isConnected) {
-                    this.autoConnect();
-                } else {
-                    this.toggleMicrophone();
-                }
-            });
-            this.updateMobileMicButtonColor();
-        }
-        if (this.micButton) {
-            this.micButton.disabled = true;
-            this.micButton.onclick = () => this.toggleMicrophone();
-        }
-        if (this.micButtonText) {
-            this.micButtonText.textContent = 'Включить микрофон';
-        }
-        [this.openSettingsBtn, this.openSettingsBtnMobile].forEach(btn => {
-            if (btn) btn.addEventListener('click', () => this.openSettings());
-        });
-        if (this.closeSettingsModal) {
-            this.closeSettingsModal.addEventListener('click', () => this.settingsModal.style.display = 'none');
-        }
-        if (this.bitrateSlider) {
-            this.bitrateSlider.addEventListener('input', () => {
-                this.bitrateValue.textContent = this.bitrateSlider.value;
-            });
-        }
-        if (this.applySettingsBtn) {
-            this.applySettingsBtn.addEventListener('click', () => this.applySettings());
-        }
-        window.addEventListener('click', (e) => {
-            if (e.target === this.settingsModal) {
-                this.settingsModal.style.display = 'none';
-            }
-        });
-        [this.openServerSelectorBtn, this.openServerBtnMobile].forEach(btn => {
-            if (btn) {
-                btn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.openPanel(this.serverSelectorPanel);
-                });
-            }
-        });
-        if (this.closeServerPanelBtn) {
-            this.closeServerPanelBtn.addEventListener('click', () => this.closePanel(this.serverSelectorPanel));
-        }
-        if (this.toggleSidebarBtn) {
-            this.toggleSidebarBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.openPanel(this.roomSelectorPanel);
-            });
-        }
-        if (this.closeRoomPanelBtn) {
-            this.closeRoomPanelBtn.addEventListener('click', () => this.closePanel(this.roomSelectorPanel));
-        }
-        if (this.toggleMembersBtn) {
-            this.toggleMembersBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.openPanel(this.membersPanel);
-            });
-        }
-        if (this.closeMembersPanelBtn) {
-            this.closeMembersPanelBtn.addEventListener('click', () => this.closePanel(this.membersPanel));
-        }
-        document.addEventListener('click', (e) => {
-            [this.serverSelectorPanel, this.roomSelectorPanel, this.membersPanel].forEach(panel => {
-                if (panel && panel.classList.contains('visible') && !panel.contains(e.target)) {
-                    this.closePanel(panel);
-                }
-            });
-        });
-        [this.serverSelectorPanel, this.roomSelectorPanel, this.membersPanel].forEach(panel => {
-            if (panel) panel.addEventListener('click', (e) => e.stopPropagation());
-        });
-        this.addServerBtn?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            alert('Добавление сервера (заглушка)');
-        });
-        document.addEventListener('click', function unlockAudio() {
-            const tempAudio = new Audio();
-            tempAudio.play().then(() => {
-                console.log("[AUDIO] Воспроизведение аудио разблокировано пользовательским жестом");
-                tempAudio.remove();
-            }).catch(e => {
-                console.log("[AUDIO] Не удалось разблокировать воспроизведение:", e);
-            });
-            document.removeEventListener('click', unlockAudio);
-        }, { once: true });
-        this.autoConnect();
-    }
-    getRoomName(roomId) {
-        const rooms = {
-            'general': 'Общий голосовой канал',
-            'music': 'Музыкальная комната',
-            'conference': 'Конференция'
-        };
-        return rooms[roomId] || roomId;
-    }
-    generateClientID() {
-        return 'user_' + Math.random().toString(36).substr(2, 9);
-    }
-    updateStatus(message, type = 'normal') {
-        if (this.statusText) this.statusText.textContent = message;
-        if (this.statusIndicator) {
-            this.statusIndicator.className = 'status-indicator';
-            if (type === 'connecting') this.statusIndicator.classList.add('connecting');
-            else if (type === 'disconnected') this.statusIndicator.classList.add('disconnected');
-        }
-        console.log('[STATUS]', message);
-    }
-    updateSystemTime() {
-        if (this.systemTime) {
-            const now = new Date();
-            this.systemTime.textContent = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-        }
-    }
-    addMessage(username, text, time = null) {
-        if (!this.messagesContainer) return;
-        const now = new Date();
-        const timeString = time || `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-        const messageElement = document.createElement('div');
-        messageElement.className = 'message';
-        const avatarText = username === 'Вы' ? 'Вы' : username.charAt(0).toUpperCase();
-        messageElement.innerHTML = `
-            <div class="message-avatar">${avatarText}</div>
-            <div class="message-content">
-                <div class="message-header">
-                    <div class="message-username">${username}</div>
-                    <div class="message-time">${timeString}</div>
-                </div>
-                <div class="message-text">${text}</div>
-            </div>
-        `;
-        this.messagesContainer.appendChild(messageElement);
-        setTimeout(() => messageElement.classList.add('appeared'), 10);
-        const wrapper = this.messagesContainer.parentElement;
-        if (wrapper) wrapper.scrollTop = wrapper.scrollHeight;
-    }
-    sendMessage() {
-        if (!this.messageInput || !this.socket) return;
-        const text = this.messageInput.value.trim();
-        if (text) {
-            this.socket.emit('send-message', {
-                text,
-                clientId: this.clientID
-            });
-            this.messageInput.value = '';
-        }
-    }
-    async autoConnect() {
-        if (this.isConnecting || this.isConnected) return;
-        this.isConnecting = true;
-        this.updateStatus('Подключение к серверу...', 'connecting');
-        try {
-            await this.joinRoom(this.currentRoom);
-        } catch (error) {
-            this.updateStatus('Ошибка: ' + error.message, 'disconnected');
-            console.error('[AUTO CONNECT ERROR]', error);
-        } finally {
-            this.isConnecting = false;
-        }
-    }
-    async reconnectToRoom(roomId) {
-        this.currentRoom = roomId;
-        this.disconnectFromMedia();
-        this.destroySocket();
-        await this.autoConnect();
-    }
-    async joinRoom(roomId) {
-        this.updateStatus('Вход в комнату...', 'connecting');
-        try {
-            const response = await fetch(this.CHAT_API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    roomId,
-                    username: 'Пользователь',
-                    clientId: this.clientID
-                })
-            });
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            const data = await response.json();
-            this.clientID = data.clientId;
-            this.MEDIA_SERVER_URL = (data.mediaServerUrl || 'https://ns.fiber-gate.ru').trim();
-            this.connectToChatSocket();
-            await this.connectToMediaServer(roomId);
-        } catch (error) {
-            this.updateStatus('Ошибка: ' + error.message, 'disconnected');
-            console.error('[JOIN ROOM ERROR]', error);
-            throw error;
-        }
-    }
-    connectToChatSocket() {
-        this.socket = io(this.API_SERVER_URL);
-        this.socket.on('connect', () => {
-            console.log('🟢 Подключено к чату');
-            this.socket.emit('join-room', {
-                roomId: this.currentRoom,
-                clientId: this.clientID
-            });
-        });
-        this.socket.on('messages', (data) => {
-            data.messages.forEach(msg => this.addMessage(msg.user, msg.text, msg.time));
-        });
-        this.socket.on('new-message', (message) => {
-            this.addMessage(message.user, message.text, message.time);
-        });
-        this.socket.on('user-joined', (data) => {
-            this.addMessage('System', `${data.username} присоединился`);
-        });
-        this.socket.on('user-left', (data) => {
-            this.addMessage('System', 'Пользователь покинул комнату');
-        });
-        this.socket.on('participants', (data) => {
-            this.updateMembersList(data.clients);
-            this.updateMembersListDesktop(data.clients);
-        });
-    }
-    destroySocket() {
-        if (this.socket) {
-            this.socket.emit('leave-room');
-            this.socket.disconnect();
-            this.socket = null;
-        }
-    }
-    async connectToMediaServer(roomId) {
-        try {
-            this.stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true,
-                    echoCancellationType: 'system'
-                },
-                video: false
-            });
-            await this.registerClient(roomId);
-            this.startKeepAlive(roomId);
-            const rtpCapabilities = await this.getRtpCapabilities(roomId);
-            this.device = new mediasoupClient.Device();
-            await this.device.load({ routerRtpCapabilities: rtpCapabilities });
-            await this.createTransports(roomId);
-            this.isConnected = true;
-            this.updateStatus('Готов', 'normal');
-            if (this.micButton) {
-                this.micButton.disabled = false;
-                this.micButton.onclick = () => this.toggleMicrophone();
-            }
-            if (this.messageInput) {
-                this.messageInput.disabled = false;
-            }
-            if (this.micButtonText) {
-                this.micButtonText.textContent = 'Включить микрофон';
-            }
-            this.addMessage('System', 'Вы подключены. Нажмите кнопку, чтобы включить микрофон.');
-            this.updateMobileMicButtonColor();
-        } catch (error) {
-            this.updateStatus('Ошибка: ' + error.message, 'disconnected');
-            if (this.micButton) this.micButton.disabled = false;
-            this.updateMobileMicButtonColor();
-            console.error('[MEDIA CONNECT ERROR]', error);
-        } finally {
-            this.isConnecting = false;
-        }
-    }
-    async registerClient(roomId) {
-        await fetch(`${this.MEDIA_SERVER_URL}/api/client/register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ clientID: this.clientID, roomId })
-        });
-    }
-    startKeepAlive(roomId) {
-        this.keepAliveInterval = setInterval(async () => {
-            try {
-                await this.registerClient(roomId);
-            } catch (e) { console.log('[KEEP ALIVE]', e); }
-        }, 5000);
-    }
-    async getRtpCapabilities(roomId) {
-        const res = await fetch(`${this.MEDIA_SERVER_URL}/api/rtp-capabilities/${roomId}`);
-        return res.json();
-    }
-    async createTransports(roomId) {
-        const send = await this.createTransport('send', roomId);
-        this.sendTransport = this.device.createSendTransport(send);
-        this.setupSendTransport();
-        const recv = await this.createTransport('recv', roomId);
-        this.recvTransport = this.device.createRecvTransport(recv);
-        this.setupRecvTransport();
-        this.startParticipantUpdates();
-    }
-    async createTransport(direction, roomId) {
-        const res = await fetch(`${this.MEDIA_SERVER_URL}/api/transport/create`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Client-ID': this.clientID },
-            body: JSON.stringify({ clientID: this.clientID, direction, roomId })
-        });
-        const data = await res.json();
-        return {
-            id: data.transportId,
-            iceParameters: data.iceParameters,
-            iceCandidates: data.iceCandidates,
-            dtlsParameters: data.dtlsParameters
-        };
-    }
-    setupSendTransport() {
-        this.sendTransport.on('connect', async (data, callback, errback) => {
-            try {
-                await fetch(`${this.MEDIA_SERVER_URL}/api/transport/connect`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Client-ID': this.clientID },
-                    body: JSON.stringify({
-                        transportId: this.sendTransport.id,
-                        dtlsParameters: data.dtlsParameters
-                    })
-                });
-                callback();
-            } catch (e) { errback(e); }
-        });
-        this.sendTransport.on('produce', async (data, callback, errback) => {
-            try {
-                const res = await fetch(`${this.MEDIA_SERVER_URL}/api/produce`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Client-ID': this.clientID },
-                    body: JSON.stringify({
-                        transportId: this.sendTransport.id,
-                        kind: data.kind,
-                        rtpParameters: data.rtpParameters
-                    })
-                });
-                const json = await res.json();
-                this.ownProducerId = json.producerId;
-                callback({ id: json.producerId });
-            } catch (e) { errback(e); }
-        });
-    }
-    setupRecvTransport() {
-        this.recvTransport.on('connect', async (data, callback, errback) => {
-            try {
-                await fetch(`${this.MEDIA_SERVER_URL}/api/transport/connect`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Client-ID': this.clientID },
-                    body: JSON.stringify({
-                        transportId: this.recvTransport.id,
-                        dtlsParameters: data.dtlsParameters
-                    })
-                });
-                callback();
-            } catch (e) { errback(e); }
-        });
-    }
-    updateMobileMicButtonColor() {
-        if (!this.mobileMicBtn) return;
-        if (!this.isConnected) {
-            this.mobileMicBtn.style.backgroundColor = '#2f3136';
-            this.mobileMicBtn.style.color = '#b9bbbe';
-        } else if (this.isMicActive) {
-            this.mobileMicBtn.style.backgroundColor = '#3ba55d';
-            this.mobileMicBtn.style.color = '#ffffff';
-        } else {
-            this.mobileMicBtn.style.backgroundColor = '#ed4245';
-            this.mobileMicBtn.style.color = '#ffffff';
-        }
-    }
-    async toggleMicrophone() {
-        try {
-            this.isMicActive ? await this.stopMicrophone() : await this.startMicrophone();
-        } catch (error) {
-            console.error('Ошибка при переключении микрофона:', error);
-        }
-    }
-    async startMicrophone() {
-        if (this.isMicActive) return;
-        try {
-            let track = this.stream?.getAudioTracks()[0];
-            if (!track || track.readyState === 'ended') {
-                console.warn('[MIC] Трек не существует или завершен. Получаем новый поток.');
-                this.stream = await navigator.mediaDevices.getUserMedia({
-                    audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true,
-                        echoCancellationType: 'system'
-                    },
-                    video: false
-                });
-                track = this.stream.getAudioTracks()[0];
-                console.log('[MIC] Новый поток успешно получен.');
-            }
-            const encodings = [{ maxBitrate: this.bitrate, dtx: this.dtxEnabled, fec: this.fecEnabled }];
-            this.audioProducer = await this.sendTransport.produce({ track, encodings });
-            if (this.audioProducer) {
-                this.ownProducerId = this.audioProducer.id;
-            }
-            this.isMicActive = true;
-            if (this.micButton) this.micButton.classList.add('active');
-            if (this.micButtonText) this.micButtonText.textContent = 'Выключить микрофон';
-            if (this.selfStatus) this.selfStatus.className = 'member-status active';
-            if (this.selfStatusDesktop) this.selfStatusDesktop.className = 'member-status active';
-            this.updateStatus('Микрофон включен', 'normal');
-            this.addMessage('System', `Микрофон включён (битрейт: ${this.bitrate/1000} кбит/с)`);
-            this.updateMobileMicButtonColor();
-        } catch (error) {
-            this.updateStatus('Ошибка микрофона: ' + error.message, 'disconnected');
-            console.error('[MIC ERROR]', error);
-            this.isMicActive = false;
-            if (this.audioProducer) {
-                this.audioProducer.close().catch(e => console.error('[MIC] Ошибка при закрытии producer:', e));
-                this.audioProducer = null;
-            }
-            if (this.micButton) this.micButton.classList.remove('active');
-            if (this.micButtonText) this.micButtonText.textContent = 'Включить микрофон';
-            if (this.selfStatus) this.selfStatus.className = 'member-status muted';
-            if (this.selfStatusDesktop) this.selfStatusDesktop.className = 'member-status muted';
-            this.updateMobileMicButtonColor();
-        }
-    }
-    async stopMicrophone() {
-        if (!this.isMicActive || !this.audioProducer) return;
-        try {
-            await fetch(`${this.MEDIA_SERVER_URL}/api/producer/close`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Client-ID': this.clientID },
-                body: JSON.stringify({ producerId: this.audioProducer.id })
-            });
-            this.audioProducer.close();
-            this.audioProducer = null;
-            this.ownProducerId = null;
-        } catch (e) { 
-            console.error('[CLOSE PRODUCER]', e); 
-        }
-        if (this.stream) {
-            this.stream.getTracks().forEach(track => {
-                if (track.readyState !== 'ended') {
-                    track.stop();
-                }
-            });
-        }
-        this.isMicActive = false;
-        if (this.micButton) this.micButton.classList.remove('active');
-        if (this.micButtonText) this.micButtonText.textContent = 'Включить микрофон';
-        if (this.selfStatus) this.selfStatus.className = 'member-status muted';
-        if (this.selfStatusDesktop) this.selfStatusDesktop.className = 'member-status muted';
-        this.updateStatus('Микрофон выключен', 'normal');
-        this.addMessage('System', 'Микрофон выключен');
-        this.updateMobileMicButtonColor();
-    }
-    async updateParticipants() {
-        try {
-            const res = await fetch(`${this.MEDIA_SERVER_URL}/api/clients?clientID=${this.clientID}`);
-            const data = await res.json();
-            const otherClients = data.clients.filter(id => id !== this.clientID);
-            for (const id of otherClients) {
-                await this.consumeClientProducers(id);
-            }
-        } catch (e) { console.error('[UPDATE PARTICIPANTS]', e); }
-    }
-    startParticipantUpdates() {
-        this.updateInterval = setInterval(() => this.updateParticipants(), 3000);
-    }
-    async consumeClientProducers(clientId) {
-        if (clientId === this.clientID) {
-            return;
-        }
-        try {
-            const res = await fetch(`${this.MEDIA_SERVER_URL}/api/client/${clientId}/producers?clientID=${this.clientID}`);
-            const data = await res.json();
-            const producersToConsume = data.producers.filter(pid => pid !== this.ownProducerId);
-            for (const pid of producersToConsume) {
-                if (!this.consumers.has(pid)) {
-                    await this.consumeProducer(pid, clientId);
-                }
-            }
-        } catch (e) { console.error('[CONSUME CLIENT]', e); }
-    }
-    async consumeProducer(producerId, clientId) {
-        if (producerId === this.ownProducerId) {
-            return;
-        }
-        try {
-            const res = await fetch(`${this.MEDIA_SERVER_URL}/api/consume`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Client-ID': this.clientID },
-                body: JSON.stringify({
-                    producerId,
-                    rtpCapabilities: this.device.rtpCapabilities,
-                    transportId: this.recvTransport.id
-                })
-            });
-            const data = await res.json();
-            console.log(`[DEBUG] Попытка потребить producerId=${producerId} от клиента=${clientId}`);
-            console.log(`[DEBUG] Ответ от /api/consume (статус ${res.status}):`, data);
-            if (!res.ok) {
-                 console.warn(`[CONSUME] Сервер вернул HTTP ошибку ${res.status} для producerId=${producerId}`);
-                 if (data && data.error) {
-                      console.warn(`[CONSUME] Сообщение от сервера: ${data.error}`);
-                 }
-                 return;
-            }
-            if (data && data.error) {
-                console.warn(`[CONSUME] Предупреждение от сервера для producerId=${producerId}: ${data.error}`);
-                return; 
-            }
-            if (!data || !data.id) {
-                console.error(`[CONSUME] ОШИБКА: Сервер вернул некорректный успешный ответ. Отсутствует 'id' для producerId=${producerId}. Ответ:`, data);
-                return;
-            }
-            const consumer = await this.recvTransport.consume(data);
-            this.consumers.set(producerId, consumer);
-            this.playAudio(consumer.track, clientId, producerId);
-        } catch (e) { 
-            console.error('[CONSUME] Ошибка сети или при обработке:', e); 
-        }
-    }
-    playAudio(track, clientId, producerId) {
-        const stream = new MediaStream([track]);
-        const el = document.createElement('audio');
-        el.srcObject = stream;
-        el.volume = 0.8;
-        el.style.display = 'none';
-        el.setAttribute('data-client-id', clientId);
-        el.setAttribute('data-producer-id', producerId);
-        document.body.appendChild(el);
-        el.play()
-            .then(() => {
-                console.log(`[AUDIO] Воспроизведение начато для клиента ${clientId}, producer ${producerId}`);
-            })
-            .catch(e => {
-                console.error(`[AUDIO] Ошибка воспроизведения для клиента ${clientId}, producer ${producerId}:`, e);
-                if (e.name === 'NotAllowedError') {
-                     this.addMessage('System', 'Ошибка: Браузер блокирует автоматическое воспроизведение аудио. Кликните в любом месте страницы, чтобы разблокировать.');
-                }
-            });
-        if (!window.audioElements) window.audioElements = new Map();
-        window.audioElements.set(producerId, el);
-    }
-    openSettings() {
-        if (this.bitrateSlider && this.dtxCheckbox && this.fecCheckbox && this.settingsModal) {
-            this.bitrateSlider.value = this.bitrate / 1000;
-            this.bitrateValue.textContent = this.bitrateSlider.value;
-            this.dtxCheckbox.checked = this.dtxEnabled;
-            this.fecCheckbox.checked = this.fecEnabled;
-            this.settingsModal.style.display = 'block';
-        }
-    }
-    async applySettings() {
-        const newBitrate = parseInt(this.bitrateSlider.value) * 1000;
-        const newDtx = this.dtxCheckbox.checked;
-        const newFec = this.fecCheckbox.checked;
-        this.bitrate = newBitrate;
-        this.dtxEnabled = newDtx;
-        this.fecEnabled = newFec;
-        if (this.isMicActive) {
-            await this.stopMicrophone();
-            await this.startMicrophone();
-            this.addMessage('System', 'Настройки применены и микрофон перезапущен.');
-        } else {
-            this.addMessage('System', 'Настройки сохранены.');
-        }
-        this.settingsModal.style.display = 'none';
-    }
-    updateMembersList(clients) {
-        if (!this.membersList || !this.membersCount) return;
-        const others = clients.filter(id => id !== this.clientID);
-        this.membersCount.textContent = others.length + 1;
-        let html = `
-            <div class="member-item">
-                <div class="member-avatar">Вы</div>
-                <div class="member-name">Вы</div>
-                <div class="member-status ${this.isMicActive ? 'active' : 'muted'}" id="selfStatus"></div>
-            </div>
-        `;
-        others.forEach(id => {
-            const short = id.substring(0, 6);
-            html += `
-                <div class="member-item">
-                    <div class="member-avatar">${short[0].toUpperCase()}</div>
-                    <div class="member-name">${short}</div>
-                    <div class="member-status"></div>
-                </div>
-            `;
-        });
-        this.membersList.innerHTML = html;
-        this.selfStatus = document.getElementById('selfStatus');
-    }
-    updateMembersListDesktop(clients) {
-        if (!this.membersListDesktop || !this.membersCountDesktop) return;
-        const others = clients.filter(id => id !== this.clientID);
-        this.membersCountDesktop.textContent = others.length + 1;
-        let html = `
-            <div class="member-item">
-                <div class="member-avatar">Вы</div>
-                <div class="member-name">Вы</div>
-                <div class="member-status ${this.isMicActive ? 'active' : 'muted'}" id="selfStatusDesktop"></div>
-            </div>
-        `;
-        others.forEach(id => {
-            const short = id.substring(0, 6);
-            html += `
-                <div class="member-item">
-                    <div class="member-avatar">${short[0].toUpperCase()}</div>
-                    <div class="member-name">${short}</div>
-                    <div class="member-status"></div>
-                </div>
-            `;
-        });
-        this.membersListDesktop.innerHTML = html;
-        this.selfStatusDesktop = document.getElementById('selfStatusDesktop');
-    }
-    openPanel(panel) {
-        if (panel) {
-            panel.classList.add('visible');
-            panel.style.display = 'flex';
-        }
-    }
-    closePanel(panel) {
-        if (panel) {
-            panel.classList.remove('visible');
-            setTimeout(() => {
-                if (!panel.classList.contains('visible')) panel.style.display = 'none';
-            }, 300);
-        }
-    }
-    disconnectFromMedia() {
-        this.isConnected = false;
-        this.isMicActive = false;
-        if (this.micButton) this.micButton.classList.remove('active');
-        if (this.selfStatus) this.selfStatus.className = 'member-status muted';
-        if (this.selfStatusDesktop) this.selfStatusDesktop.className = 'member-status muted';
-        if (this.keepAliveInterval) clearInterval(this.keepAliveInterval);
-        if (this.updateInterval) clearInterval(this.updateInterval);
-        if (this.audioProducer) this.audioProducer.close();
-        this.consumers.forEach(consumer => {
-            if (consumer && typeof consumer.close === 'function') {
-                consumer.close();
-            }
-        });
-        this.consumers.clear();
-        if (this.sendTransport) this.sendTransport.close();
-        if (this.recvTransport) this.recvTransport.close();
-        if (this.stream) {
-            this.stream.getTracks().forEach(track => {
-                if (track.readyState !== 'ended') {
-                    track.stop();
-                }
-            });
-        }
-        if (window.audioElements) {
-            window.audioElements.forEach(el => {
-                if (el && el.parentNode) {
-                    el.remove();
-                }
-            });
-            window.audioElements.clear();
-        }
-    }
-    destroy() {
-        this.disconnectFromMedia();
-        this.destroySocket();
-    }
-}
-// Инициализация при загрузке DOM
+console.log('[APP] DOMContentLoaded — начало инициализации');
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('[APP] DOM загружен');
+    
     if (typeof mediasoupClient === 'undefined') {
+        console.error('[APP] mediasoupClient не найден');
         const s = document.getElementById('statusText');
         const i = document.getElementById('statusIndicator');
         if (s) s.textContent = 'Ошибка: mediasoup-client не загружен';
         if (i) i.className = 'status-indicator disconnected';
         return;
+    } else {
+        console.log('[APP] mediasoupClient найден');
     }
-    if (typeof io === 'undefined') {
-        console.warn('Socket.IO не загружен. Чат не будет работать.');
-        return;
+
+    const waitForAuthManager = () => {
+        return new Promise((resolve, reject) => {
+            let attempts = 0;
+            const maxAttempts = 600;
+            const check = () => {
+                attempts++;
+                console.log(`[APP] Попытка ${attempts}: проверка AuthManager...`);
+                if (typeof AuthManager !== 'undefined' && typeof AuthManager.registerUser === 'function') {
+                    console.log('%c[APP] ✅ AuthManager.registerUser ДОСТУПЕН', 'color: green; font-weight: bold');
+                    resolve();
+                } else if (attempts >= maxAttempts) {
+                    console.error('%c[APP] ❌ AuthManager не загрузился за 30 секунд', 'color: red');
+                    reject(new Error('AuthManager не загрузился'));
+                } else {
+                    setTimeout(check, 50);
+                }
+            };
+            check();
+        });
+    };
+
+    class VoiceChatClient {
+        constructor() {
+            this.API_SERVER_URL = 'https://ns.fiber-gate.ru';
+            this.CHAT_API_URL = `${this.API_SERVER_URL}/api/join`;
+            this.clientID = Utils.generateClientID();
+            this.device = null;
+            this.sendTransport = null;
+            this.recvTransport = null;
+            this.audioProducer = null;
+            this.consumers = new Map();
+            this.existingProducers = new Set(); // Новое свойство для отслеживания продюсеров
+            this.stream = null;
+            this.socket = null;
+            this.isMicActive = false;
+            this.currentRoom = null;
+            this.currentServerId = null;
+            this.currentServer = null;
+            this.servers = [];
+            this.members = [];
+            this.keepAliveInterval = null;
+            this.updateInterval = null;
+            this.bitrate = 32000;
+            this.dtxEnabled = true;
+            this.fecEnabled = true;
+            this.isConnecting = false;
+            this.userId = null;
+            this.token = null;
+            this.username = null;
+            this.isCreatingRoom = false;
+            this.isConnected = false;
+            this.mediaData = null;
+            this.inviteServerId = null;
+            this.syncInterval = null;
+            this.producerCheckInterval = null; // Интервал проверки продюсеров
+            
+            window.voiceChatClient = this;
+            this.initElements();
+            this.initEventListeners();
+            this.initAutoConnect();
+        }
+
+        initElements() {
+            this.micButton = document.getElementById('micButton');
+            this.micButtonText = document.getElementById('micButtonText');
+            this.statusText = document.getElementById('statusText');
+            this.statusIndicator = document.getElementById('statusIndicator');
+            this.messageInput = document.getElementById('messageInput');
+            this.systemTime = document.getElementById('systemTime');
+            this.currentRoomTitle = document.getElementById('currentRoomTitle');
+            this.mobileMicBtn = document.getElementById('mobileMicBtn');
+            this.selfStatus = document.getElementById('selfStatus');
+            this.serverSelectorPanel = document.getElementById('serverSelectorPanel');
+            this.roomSelectorPanel = document.getElementById('roomSelectorPanel');
+            this.membersPanel = document.getElementById('membersPanel');
+            this.settingsModal = document.getElementById('settingsModal');
+            this.openServerSelectorBtn = document.getElementById('openServerSelectorBtn');
+            this.openServerBtnMobile = document.getElementById('openServerBtnMobile');
+            this.openRoomBtnMobile = document.getElementById('openRoomBtnMobile');
+            this.toggleSidebarBtn = document.getElementById('toggleSidebarBtn');
+            this.openSettingsBtn = document.getElementById('openSettingsBtn');
+            this.openSettingsBtnMobile = document.getElementById('openSettingsBtnMobile');
+            this.closeSettingsModal = document.getElementById('closeSettingsModal');
+            this.closeServerPanelBtn = document.getElementById('closeServerPanelBtn');
+            this.closeRoomPanelBtn = document.getElementById('closeRoomPanelBtn');
+            this.closeMembersPanelBtn = document.getElementById('closeMembersPanelBtn');
+            this.addServerBtn = document.getElementById('addServerBtn');
+            this.toggleMembersBtn = document.getElementById('toggleMembersBtn');
+            this.bitrateSlider = document.getElementById('bitrateSlider');
+            this.bitrateValue = document.getElementById('bitrateValue');
+            this.dtxCheckbox = document.getElementById('dtxCheckbox');
+            this.fecCheckbox = document.getElementById('fecCheckbox');
+            this.applySettingsBtn = document.getElementById('applySettingsBtn');
+            this.messagesContainer = document.getElementById('messagesContainer');
+            this.membersList = document.getElementById('membersList');
+            this.membersCount = document.getElementById('membersCount');
+            
+            [this.serverSelectorPanel, this.roomSelectorPanel, this.membersPanel].forEach(p => {
+                if (p) p.style.display = 'none';
+            });
+            if (this.settingsModal) this.settingsModal.style.display = 'none';
+            Utils.updateSystemTime(this.systemTime);
+        }
+
+        initEventListeners() {
+            if (this.micButton) this.micButton.addEventListener('click', () => this.toggleMicrophone());
+            if (this.messageInput) this.messageInput.addEventListener('keypress', e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    ChatManager.sendMessage(this);
+                }
+            });
+            if (this.openServerSelectorBtn) this.openServerSelectorBtn.addEventListener('click', () => UIManager.openPanel(this, this.serverSelectorPanel));
+            if (this.openServerBtnMobile) this.openServerBtnMobile.addEventListener('click', () => UIManager.openPanel(this, this.serverSelectorPanel));
+            if (this.openRoomBtnMobile) {
+                this.openRoomBtnMobile.addEventListener('click', () => UIManager.openPanel(this, this.roomSelectorPanel));
+            }
+            if (this.toggleSidebarBtn) this.toggleSidebarBtn.addEventListener('click', UIManager.toggleSidebar);
+            if (this.openSettingsBtn) this.openSettingsBtn.addEventListener('click', () => UIManager.openSettings(this));
+            if (this.openSettingsBtnMobile) this.openSettingsBtnMobile.addEventListener('click', () => UIManager.openSettings(this));
+            if (this.closeSettingsModal) this.closeSettingsModal.addEventListener('click', () => UIManager.closeSettings(this));
+            if (this.closeServerPanelBtn) this.closeServerPanelBtn.addEventListener('click', () => UIManager.closePanel(this, this.serverSelectorPanel));
+            if (this.closeRoomPanelBtn) this.closeRoomPanelBtn.addEventListener('click', () => UIManager.closePanel(this, this.roomSelectorPanel));
+            if (this.closeMembersPanelBtn) this.closeMembersPanelBtn.addEventListener('click', () => UIManager.closePanel(this, this.membersPanel));
+            if (this.addServerBtn) this.addServerBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                ServerManager.createServer(this);
+            });
+            if (this.toggleMembersBtn) this.toggleMembersBtn.addEventListener('click', () => UIManager.toggleMembersPanel(this));
+            if (this.applySettingsBtn) this.applySettingsBtn.addEventListener('click', () => UIManager.applySettings(this));
+            if (this.bitrateSlider && this.bitrateValue) {
+                this.bitrateSlider.addEventListener('input', () => {
+                    this.bitrateValue.textContent = this.bitrateSlider.value;
+                });
+            }
+            document.addEventListener('click', unlockAudio, { once: true });
+            function unlockAudio() {
+                const a = new Audio();
+                a.play().then(() => a.remove()).catch(() => {});
+            }
+        }
+
+        processUrlParams() {
+            const params = new URLSearchParams(window.location.search);
+            this.currentServerId = params.get('server');
+            this.currentRoom = params.get('room');
+            this.inviteServerId = params.get('invite');
+            console.log('[CLIENT] URL params:', {
+                server: this.currentServerId,
+                room: this.currentRoom,
+                invite: this.inviteServerId
+            });
+        }
+
+        async initAutoConnect() {
+            console.log('[CLIENT] initAutoConnect — начало');
+            this.processUrlParams();
+
+            try {
+                await waitForAuthManager();
+                console.log('[CLIENT] initAutoConnect — AuthManager готов');
+
+                const autoLoggedIn = await AuthManager.tryAutoLogin(this);
+                if (autoLoggedIn) {
+                    console.log('[CLIENT] Автовход успешен');
+                    await ServerManager.loadServers(this);
+
+                    let targetServerId = null;
+
+                    if (this.inviteServerId) {
+                        const serverExists = this.servers.some(s => s.id === this.inviteServerId);
+                        if (serverExists) {
+                            targetServerId = this.inviteServerId;
+                        } else {
+                            const joined = await this.joinServer(this.inviteServerId);
+                            if (joined) {
+                                targetServerId = this.inviteServerId;
+                                await ServerManager.loadServers(this);
+                            } else {
+                                UIManager.addMessage(this, 'System', `Нет доступа к серверу.`);
+                            }
+                        }
+                    } else if (this.currentServerId) {
+                        const serverExists = this.servers.some(s => s.id === this.currentServerId);
+                        if (serverExists) {
+                            targetServerId = this.currentServerId;
+                        }
+                    }
+
+                    if (targetServerId) {
+                        this.currentServerId = targetServerId;
+                        await RoomManager.loadRoomsForServer(this, targetServerId);
+                        if (this.currentRoom) {
+                            await this.reconnectToRoom(this.currentRoom);
+                        }
+                        this.startSyncInterval();
+                    } else {
+                        this.autoConnect();
+                    }
+                    return;
+                }
+
+                this.showAuthModal();
+            } catch (err) {
+                console.error('[CLIENT] Ошибка в initAutoConnect:', err);
+                alert('Критическая ошибка: не удалось загрузить систему авторизации');
+            }
+        }
+
+        async joinServer(serverId) {
+            try {
+                const res = await fetch(`${this.API_SERVER_URL}/api/servers/${serverId}/join`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.token}`
+                    },
+                    body: JSON.stringify({ userId: this.userId, token: this.token })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.error || 'Не удалось присоединиться');
+                }
+
+                const data = await res.json();
+                const server = data.server;
+
+                const exists = this.servers.some(s => s.id === server.id);
+                if (!exists) {
+                    this.servers.push(server);
+                    ServerManager.saveServersToLocalStorage(this);
+                    ServerManager.renderServers(this);
+                    UIManager.addMessage(this, 'System', `✅ Вы присоединились к "${server.name}"`);
+                }
+
+                return true;
+            } catch (error) {
+                console.error('[CLIENT] Ошибка вступления в сервер:', error);
+                UIManager.addMessage(this, 'System', `❌ Доступ запрещён: ${error.message}`);
+                return false;
+            }
+        }
+
+        startSyncInterval() {
+            if (this.syncInterval) clearInterval(this.syncInterval);
+            
+            this.syncInterval = setInterval(async () => {
+                try {
+                    console.log('[SYNC] Начало синхронизации');
+                    await ServerManager.loadServers(this);
+                    if (this.currentServerId) {
+                        await RoomManager.loadRoomsForServer(this, this.currentServerId);
+                    }
+                    if (this.currentRoom && this.isConnected) {
+                        await this.startConsuming();
+                    }
+                    console.log('[SYNC] Синхронизация завершена');
+                } catch (error) {
+                    console.error('[SYNC] Ошибка синхронизации:', error);
+                }
+            }, 15000); // Увеличено до 15 секунд
+        }
+
+        showAuthModal() {
+            const users = AuthManager.getAllUsers();
+            const savedUser = AuthManager.loadLastUser();
+            const modal = document.createElement('div');
+            modal.className = 'modal auth-modal';
+            modal.style.display = 'block';
+            modal.innerHTML = `
+                <div class="modal-content auth-content">
+                    <h2>Выберите пользователя</h2>
+                    <div class="saved-users-list">
+                        ${Object.keys(users).length === 0 
+                            ? '<div class="no-users-message">Нет сохранённых пользователей</div>' 
+                            : Object.values(users).map(u => `
+                                <div class="saved-user-item" data-username="${u.username}">
+                                    <span>${u.username}</span>
+                                    <button class="remove-user-btn" data-user="${u.username}">✕</button>
+                                </div>
+                            `).join('')}
+                    </div>
+                    <input type="text" id="usernameInput" placeholder="Никнейм" value="${savedUser ? savedUser.username : ''}">
+                    <input type="password" id="passwordInput" placeholder="Пароль">
+                    <button id="authSubmitBtn">Войти</button>
+                    <button id="createNewUserBtn">➕ Создать нового</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            const usernameInput = modal.querySelector('#usernameInput');
+            const passwordInput = modal.querySelector('#passwordInput');
+            const submitBtn = modal.querySelector('#authSubmitBtn');
+
+            modal.querySelectorAll('.saved-user-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const username = item.dataset.username;
+                    const user = users[username];
+                    usernameInput.value = username;
+                    passwordInput.value = user.password;
+                    passwordInput.focus();
+                });
+            });
+
+            modal.querySelectorAll('.remove-user-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const username = btn.dataset.user;
+                    if (confirm(`Удалить пользователя ${username}?`)) {
+                        AuthManager.removeUser(username);
+                        modal.remove();
+                        this.showAuthModal();
+                    }
+                });
+            });
+
+            modal.querySelector('#createNewUserBtn').addEventListener('click', () => {
+                usernameInput.value = '';
+                passwordInput.value = '';
+                usernameInput.focus();
+            });
+
+            const handleSubmit = async () => {
+                const u = usernameInput.value.trim();
+                const p = passwordInput.value.trim();
+                if (u.length < 3 || p.length < 4) {
+                    alert('Ник — от 3, пароль — от 4');
+                    return;
+                }
+                const success = await AuthManager.registerUser(this, u, p);
+                if (success) {
+                    document.body.removeChild(modal);
+                    await ServerManager.loadServers(this);
+
+                    if (this.inviteServerId) {
+                        const serverExists = this.servers.some(s => s.id === this.inviteServerId);
+                        if (serverExists) {
+                            this.currentServerId = this.inviteServerId;
+                            await RoomManager.loadRoomsForServer(this, this.inviteServerId);
+                            this.startSyncInterval();
+                            return;
+                        }
+                    }
+
+                    if (this.currentServerId) {
+                        await RoomManager.loadRoomsForServer(this, this.currentServerId);
+                        this.startSyncInterval();
+                    }
+                    if (this.currentRoom) {
+                        await this.reconnectToRoom(this.currentRoom);
+                    }
+                }
+            };
+
+            submitBtn.addEventListener('click', handleSubmit);
+            passwordInput.addEventListener('keypress', e => {
+                if (e.key === 'Enter') handleSubmit();
+            });
+        }
+
+        async reconnectToRoom(roomId) {
+            this.disconnectFromMedia();
+            this.destroySocket();
+            this.currentRoom = roomId;
+            await this.joinRoom(roomId);
+        }
+
+        async joinRoom(roomId) {
+            try {
+                console.log('[JOIN] Вход в комнату:', roomId);
+                const res = await fetch(this.CHAT_API_URL, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json', 
+                        'Authorization': `Bearer ${this.token}` 
+                    },
+                    body: JSON.stringify({ 
+                        roomId, 
+                        userId: this.userId, 
+                        token: this.token, 
+                        clientId: this.clientID 
+                    })
+                });
+                
+                if (!res.ok) {
+                    const errorText = await res.text();
+                    throw new Error(`Ошибка входа: ${res.status} ${errorText}`);
+                }
+                
+                const data = await res.json();
+                console.log('[JOIN] Ответ от сервера:', data);
+                
+                if (!data.success) {
+                    throw new Error(data.error || 'Не удалось войти в комнату');
+                }
+                
+                this.clientID = data.clientId;
+                this.mediaData = data.mediaData;
+                await MediaManager.connect(this, roomId, data.mediaData);
+                
+                // Запускаем потребление аудиопотоков с задержкой
+                setTimeout(() => {
+                    this.startConsuming();
+                }, 1000);
+            } catch (e) {
+                console.error('[JOIN] Ошибка входа в комнату:', e);
+                UIManager.updateStatus(this, 'Ошибка: ' + e.message, 'disconnected');
+            }
+        }
+
+        async toggleMicrophone() {
+            if (this.isMicActive) {
+                await MediaManager.stopMicrophone(this);
+            } else {
+                await MediaManager.startMicrophone(this);
+            }
+        }
+
+        updateMobileMicButtonColor() {
+            if (this.micButton) {
+                this.micButton.style.background = this.isMicActive ? '#ed4245' : '#5865f2';
+            }
+        }
+
+        disconnectFromMedia() {
+            console.log('[MEDIA] Отключение медиаресурсов');
+            
+            if (this.keepAliveInterval) {
+                clearInterval(this.keepAliveInterval);
+                this.keepAliveInterval = null;
+            }
+            
+            if (this.updateInterval) {
+                clearInterval(this.updateInterval);
+                this.updateInterval = null;
+            }
+            
+            if (this.syncInterval) {
+                clearInterval(this.syncInterval);
+                this.syncInterval = null;
+            }
+            
+            if (this.producerCheckInterval) {
+                clearInterval(this.producerCheckInterval);
+                this.producerCheckInterval = null;
+            }
+            
+            if (this.audioProducer) {
+                console.log('[MEDIA] Закрытие audioProducer');
+                this.audioProducer.close();
+                this.audioProducer = null;
+            }
+            
+            if (this.consumers && this.consumers.size > 0) {
+                console.log('[MEDIA] Закрытие consumers:', this.consumers.size);
+                this.consumers.forEach(consumer => {
+                    try {
+                        consumer.close();
+                    } catch (e) {
+                        console.error('[MEDIA] Ошибка при закрытии consumer:', e);
+                    }
+                });
+                this.consumers.clear();
+            }
+            
+            if (this.existingProducers) {
+                this.existingProducers.clear();
+            }
+            
+            if (this.sendTransport) {
+                console.log('[MEDIA] Закрытие sendTransport');
+                this.sendTransport.close();
+                this.sendTransport = null;
+            }
+            
+            if (this.recvTransport) {
+                console.log('[MEDIA] Закрытие recvTransport');
+                this.recvTransport.close();
+                this.recvTransport = null;
+            }
+            
+            if (this.stream) {
+                console.log('[MEDIA] Остановка медиапотока');
+                this.stream.getTracks().forEach(t => t.stop());
+                this.stream = null;
+            }
+            
+            if (window.audioElements) {
+                window.audioElements.forEach(audio => {
+                    try {
+                        audio.pause();
+                        audio.srcObject = null;
+                    } catch (e) {
+                        console.error('[MEDIA] Ошибка при очистке аудио элемента:', e);
+                    }
+                });
+                window.audioElements.clear();
+            }
+            
+            this.isMicActive = false;
+            this.isConnected = false;
+            MediaManager.updateMicUI(this, false);
+            
+            console.log('[MEDIA] Все медиаресурсы освобождены');
+        }
+
+        destroySocket() {
+            if (this.socket) {
+                console.log('[SOCKET] Закрытие сокета');
+                this.socket.disconnect();
+                this.socket = null;
+            }
+        }
+
+        autoConnect() {
+            UIManager.openPanel(this, this.serverSelectorPanel);
+        }
+
+        updateStatus(text, status) {
+            if (this.statusText) this.statusText.textContent = text;
+            if (this.statusIndicator) this.statusIndicator.className = `status-indicator ${status}`;
+        }
+
+        addMessage(user, text) {
+            UIManager.addMessage(this, user, text);
+        }
+
+        async startConsuming() {
+            try {
+                if (!this.mediaData || !this.currentRoom || !this.isConnected) {
+                    console.log('[CONSUME] Пропускаем потребление: нет медиаданных, комнаты или соединение неактивно');
+                    return;
+                }
+
+                console.log('[CONSUME] Запрос списка производителей для комнаты:', this.currentRoom);
+                
+                const response = await fetch(`${this.API_SERVER_URL}/api/room/${this.currentRoom}/producers`, {
+                    headers: {
+                        'Authorization': `Bearer ${this.token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    console.error('[CONSUME] Ошибка при получении производителей:', response.status, response.statusText);
+                    return;
+                }
+                
+                const data = await response.json();
+                console.log('[CONSUME] Получены производители:', data.producers);
+                
+                const activeProducerIds = new Set(data.producers.map(p => p.id));
+                
+                // Удаляем consumer'ы для неактивных producer'ов
+                for (const producerId of this.existingProducers) {
+                    if (!activeProducerIds.has(producerId)) {
+                        console.log('[CONSUME] Удаляем consumer для неактивного producer:', producerId);
+                        const consumer = this.consumers.get(producerId);
+                        if (consumer) {
+                            consumer.close();
+                            this.consumers.delete(producerId);
+                            
+                            // Также удаляем аудио элемент
+                            if (window.audioElements && window.audioElements.has(producerId)) {
+                                const audio = window.audioElements.get(producerId);
+                                audio.pause();
+                                audio.srcObject = null;
+                                window.audioElements.delete(producerId);
+                            }
+                        }
+                        this.existingProducers.delete(producerId);
+                    }
+                }
+                
+                // Создаем consumer'ы только для новых producer'ов
+                for (const producer of data.producers) {
+                    if (producer.clientID !== this.clientID && !this.existingProducers.has(producer.id)) {
+                        console.log('[CONSUME] Создаем consumer для нового producer:', producer.id);
+                        await this.createConsumer(producer.id);
+                        this.existingProducers.add(producer.id);
+                    }
+                }
+            } catch (error) {
+                console.error('[CONSUME] Ошибка при получении производителей:', error);
+            }
+        }
+
+        async createConsumer(producerId) {
+            try {
+                console.log('[CONSUME] Создание потребителя для производителя:', producerId);
+                
+                const response = await fetch(`${this.mediaData.mediaServerUrl}/api/consume`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        producerId,
+                        rtpCapabilities: this.device.rtpCapabilities,
+                        transportId: this.recvTransport.id
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || `HTTP ${response.status}: Не удалось создать потребителя`);
+                }
+                
+                const data = await response.json();
+                console.log('[CONSUME] Данные потребителя:', data);
+                
+                // Создаем потребитель
+                const consumer = await this.recvTransport.consume({
+                    id: data.id,
+                    producerId: data.producerId,
+                    kind: data.kind,
+                    rtpParameters: data.rtpParameters
+                });
+                
+                // Сохраняем потребителя
+                this.consumers.set(producerId, consumer);
+                
+                // Воспроизводим аудио
+                const audio = new Audio();
+                const stream = new MediaStream([consumer.track.clone()]);
+                audio.srcObject = stream;
+                audio.autoplay = true;
+                audio.volume = 0.8; // Устанавливаем комфортную громкость
+                
+                // Сохраняем аудио элемент для последующего управления
+                if (!window.audioElements) {
+                    window.audioElements = new Map();
+                }
+                window.audioElements.set(producerId, audio);
+                
+                console.log('[CONSUME] Потребитель создан и аудио воспроизводится');
+                
+            } catch (error) {
+                console.error('[CONSUME] Ошибка при создании потребителя:', error);
+            }
+        }
     }
-    new VoiceChatClient();
-});
-// Очистка при закрытии страницы
-window.addEventListener('beforeunload', () => {
-    if (window.voiceChatClient) window.voiceChatClient.destroy();
+
+    console.log('[APP] Запуск VoiceChatClient...');
+    window.client = new VoiceChatClient();
 });

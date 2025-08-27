@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Voice Chat</title>
     <link rel="stylesheet" href="styles.css">
-    <!-- Иконки (опционально) -->
+    <!-- Иконки -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
@@ -18,14 +18,11 @@
             </div>
             <div class="server-list">
                 <button class="server-item add-server-btn" id="addServerBtn">
-                    <span>+</span> Добавить сервер
+                    <span>+</span> Создать сервер
                 </button>
-                <button class="server-item saved-server-btn" data-server-id="default">
-                    <span>🏠</span> Основной сервер
-                </button>
+                <!-- Серверы будут добавлены динамически -->
             </div>
         </div>
-
         <!-- Панель комнат (в мобильной версии) -->
         <div class="panel-overlay room-selector-panel" id="roomSelectorPanel">
             <div class="panel-header">
@@ -33,13 +30,10 @@
                 <button class="close-panel-btn" id="closeRoomPanelBtn">✕</button>
             </div>
             <div class="rooms-list">
-                <div class="room-item" data-room="general">🔊 Общий голосовой канал</div>
-                <div class="room-item" data-room="music">🎵 Музыкальная комната</div>
-                <div class="room-item" data-room="conference">💼 Конференция</div>
+                <!-- Комнаты будут добавлены динамически -->
             </div>
         </div>
-
-        <!-- Панель участников (в мобильной версии) -->
+        <!-- ЕДИНАЯ ПАНЕЛЬ участников (работает на всех устройствах) -->
         <div class="panel-overlay members-panel" id="membersPanel">
             <div class="panel-header">
                 <span class="panel-title">Участники — <span id="membersCount">0</span></span>
@@ -53,7 +47,6 @@
                 </div>
             </div>
         </div>
-
         <!-- Сайдбар (десктоп) -->
         <div class="sidebar" id="sidebar">
             <div class="sidebar-header">
@@ -62,9 +55,7 @@
                 <button class="settings-btn" id="openSettingsBtn">⚙</button>
             </div>
             <div class="rooms-list">
-                <div class="room-item active" data-room="general">🔊 Общий голосовой канал</div>
-                <div class="room-item" data-room="music">🎵 Музыкальная комната</div>
-                <div class="room-item" data-room="conference">💼 Конференция</div>
+                <!-- Комнаты будут добавлены динамически -->
             </div>
             <div class="mic-control">
                 <button id="micButton" class="mic-button" disabled>
@@ -73,21 +64,20 @@
                 </button>
             </div>
         </div>
-
         <!-- Основной чат -->
         <div class="main-content" id="mainContent">
             <div class="chat-header">
-                <!-- Левые кнопки (мобильные) -->
                 <div class="chat-header-controls left">
                     <button class="mobile-btn" id="openServerBtnMobile">🌐</button>
+                    <button class="mobile-btn" id="openRoomBtnMobile">🔊</button>
                     <button class="mobile-btn" id="toggleSidebarBtn">☰</button>
                     <button class="mobile-btn" id="openSettingsBtnMobile">⚙</button>
                 </div>
-                <div class="chat-header-title" id="currentRoomTitle">Общий голосовой канал</div>
-                <!-- Правые кнопки (мобильные) -->
+                <div class="chat-header-title" id="currentRoomTitle">Голосовой чат</div>
                 <div class="chat-header-controls right">
                     <button class="mobile-btn" id="mobileMicBtn">🎤</button>
-                    <button class="mobile-btn" id="toggleMembersBtn">👥</button>
+                    <!-- КНОПКА ДЛЯ ОТКРЫТИЯ ПАНЕЛИ УЧАСТНИКОВ НА ВСЕХ УСТРОЙСТВАХ -->
+                    <button class="members-btn" id="toggleMembersBtn">👥</button>
                 </div>
             </div>
             <div class="chat-area">
@@ -100,7 +90,7 @@
                                     <div class="message-username">System</div>
                                     <div class="message-time" id="systemTime"></div>
                                 </div>
-                                <div class="message-text">Подключение к серверу...</div>
+                                <div class="message-text">Ожидание подключения...</div>
                             </div>
                         </div>
                     </div>
@@ -110,28 +100,12 @@
                 </div>
             </div>
         </div>
-
-        <!-- Панель участников (десктоп) -->
-        <div class="members-panel-desktop" id="membersPanelDesktop">
-            <div class="panel-header">
-                <span class="panel-title">Участники — <span id="membersCountDesktop">0</span></span>
-            </div>
-            <div class="members-list" id="membersListDesktop">
-                <div class="member-item">
-                    <div class="member-avatar">Вы</div>
-                    <div class="member-name">Вы</div>
-                    <div class="member-status muted" id="selfStatusDesktop"></div>
-                </div>
-            </div>
-        </div>
     </div>
-
     <!-- Статус-бар -->
     <div class="status-bar">
         <span class="status-indicator" id="statusIndicator"></span>
         <span class="status-text" id="statusText">Ожидание подключения к серверу...</span>
     </div>
-
     <!-- Модальное окно настроек -->
     <div id="settingsModal" class="modal">
         <div class="modal-content">
@@ -156,15 +130,17 @@
             <button class="apply-settings-btn" id="applySettingsBtn">Применить настройки</button>
         </div>
     </div>
-
-    <!-- ВАЖНО: Подключаем зависимости в правильном порядке -->
-    <!-- 1. Socket.IO Client (для чата) -->
+    <!-- ВАЖНО: Подключаем зависимости -->
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-
-    <!-- 2. mediasoup-client -->
     <script src="/mediasoup-client.min.js"></script>
-
-    <!-- 3. Твой основной скрипт -->
+    <!-- МОДУЛИ — строго в этом порядке -->
+    <script src="utils.js"></script>
+    <script src="auth.js"></script>
+    <script src="servers.js"></script>
+    <script src="rooms.js"></script>
+    <script src="media.js"></script>
+    <script src="chat.js"></script>
+    <script src="ui.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
