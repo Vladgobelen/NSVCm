@@ -65,12 +65,16 @@ class VoiceChatClient {
         this.roomsList = document.querySelector('.rooms-list');
         this.membersList = document.querySelector('.members-list');
         this.messagesContainer = document.querySelector('.messages-container');
-        this.serversPanel = document.querySelector('.servers-panel');
-        this.roomsPanel = document.querySelector('.rooms-panel');
+        this.serversPanel = document.getElementById('servers-panel'); 
+        this.roomsPanel = document.getElementById('rooms-panel'); 
         this.sidebar = document.querySelector('.sidebar');
         this.membersPanel = document.querySelector('.members-panel');
-    }
-
+        this.serverSearchInput = document.querySelector('#serverSearch');
+        this.clearSearchBtn = document.querySelector('#clearSearchBtn');    
+        this.clearSearchBtn.addEventListener('click', () => {
+            ServerManager.clearSearchAndShowAllServers(this);
+        });
+}
     initEventListeners() {
         this.micButton.addEventListener('click', () => this.toggleMicrophone());
         this.micToggleBtn.addEventListener('click', () => this.toggleMicrophone());
@@ -116,17 +120,33 @@ class VoiceChatClient {
         });
 
         this.serversToggleBtn.addEventListener('click', () => {
+            // При переходе на панель серверов очищаем поиск и показываем все серверы
+            ServerManager.clearSearchAndShowAllServers(this);
             this.showPanel('servers');
         });
-
         this.roomsToggleBtn.addEventListener('click', () => {
             this.showPanel('rooms');
+        });
+
+        // Обработчик для поиска серверов
+        this.serverSearchInput.addEventListener('input', (e) => {
+            this.searchServers(e.target.value);
         });
     }
 
     showPanel(panelName) {
+        if (!this.serversPanel) this.serversPanel = document.getElementById('servers-panel');
+        if (!this.roomsPanel) this.roomsPanel = document.getElementById('rooms-panel');
+        if (!this.serversToggleBtn) this.serversToggleBtn = document.querySelector('#serversToggle');
+        if (!this.roomsToggleBtn) this.roomsToggleBtn = document.querySelector('#roomsToggle');
+    
+        if (!this.serversPanel || !this.roomsPanel || !this.serversToggleBtn || !this.roomsToggleBtn) {
+            console.error('Элементы панелей не найдены');
+            return;
+        }
+    
         this.activePanel = panelName;
-        
+    
         if (panelName === 'servers') {
             this.serversToggleBtn.classList.add('active');
             this.roomsToggleBtn.classList.remove('active');
@@ -139,7 +159,6 @@ class VoiceChatClient {
             this.roomsPanel.classList.add('active');
         }
     }
-
     processUrlParams() {
         const params = new URLSearchParams(window.location.search);
         this.currentServerId = params.get('server');
@@ -147,7 +166,7 @@ class VoiceChatClient {
         this.inviteServerId = params.get('invite');
     }
 
-async initAutoConnect() {
+    async initAutoConnect() {
         this.processUrlParams();
 
         try {
@@ -196,6 +215,16 @@ async initAutoConnect() {
             UIManager.showError('Критическая ошибка: не удалось загрузить систему авторизации');
         }
     }
+
+    async disconnectFromRoom() {
+    if (this.currentRoom) {
+        MediaManager.disconnect(this);
+        this.currentRoom = null;
+        this.isConnected = false;
+        this.isMicActive = false;
+        UIManager.updateMicButton('disconnected');
+    }
+}
     async joinServer(serverId) {
         try {
             const res = await fetch(`${this.API_SERVER_URL}/api/servers/${serverId}/join`, {
@@ -231,61 +260,84 @@ async initAutoConnect() {
         }
     }
 
-    async joinRoom(roomId) {
-        try {
-            this.showMessage('System', 'Подключение к комнате...');
-            
-            const res = await fetch(this.CHAT_API_URL, {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json', 
-                    'Authorization': `Bearer ${this.token}` 
-                },
-                body: JSON.stringify({ 
-                    roomId, 
-                    userId: this.userId, 
-                    token: this.token, 
-                    clientId: this.clientID 
-                })
-            });
-            
-            if (!res.ok) {
-                const errorText = await res.text();
-                throw new Error(`Ошибка входа: ${res.status} ${errorText}`);
-            }
-            
-            const data = await res.json();
-            
-            if (!data.success) {
-                throw new Error(data.error || 'Не удалось войти в комнату');
-            }
-            
-            this.clientID = data.clientId;
-            this.mediaData = data.mediaData;
+async joinRoom(roomId) {
+    try {
+        this.showMessage('System', 'Подключение к комнате...');
+        
+        const res = await fetch(this.CHAT_API_URL, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json', 
+                'Authorization': `Bearer ${this.token}` 
+            },
+            body: JSON.stringify({ 
+                roomId, 
+                userId: this.userId, 
+                token: this.token, 
+                clientId: this.clientID 
+            })
+        });
+        
+        if (!res.ok) {
+            const errorText = await res.text();
+            throw new Error(`Ошибка входа: ${res.status} ${errorText}`);
+        }
+        
+        const data = await res.json();
+        
+        if (!data.success) {
+            throw new Error(data.error || 'Не удалось войти в комнату');
+        }
+        
+        this.clientID = data.clientId;
+        this.mediaData = data.mediaData;
+        
+        // Подключаемся к медиасерверу только для голосовых комнат
+        if (data.roomType === 'voice') {
             await MediaManager.connect(this, roomId, data.mediaData);
             
+            // Немедленно начинаем потреблять аудио других участников
             setTimeout(() => {
                 this.startConsuming();
             }, 1000);
             
-            this.showMessage('System', 'Вы вошли в комнату');
-            UIManager.onRoomJoined(this, data.roomName);
-            
-        } catch (e) {
-            console.error('Ошибка входа в комнату:', e);
-            UIManager.updateStatus('Ошибка: ' + e.message, 'disconnected');
+            // Устанавливаем статус микрофона как отключенный (красный)
+            UIManager.updateMicButton('connected');
         }
+        
+        this.showMessage('System', 'Вы вошли в комнату');
+        UIManager.onRoomJoined(this, data.roomName);
+        
+    } catch (e) {
+        console.error('Ошибка входа в комнату:', e);
+        UIManager.updateStatus('Ошибка: ' + e.message, 'disconnected');
     }
-
-    async toggleMicrophone() {
+}
+async toggleMicrophone() {
+    try {
         if (this.isMicActive) {
+            // Микрофон активен - выключаем
             await MediaManager.stopMicrophone(this);
+            UIManager.updateMicButton('connected'); // Красный - подключен, но микрофон выключен
         } else {
-            await MediaManager.startMicrophone(this);
+            // Микрофон не активен - включаем
+            try {
+                await MediaManager.startMicrophone(this);
+                UIManager.updateMicButton('active'); // Зеленый - микрофон активен
+            } catch (error) {
+                if (error.message.includes('permission') || error.message.includes('разрешение')) {
+                    UIManager.showError('Необходимо разрешение на использование микрофона');
+                    UIManager.updateMicButton('error'); // Ошибка - не удалось получить доступ
+                } else {
+                    throw error;
+                }
+            }
         }
-        UIManager.updateMicButton(this.isMicActive ? 'active' : 'connected');
+    } catch (error) {
+        console.error('Ошибка переключения микрофона:', error);
+        UIManager.showError('Ошибка микрофона: ' + error.message);
     }
-
+}
     sendMessage(text) {
         if (!text.trim()) return;
         if (!this.currentRoom) {
@@ -311,62 +363,94 @@ async initAutoConnect() {
         });
     }
 
-    startSyncInterval() {
-        if (this.syncInterval) clearInterval(this.syncInterval);
-        
-        this.syncInterval = setInterval(async () => {
-            try {
-                await ServerManager.loadServers(this);
-                if (this.currentServerId) {
-                    await RoomManager.loadRoomsForServer(this, this.currentServerId);
-                }
-                if (this.currentRoom && this.isConnected) {
-                    await this.startConsuming();
-                }
-            } catch (error) {
-                console.error('Ошибка синхронизации:', error);
-            }
-        }, 15000);
-    }
-
-    async startConsuming() {
+startSyncInterval() {
+    if (this.syncInterval) clearInterval(this.syncInterval);
+    
+    this.syncInterval = setInterval(async () => {
         try {
-            if (!this.mediaData || !this.currentRoom || !this.isConnected) return;
-
-            const response = await fetch(`${this.API_SERVER_URL}/api/room/${this.currentRoom}/producers`, {
-                headers: {
-                    'Authorization': `Bearer ${this.token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-            
-            if (!response.ok) return;
-            
-            const data = await response.json();
-            const activeProducerIds = new Set(data.producers.map(p => p.id));
-            
-            for (const producerId of this.existingProducers) {
-                if (!activeProducerIds.has(producerId)) {
-                    const consumer = this.consumers.get(producerId);
-                    if (consumer) {
-                        consumer.close();
-                        this.consumers.delete(producerId);
-                    }
-                    this.existingProducers.delete(producerId);
-                }
+            // Обновляем список серверов и комнат
+            await ServerManager.loadServers(this);
+            if (this.currentServerId) {
+                await RoomManager.loadRoomsForServer(this, this.currentServerId);
             }
             
-            for (const producer of data.producers) {
-                if (producer.clientID !== this.clientID && !this.existingProducers.has(producer.id)) {
-                    await MediaManager.createConsumer(this, producer.id);
-                    this.existingProducers.add(producer.id);
-                }
+            // Обновляем потребителей, если подключены к голосовой комнате
+            if (this.currentRoom && this.isConnected) {
+                await this.startConsuming();
             }
         } catch (error) {
-            console.error('Ошибка потребления:', error);
+            console.error('Ошибка синхронизации:', error);
         }
-    }
+    }, 5000); // Увеличили интервал до 5 секунд
+}
+async startConsuming() {
+    try {
+        if (!this.mediaData || !this.currentRoom || !this.isConnected) {
+            console.log('[MEDIA] Не могу начать потребление: отсутствуют необходимые данные');
+            return;
+        }
 
+        console.log('[MEDIA] Запрос производителей комнаты:', this.currentRoom);
+        
+        const response = await fetch(`${this.API_SERVER_URL}/api/room/${this.currentRoom}/producers`, {
+            headers: {
+                'Authorization': `Bearer ${this.token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            console.warn('[MEDIA] Не удалось получить производителей:', response.status);
+            return;
+        }
+        
+        const data = await response.json();
+        console.log('[MEDIA] Получены производители:', data.producers);
+        
+        const activeProducerIds = new Set(data.producers.map(p => p.id));
+        
+        // Удаляем старые consumer'ы для неактивных производителей
+        for (const producerId of this.existingProducers) {
+            if (!activeProducerIds.has(producerId)) {
+                const consumer = this.consumers.get(producerId);
+                if (consumer) {
+                    try {
+                        consumer.close();
+                    } catch (e) {
+                        console.warn('[MEDIA] Ошибка при закрытии consumer:', e);
+                    }
+                    this.consumers.delete(producerId);
+                    
+                    // Удаляем аудио элемент
+                    if (window.audioElements && window.audioElements.has(producerId)) {
+                        try {
+                            window.audioElements.get(producerId).pause();
+                            window.audioElements.delete(producerId);
+                        } catch (e) {
+                            console.warn('[MEDIA] Ошибка при удалении аудио элемента:', e);
+                        }
+                    }
+                }
+                this.existingProducers.delete(producerId);
+            }
+        }
+        
+        // Создаем новые consumer'ы для активных производителей
+        for (const producer of data.producers) {
+            if (producer.clientID !== this.clientID && !this.existingProducers.has(producer.id)) {
+                try {
+                    await MediaManager.createConsumer(this, producer.id);
+                    this.existingProducers.add(producer.id);
+                    console.log('[MEDIA] Создан consumer для producer:', producer.id);
+                } catch (error) {
+                    console.error('[MEDIA] Ошибка создания consumer:', error);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('[MEDIA] Ошибка потребления:', error);
+    }
+}
     async reconnectToRoom(roomId) {
         this.disconnectFromMedia();
         this.destroySocket();
@@ -379,13 +463,13 @@ async initAutoConnect() {
     }
 
     destroySocket() {
-        // Реализация уничтожения сокета
         if (this.socket) {
             console.log('Закрытие сокета');
             this.socket.disconnect();
             this.socket = null;
         }
     }
+
     autoConnect() {
         this.sidebar.classList.add('open');
     }
@@ -396,6 +480,11 @@ async initAutoConnect() {
 
     showError(text) {
         UIManager.showError(text);
+    }
+
+    // Новый метод для поиска серверов
+    async searchServers(query) {
+        await ServerManager.searchServers(this, query);
     }
 }
 

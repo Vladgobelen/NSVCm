@@ -25,6 +25,59 @@ body {
     overflow: hidden;
 }
 
+.server-action-btn.leave-btn {
+    color: var(--warning);
+}
+
+.server-action-btn.leave-btn:hover {
+    background: var(--warning);
+    color: white;
+}
+
+.server-actions {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+}
+
+.search-container {
+    display: flex;
+    align-items: center;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--bg-tertiary);
+    gap: 8px;
+}
+
+.clear-search-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 3px;
+    font-size: 14px;
+}
+
+.clear-search-btn:hover {
+    background: var(--bg-modifier);
+    color: var(--text-normal);
+}
+
+
+.not-member-badge {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-left: 4px;
+}
+
+.server-action-btn.join-btn {
+    color: var(--success);
+}
+
+.server-action-btn.join-btn:hover {
+    background: var(--success);
+    color: white;
+}
 .app {
     display: flex;
     height: 100vh;
@@ -45,6 +98,21 @@ body {
     display: flex;
     border-bottom: 1px solid var(--bg-tertiary);
     background: var(--bg-tertiary);
+}
+
+.search-container {
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.search-input {
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 4px;
+    border: none;
+    background: var(--bg-modifier);
+    color: var(--text-normal);
+    outline: none;
 }
 
 .panel-toggle-btn {
@@ -321,6 +389,10 @@ body {
     color: var(--danger);
 }
 
+.mic-toggle-btn.error {
+    color: var(--warning);
+}
+
 .mic-toggle-btn.active {
     color: var(--success);
 }
@@ -576,6 +648,16 @@ body {
 
 .mic-button.active {
     background: var(--success);
+}
+
+.mic-button.error {
+    background: var(--warning);
+    animation: pulse 1s infinite;
+}
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
 }
 
 .mic-button.hidden {

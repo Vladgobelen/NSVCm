@@ -1,41 +1,52 @@
 import UIManager from './UIManager.js';
 
 class RoomManager {
-    static async loadRoomsForServer(client, serverId) {
-        try {
-            client.currentServerId = serverId;
-            client.currentServer = client.servers.find(s => s.id === serverId) || null;
-            
-            UIManager.updateStatus('Загрузка комнат...', 'connecting');
-            
-            const res = await fetch(`${client.API_SERVER_URL}/api/servers/${serverId}/rooms`, {
-                headers: { 
-                    'Authorization': `Bearer ${client.token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-            
-            if (!res.ok) {
-                const errorData = await res.json().catch(() => ({}));
-                throw new Error(`Не удалось загрузить комнаты: ${errorData.error || res.statusText}`);
+static async loadRoomsForServer(client, serverId) {
+    try {
+        console.log('Загрузка комнат для сервера:', serverId);
+        client.currentServerId = serverId;
+        client.currentServer = client.servers.find(s => s.id === serverId) || null;
+        
+        UIManager.updateStatus('Загрузка комнат...', 'connecting');
+        
+        const res = await fetch(`${client.API_SERVER_URL}/api/servers/${serverId}/rooms`, {
+            headers: { 
+                'Authorization': `Bearer ${client.token}`,
+                'Content-Type': 'application/json'
             }
-            
-            const data = await res.json();
-            
-            if (!data || !Array.isArray(data.rooms)) {
-                throw new Error('Некорректные данные от сервера');
-            }
-            
-            UIManager.renderRooms(client, data.rooms);
-            UIManager.updateStatus('Комнаты загружены', 'normal');
-            
-        } catch (error) {
-            console.error('Критическая ошибка при загрузке комнат:', error);
-            UIManager.addMessage('System', `Ошибка: ${error.message}`);
-            UIManager.updateStatus('Ошибка загрузки комнат', 'disconnected');
+        });
+        
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            throw new Error(`Не удалось загрузить комнаты: ${errorData.error || res.statusText}`);
         }
+        
+        const data = await res.json();
+        
+        if (!data || !Array.isArray(data.rooms)) {
+            throw new Error('Некорректные данные от сервера');
+        }
+        
+        console.log('Получены комнаты:', data.rooms);
+        UIManager.renderRooms(client, data.rooms);
+        UIManager.updateStatus('Комнаты загружены', 'normal');
+        
+        // Обновляем статус кнопки микрофона в зависимости от типа комнаты
+        if (client.currentRoom) {
+            const currentRoom = data.rooms.find(room => room.id === client.currentRoom);
+            if (currentRoom && currentRoom.type === 'voice') {
+                UIManager.updateMicButton('connected');
+            } else {
+                UIManager.updateMicButton('disconnected');
+            }
+        }
+        
+    } catch (error) {
+        console.error('Критическая ошибка при загрузке комнат:', error);
+        UIManager.addMessage('System', `Ошибка: ${error.message}`);
+        UIManager.updateStatus('Ошибка загрузки комнат', 'disconnected');
     }
-
+}
     static async createRoom(client) {
         if (client.isCreatingRoom) return;
         client.isCreatingRoom = true;

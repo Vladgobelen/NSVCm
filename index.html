@@ -3,30 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline'">
-    <title>Voice Chat</title>
+    <script src="/mediasoup-client.min.js"></script>
+    <title>VoiceChat</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="app">
         <div class="sidebar">
             <div class="sidebar-header">
-                <button class="panel-toggle-btn active" id="serversToggle">Серверы</button>
-                <button class="panel-toggle-btn" id="roomsToggle">Комнаты</button>
+                <button id="serversToggle" class="panel-toggle-btn active">Серверы</button>
+                <button id="roomsToggle" class="panel-toggle-btn">Комнаты</button>
                 <button class="close-sidebar-btn">✕</button>
             </div>
             
-            <div class="panel-content servers-panel active">
+            <div class="panel-content active" id="servers-panel">
                 <div class="panel-header">
-                    <span>Серверы</span>
+                    <h3>Серверы</h3>
                     <button class="create-server-btn" title="Создать сервер">+</button>
+                </div>
+                <div class="search-container">
+                    <input type="text" id="serverSearch" placeholder="Поиск серверов..." class="search-input">
+                    <button id="clearSearchBtn" class="clear-search-btn" title="Очистить поиск">✕</button>
                 </div>
                 <div class="servers-list"></div>
             </div>
             
-            <div class="panel-content rooms-panel">
+            <div class="panel-content" id="rooms-panel">
                 <div class="panel-header">
-                    <span>Комнаты</span>
+                    <h3>Комнаты</h3>
                     <button class="create-room-btn" title="Создать комнату">+</button>
                 </div>
                 <div class="rooms-list"></div>
@@ -36,9 +40,9 @@
         <div class="main-content">
             <div class="chat-header">
                 <button class="toggle-sidebar-btn">☰</button>
-                <span class="current-room-title">Выберите комнату</span>
+                <div class="current-room-title">Выберите комнату</div>
                 <div class="header-controls">
-                    <button class="mic-toggle-btn disconnected">🎤</button>
+                    <button class="mic-toggle-btn connected">🎤</button>
                     <button class="settings-btn">⚙️</button>
                     <button class="toggle-members-btn">👥</button>
                 </div>
@@ -47,29 +51,23 @@
             <div class="chat-area">
                 <div class="messages-container"></div>
                 <div class="input-area">
-                    <input type="text" class="message-input" placeholder="Сообщение...">
-                    <button class="send-btn">➤</button>
+                    <input type="text" class="message-input" placeholder="Введите сообщение...">
+                    <button class="send-btn">Отправить</button>
                 </div>
             </div>
         </div>
         
         <div class="members-panel">
             <div class="panel-header">
-                <span>Участники</span>
+                <h3>Участники</h3>
                 <button class="close-panel-btn">✕</button>
             </div>
             <div class="members-list"></div>
         </div>
         
-        <div class="modal-overlay hidden">
-            <div class="modal-content"></div>
-        </div>
-        
-        <button class="mic-button disconnected">🎤</button>
+        <button class="mic-button connected">🎤</button>
     </div>
-    
-    <!-- Используем локальный файл mediasoup-client -->
-    <script src="mediasoup-client.min.js"></script>
+
     <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -1,0 +1,2118 @@
+app.js:
+import VoiceChatClient from './modules/VoiceChatClient.js';
+
+document.addEventListener('DOMContentLoaded', () => {
+    window.client = new VoiceChatClient();
+});
+
+
+components/ChatArea.js:
+
+
+components/MembersPanel.js:
+
+
+components/Modal.js:
+
+
+components/Sidebar.js:
+
+
+modules/AuthManager.js:
+class AuthManager {
+    static STORAGE_KEY = 'voicechat_users';
+    static LAST_USER_KEY = 'voicechat_lastuser';
+
+    static getAllUsers() {
+        try {
+            return JSON.parse(localStorage.getItem(this.STORAGE_KEY)) || {};
+        } catch {
+            return {};
+        }
+    }
+
+    static saveAllUsers(users) {
+        localStorage.setItem(this.STORAGE_KEY, JSON.stringify(users));
+    }
+
+    static loadLastUser() {
+        try {
+            return JSON.parse(localStorage.getItem(this.LAST_USER_KEY));
+        } catch {
+            return null;
+        }
+    }
+
+    static saveLastUser(user) {
+        localStorage.setItem(this.LAST_USER_KEY, JSON.stringify(user));
+    }
+
+    static removeUser(username) {
+        const users = this.getAllUsers();
+        delete users[username];
+        this.saveAllUsers(users);
+        
+        const lastUser = this.loadLastUser();
+        if (lastUser && lastUser.username === username) {
+            localStorage.removeItem(this.LAST_USER_KEY);
+        }
+    }
+
+    static async tryAutoLogin(client) {
+        console.log('[AUTH] Попытка автовхода...');
+        const lastUser = this.loadLastUser();
+        if (!lastUser) {
+            console.log('[AUTH] Нет сохраненного пользователя');
+            return false;
+        }
+
+        console.log('[AUTH] Автовход: найден пользователь', lastUser.username);
+        
+        const isValid = await this.validateToken(client, lastUser.userId, lastUser.token);
+        if (!isValid) {
+            console.log('[AUTH] Токен невалиден');
+            this.removeUser(lastUser.username);
+            return false;
+        }
+
+        client.userId = lastUser.userId;
+        client.token = lastUser.token;
+        client.username = lastUser.username;
+        console.log('[AUTH] Автовход успешен');
+        return true;
+    }
+
+    static async validateToken(client, userId, token) {
+        console.log('[AUTH] Проверка токена...');
+        try {
+            const response = await fetch(`${client.API_SERVER_URL}/api/auth/validate`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ userId, token })
+            });
+
+            if (!response.ok) {
+                console.log('[AUTH] Токен не прошёл проверку');
+                return false;
+            }
+
+            const data = await response.json();
+            return data.valid === true;
+        } catch (error) {
+            console.error('[AUTH] Ошибка проверки токена:', error);
+            return false;
+        }
+    }
+
+    static async registerUser(client, username, password) {
+        console.log('[AUTH] registerUser вызван:', username);
+        try {
+            const response = await fetch(`${client.API_SERVER_URL}/api/auth`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+
+            const responseText = await response.text();
+            console.log('[AUTH] Ответ сервера:', response.status, responseText);
+
+            let data;
+            try {
+                data = JSON.parse(responseText);
+            } catch (e) {
+                console.error('[AUTH] Ошибка парсинга JSON:', e);
+                throw new Error('Сервер вернул неверный формат данных');
+            }
+
+            if (!response.ok) {
+                throw new Error(data.error || `Ошибка сервера: ${response.status}`);
+            }
+
+            const users = this.getAllUsers();
+            users[username] = {
+                username: username,
+                password: password,
+                userId: data.userId,
+                token: data.token
+            };
+            this.saveAllUsers(users);
+            this.saveLastUser({
+                username: username,
+                userId: data.userId,
+                token: data.token
+            });
+
+            client.userId = data.userId;
+            client.token = data.token;
+            client.username = username;
+
+            console.log('[AUTH] Пользователь зарегистрирован и вошел');
+            return true;
+        } catch (error) {
+            console.error('[AUTH] Ошибка входа:', error);
+            throw error;
+        }
+    }
+
+	static showAuthModal(client) {
+        const users = this.getAllUsers();
+        const savedUser = this.loadLastUser();
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.style.display = 'flex';
+        modal.innerHTML = `
+            <div class="modal-content">
+                <h2>Выберите пользователя</h2>
+                <div class="saved-users-list">
+                    ${Object.keys(users).length === 0 
+                        ? '<div class="no-users-message">Нет сохранённых пользователей</div>' 
+                        : Object.values(users).map(u => `
+                            <div class="saved-user-item" data-username="${u.username}">
+                                <span>${u.username}</span>
+                                <button class="remove-user-btn" data-user="${u.username}">✕</button>
+                            </div>
+                        `).join('')}
+                </div>
+                <input type="text" id="usernameInput" placeholder="Никнейм" value="${savedUser ? savedUser.username : ''}">
+                <input type="password" id="passwordInput" placeholder="Пароль">
+                <button id="authSubmitBtn">Войти</button>
+                <button id="createNewUserBtn">➕ Создать нового</button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        
+        const usernameInput = modal.querySelector('#usernameInput');
+        const passwordInput = modal.querySelector('#passwordInput');
+        const submitBtn = modal.querySelector('#authSubmitBtn');
+
+        modal.querySelectorAll('.saved-user-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const username = item.dataset.username;
+                const user = users[username];
+                usernameInput.value = username;
+                passwordInput.value = user.password;
+                passwordInput.focus();
+            });
+        });
+
+        modal.querySelectorAll('.remove-user-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const username = btn.dataset.user;
+                if (confirm(`Удалить пользователя ${username}?`)) {
+                    this.removeUser(username);
+                    modal.remove();
+                    this.showAuthModal(client);
+                }
+            });
+        });
+
+        modal.querySelector('#createNewUserBtn').addEventListener('click', () => {
+            usernameInput.value = '';
+            passwordInput.value = '';
+            usernameInput.focus();
+        });
+
+        const handleSubmit = async () => {
+            const u = usernameInput.value.trim();
+            const p = passwordInput.value.trim();
+            if (u.length < 3 || p.length < 4) {
+                alert('Ник — от 3, пароль — от 4');
+                return;
+            }
+            try {
+                const success = await this.registerUser(client, u, p);
+                if (success) {
+                    modal.remove();
+                    
+                    // Исправляем вызовы методов
+                    await import('./ServerManager.js').then(module => {
+                        return module.default.loadServers(client);
+                    });
+
+                    if (client.inviteServerId) {
+                        const serverExists = client.servers.some(s => s.id === client.inviteServerId);
+                        if (serverExists) {
+                            client.currentServerId = client.inviteServerId;
+                            await import('./RoomManager.js').then(module => {
+                                return module.default.loadRoomsForServer(client, client.inviteServerId);
+                            });
+                            client.startSyncInterval();
+                            return;
+                        }
+                    }
+
+                    if (client.currentServerId) {
+                        await import('./RoomManager.js').then(module => {
+                            return module.default.loadRoomsForServer(client, client.currentServerId);
+                        });
+                        client.startSyncInterval();
+                    }
+                    if (client.currentRoom) {
+                        await client.reconnectToRoom(client.currentRoom);
+                    }
+                }
+            } catch (error) {
+                alert('Ошибка: ' + error.message);
+            }
+        };
+
+        submitBtn.addEventListener('click', handleSubmit);
+        passwordInput.addEventListener('keypress', e => {
+            if (e.key === 'Enter') handleSubmit();
+        });
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.remove();
+            }
+        });
+    }
+}
+
+export default AuthManager;
+
+
+modules/MediaManager.js:
+class MediaManager {
+    static async connect(client, roomId, mediaData) {
+        try {
+            client.device = new mediasoupClient.Device();
+            await client.device.load({ routerRtpCapabilities: mediaData.rtpCapabilities });
+            
+            await this.createTransports(client, mediaData);
+            await this.startMicrophone(client);
+            
+            this.startKeepAlive(client, roomId);
+            client.isConnected = true;
+            
+        } catch (error) {
+            throw new Error(`Media connection failed: ${error.message}`);
+        }
+    }
+
+    static async createTransports(client, mediaData) {
+        client.sendTransport = client.device.createSendTransport({
+            id: mediaData.sendTransport.id,
+            iceParameters: mediaData.sendTransport.iceParameters,
+            iceCandidates: mediaData.sendTransport.iceCandidates,
+            dtlsParameters: mediaData.sendTransport.dtlsParameters
+        });
+
+        client.recvTransport = client.device.createRecvTransport({
+            id: mediaData.recvTransport.id,
+            iceParameters: mediaData.recvTransport.iceParameters,
+            iceCandidates: mediaData.recvTransport.iceCandidates,
+            dtlsParameters: mediaData.recvTransport.dtlsParameters
+        });
+
+        client.sendTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+            try {
+                await fetch(`${mediaData.mediaServerUrl}/api/transport/connect`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        transportId: client.sendTransport.id,
+                        dtlsParameters
+                    })
+                });
+                callback();
+            } catch (error) {
+                errback(error);
+            }
+        });
+
+        client.sendTransport.on('produce', async (parameters, callback, errback) => {
+            try {
+                const response = await fetch(`${mediaData.mediaServerUrl}/api/produce`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        transportId: client.sendTransport.id,
+                        kind: parameters.kind,
+                        rtpParameters: parameters.rtpParameters
+                    })
+                });
+                const data = await response.json();
+                callback({ id: data.producerId });
+            } catch (error) {
+                errback(error);
+            }
+        });
+
+        client.recvTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+            try {
+                await fetch(`${mediaData.mediaServerUrl}/api/transport/connect`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        transportId: client.recvTransport.id,
+                        dtlsParameters
+                    })
+                });
+                callback();
+            } catch (error) {
+                errback(error);
+            }
+        });
+    }
+
+    static async startMicrophone(client) {
+        client.stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                sampleRate: 48000
+            }
+        });
+        
+        const track = client.stream.getAudioTracks()[0];
+        client.audioProducer = await client.sendTransport.produce({
+            track,
+            encodings: [{ maxBitrate: client.bitrate, dtx: client.dtxEnabled }],
+            appData: { clientID: client.clientID, roomId: client.currentRoom }
+        });
+        
+        client.isMicActive = true;
+    }
+
+    static async stopMicrophone(client) {
+        if (client.audioProducer) {
+            client.audioProducer.close();
+            client.audioProducer = null;
+        }
+        
+        if (client.stream) {
+            client.stream.getTracks().forEach(track => track.stop());
+            client.stream = null;
+        }
+        
+        client.isMicActive = false;
+    }
+
+    static startKeepAlive(client, roomId) {
+        client.keepAliveInterval = setInterval(() => {
+            fetch(`${client.mediaData.mediaServerUrl}/api/health`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    clientId: client.clientID,
+                    roomId: roomId
+                })
+            }).catch(() => {});
+        }, 10000);
+    }
+
+    static async createConsumer(client, producerId) {
+        try {
+            const response = await fetch(`${client.mediaData.mediaServerUrl}/api/consume`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    producerId,
+                    rtpCapabilities: client.device.rtpCapabilities,
+                    transportId: client.recvTransport.id
+                })
+            });
+            
+            if (!response.ok) throw new Error(await response.text());
+            
+            const data = await response.json();
+            const consumer = await client.recvTransport.consume({
+                id: data.id,
+                producerId: data.producerId,
+                kind: data.kind,
+                rtpParameters: data.rtpParameters
+            });
+            
+            client.consumers.set(producerId, consumer);
+            
+            const audio = new Audio();
+            const stream = new MediaStream([consumer.track.clone()]);
+            audio.srcObject = stream;
+            audio.autoplay = true;
+            audio.volume = 0.8;
+            
+            if (!window.audioElements) window.audioElements = new Map();
+            window.audioElements.set(producerId, audio);
+            
+        } catch (error) {
+            console.error('Ошибка создания потребителя:', error);
+        }
+    }
+
+    static disconnect(client) {
+        if (client.keepAliveInterval) {
+            clearInterval(client.keepAliveInterval);
+            client.keepAliveInterval = null;
+        }
+        
+        this.stopMicrophone(client);
+        
+        if (client.sendTransport) {
+            client.sendTransport.close();
+            client.sendTransport = null;
+        }
+        
+        if (client.recvTransport) {
+            client.recvTransport.close();
+            client.recvTransport = null;
+        }
+        
+        client.consumers.forEach(consumer => consumer.close());
+        client.consumers.clear();
+        client.existingProducers.clear();
+        
+        client.isConnected = false;
+    }
+}
+
+export default MediaManager;
+
+
+modules/RoomManager.js:
+import UIManager from './UIManager.js';
+
+class RoomManager {
+    static async loadRoomsForServer(client, serverId) {
+        try {
+            client.currentServerId = serverId;
+            client.currentServer = client.servers.find(s => s.id === serverId) || null;
+            
+            UIManager.updateStatus('Загрузка комнат...', 'connecting');
+            
+            const res = await fetch(`${client.API_SERVER_URL}/api/servers/${serverId}/rooms`, {
+                headers: { 
+                    'Authorization': `Bearer ${client.token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                throw new Error(`Не удалось загрузить комнаты: ${errorData.error || res.statusText}`);
+            }
+            
+            const data = await res.json();
+            
+            if (!data || !Array.isArray(data.rooms)) {
+                throw new Error('Некорректные данные от сервера');
+            }
+            
+            UIManager.renderRooms(client, data.rooms);
+            UIManager.updateStatus('Комнаты загружены', 'normal');
+            
+        } catch (error) {
+            console.error('Критическая ошибка при загрузке комнат:', error);
+            UIManager.addMessage('System', `Ошибка: ${error.message}`);
+            UIManager.updateStatus('Ошибка загрузки комнат', 'disconnected');
+        }
+    }
+
+    static async createRoom(client) {
+        if (client.isCreatingRoom) return;
+        client.isCreatingRoom = true;
+
+        try {
+            const name = prompt('Введите название комнаты:');
+            if (!name || name.length < 3) {
+                alert('Название должно быть от 3 символов');
+                return;
+            }
+            const type = confirm('Голосовая комната?') ? 'voice' : 'text';
+
+            console.log(`Создание комнаты: ${name}, тип: ${type}`);
+
+            const res = await fetch(`${client.API_SERVER_URL}/api/rooms`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${client.token}`
+                },
+                body: JSON.stringify({
+                    serverId: client.currentServerId,
+                    name: name.trim(),
+                    type: type,
+                    userId: client.userId,
+                    token: client.token
+                })
+            });
+
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                throw new Error(`Не удалось создать комнату: ${errorData.error || res.statusText}`);
+            }
+
+            UIManager.addMessage('System', `Комната "${name}" создана!`);
+            await RoomManager.loadRoomsForServer(client, client.currentServerId);
+
+        } catch (error) {
+            console.error('Ошибка при создании комнаты:', error);
+            alert('Ошибка: ' + error.message);
+        } finally {
+            client.isCreatingRoom = false;
+        }
+    }
+    
+    static async reconnectToRoom(client, roomId) {
+        console.log(`reconnectToRoom: ${roomId}`);
+        client.disconnectFromMedia();
+        client.destroySocket();
+        client.currentRoom = roomId;
+        await client.joinRoom(roomId);
+    }
+}
+
+export default RoomManager;
+
+
+modules/ServerManager.js:
+import UIManager from './UIManager.js';
+import RoomManager from './RoomManager.js';
+
+class ServerManager {
+    static getLocalStorageKey(client) {
+        return client.userId ? `voiceChatServers_${client.userId}` : null;
+    }
+
+    static saveServersToLocalStorage(client) {
+        if (!client.userId) return;
+        const key = this.getLocalStorageKey(client);
+        const serversData = {
+            servers: client.servers,
+            timestamp: Date.now()
+        };
+        localStorage.setItem(key, JSON.stringify(serversData));
+    }
+
+    static loadServersFromLocalStorage(client) {
+        if (!client.userId) return [];
+        const key = this.getLocalStorageKey(client);
+        const data = localStorage.getItem(key);
+        if (data) {
+            try {
+                const serversData = JSON.parse(data);
+                return serversData.servers || [];
+            } catch (e) {
+                console.error('Ошибка при парсинге данных серверов из localStorage', e);
+                return [];
+            }
+        }
+        return [];
+    }
+
+    static async loadServers(client) {
+        try {
+            let servers = [];
+            
+            try {
+                const res = await fetch(`${client.API_SERVER_URL}/api/servers`, {
+                    headers: { 'Authorization': `Bearer ${client.token}` }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    servers = Array.isArray(data.servers) ? data.servers : [];
+                }
+            } catch (apiError) {
+                console.warn('Ошибка загрузки с API, используем localStorage', apiError);
+            }
+            
+            if (servers.length === 0) {
+                servers = this.loadServersFromLocalStorage(client);
+            }
+            
+            client.servers = servers;
+            this.renderServers(client);
+            return true;
+        } catch (error) {
+            console.error('Ошибка загрузки серверов:', error);
+            return false;
+        }
+    }
+
+    static renderServers(client) {
+        const serversList = document.querySelector('.servers-list');
+        if (!serversList) return;
+
+        serversList.innerHTML = '';
+        
+        client.servers.forEach(server => {
+            const serverElement = document.createElement('div');
+            serverElement.className = 'server-item';
+            serverElement.dataset.server = server.id;
+            
+            const isOwner = server.ownerId === client.userId;
+            serverElement.innerHTML = `🏠 ${server.name} ${isOwner ? '<span class="owner-badge">(Вы)</span>' : ''}`;
+            
+            serverElement.addEventListener('click', () => {
+                client.currentServerId = server.id;
+                client.currentServer = server;
+                RoomManager.loadRoomsForServer(client, server.id);
+                client.showPanel('rooms');
+            });
+            
+            if (isOwner) {
+                const shareBtn = document.createElement('button');
+                shareBtn.className = 'server-action-btn';
+                shareBtn.innerHTML = '🔗';
+                shareBtn.title = 'Пригласить';
+                shareBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const inviteLink = `${window.location.origin}${window.location.pathname}?invite=${server.id}`;
+                    navigator.clipboard.writeText(inviteLink)
+                        .then(() => alert(`Ссылка скопирована: ${inviteLink}`))
+                        .catch(err => console.error('Не удалось скопировать:', err));
+                });
+                
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'server-action-btn';
+                deleteBtn.innerHTML = '✕';
+                deleteBtn.title = 'Удалить';
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.deleteServer(client, server.id);
+                });
+                
+                serverElement.appendChild(shareBtn);
+                serverElement.appendChild(deleteBtn);
+            }
+            
+            serversList.appendChild(serverElement);
+        });
+    }
+
+    static async createServer(client) {
+        const name = prompt('Введите название сервера:');
+        if (!name || name.length < 3) {
+            alert('Название должно быть от 3 символов');
+            return;
+        }
+        
+        try {
+            const res = await fetch(`${client.API_SERVER_URL}/api/servers`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${client.token}`
+                },
+                body: JSON.stringify({ 
+                    name: name.trim(), 
+                    userId: client.userId, 
+                    token: client.token 
+                })
+            });
+            
+            let serverData;
+            if (res.ok) {
+                const data = await res.json();
+                serverData = data.server;
+            } else {
+                const serverId = 'server_' + Math.random().toString(36).substr(2, 9);
+                serverData = {
+                    id: serverId,
+                    name: name.trim(),
+                    ownerId: client.userId,
+                    createdAt: new Date().toISOString()
+                };
+            }
+            
+            client.servers.push(serverData);
+            this.saveServersToLocalStorage(client);
+            this.renderServers(client);
+            client.currentServerId = serverData.id;
+            client.currentServer = serverData;
+            
+            await RoomManager.loadRoomsForServer(client, client.currentServerId);
+            
+        } catch (error) {
+            alert('Ошибка: ' + error.message);
+        }
+    }
+
+    static deleteServer(client, serverId) {
+        if (!confirm('Вы уверены, что хотите удалить этот сервер? Все комнаты будут удалены.')) return;
+        const serverIndex = client.servers.findIndex(s => s.id === serverId);
+        if (serverIndex !== -1) {
+            const serverName = client.servers[serverIndex].name;
+            client.servers = client.servers.filter(server => server.id !== serverId);
+            this.saveServersToLocalStorage(client);
+            this.renderServers(client);
+            if (client.currentServerId === serverId) {
+                client.currentServerId = null;
+                client.currentServer = null;
+            }
+        }
+    }
+}
+
+export default ServerManager;
+
+
+modules/UIManager.js:
+class UIManager {
+    static updateStatus(text, status) {
+        const statusText = document.querySelector('.status-text');
+        const statusIndicator = document.querySelector('.status-indicator');
+        
+        if (statusText) {
+            statusText.textContent = text;
+        }
+        if (statusIndicator) {
+            statusIndicator.className = 'status-indicator';
+            if (status === 'connecting') {
+                statusIndicator.classList.add('connecting');
+            } else if (status === 'disconnected') {
+                statusIndicator.classList.add('disconnected');
+            } else if (status === 'connected') {
+                statusIndicator.classList.add('connected');
+            }
+        }
+    }
+
+    static updateRoomTitle(title) {
+        const titleElement = document.querySelector('.current-room-title');
+        if (titleElement) {
+            titleElement.textContent = title;
+        }
+    }
+
+    static addMessage(user, text) {
+        const messagesContainer = document.querySelector('.messages-container');
+        if (!messagesContainer) return;
+
+        const messageElement = document.createElement('div');
+        messageElement.className = 'message';
+        
+        const time = new Date().toLocaleTimeString('ru-RU', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        
+        messageElement.innerHTML = `
+            <div class="message-avatar">${user.charAt(0).toUpperCase()}</div>
+            <div class="message-content">
+                <div class="message-header">
+                    <span class="message-username">${this.escapeHtml(user)}</span>
+                    <span class="message-time">${time}</span>
+                </div>
+                <div class="message-text">${this.escapeHtml(text)}</div>
+            </div>
+        `;
+        
+        messagesContainer.appendChild(messageElement);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        
+        setTimeout(() => {
+            messageElement.classList.add('appeared');
+        }, 10);
+    }
+
+    static updateMicButton(status) {
+        const micButton = document.querySelector('.mic-button');
+        const micToggleBtn = document.querySelector('.mic-toggle-btn');
+        
+        const states = {
+            'disconnected': {class: 'disconnected', text: '🎤'},
+            'connecting': {class: 'connecting', text: '🎤'},
+            'connected': {class: 'connected', text: '🎤'},
+            'active': {class: 'active', text: '🔇'},
+            'error': {class: 'error', text: '🎤'}
+        };
+        
+        const state = states[status] || states.disconnected;
+        
+        if (micButton) {
+            micButton.className = 'mic-button ' + state.class;
+            micButton.textContent = state.text;
+        }
+        
+        if (micToggleBtn) {
+            micToggleBtn.className = 'mic-toggle-btn ' + state.class;
+            micToggleBtn.textContent = state.text;
+        }
+    }
+
+    static renderServers(client) {
+        const serversList = document.querySelector('.servers-list');
+        if (!serversList) return;
+
+        serversList.innerHTML = '';
+        
+        client.servers.forEach(server => {
+            const serverElement = document.createElement('div');
+            serverElement.className = 'server-item';
+            serverElement.dataset.server = server.id;
+            
+            const isOwner = server.ownerId === client.userId;
+            serverElement.innerHTML = `🏠 ${server.name} ${isOwner ? '<span class="owner-badge">(Вы)</span>' : ''}`;
+            
+            serverElement.addEventListener('click', () => {
+                client.currentServerId = server.id;
+                client.currentServer = server;
+                import('./RoomManager.js').then(module => {
+                    module.default.loadRoomsForServer(client, server.id);
+                });
+                client.showPanel('rooms');
+            });
+            
+            if (isOwner) {
+                const shareBtn = document.createElement('button');
+                shareBtn.className = 'server-action-btn';
+                shareBtn.innerHTML = '🔗';
+                shareBtn.title = 'Пригласить';
+                shareBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const inviteLink = `${window.location.origin}${window.location.pathname}?invite=${server.id}`;
+                    navigator.clipboard.writeText(inviteLink)
+                        .then(() => alert(`Ссылка скопирована: ${inviteLink}`))
+                        .catch(err => console.error('Не удалось скопировать:', err));
+                });
+                
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'server-action-btn';
+                deleteBtn.innerHTML = '✕';
+                deleteBtn.title = 'Удалить';
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    import('./ServerManager.js').then(module => {
+                        module.default.deleteServer(client, server.id);
+                    });
+                });
+                
+                serverElement.appendChild(shareBtn);
+                serverElement.appendChild(deleteBtn);
+            }
+            
+            serversList.appendChild(serverElement);
+        });
+    }
+
+    static renderRooms(client, rooms) {
+        const roomsList = document.querySelector('.rooms-list');
+        if (!roomsList) return;
+
+        roomsList.innerHTML = '';
+        
+        rooms.forEach(room => {
+            const roomElement = document.createElement('div');
+            roomElement.className = 'room-item';
+            roomElement.dataset.room = room.id;
+            roomElement.dataset.type = room.type;
+            
+            const isOwner = room.ownerId === client.userId;
+            roomElement.innerHTML = `${room.type === 'voice' ? '🔊' : '💬'} ${room.name} ${isOwner ? '<span class="owner-badge">(Вы)</span>' : ''}`;
+            
+            roomElement.addEventListener('click', () => {
+                client.currentRoom = room.id;
+                client.joinRoom(room.id);
+            });
+            
+            roomsList.appendChild(roomElement);
+        });
+    }
+
+    static updateMembersList(client, members) {
+        const membersList = document.querySelector('.members-list');
+        if (!membersList) return;
+
+        membersList.innerHTML = '';
+        
+        const selfElement = document.createElement('div');
+        selfElement.className = 'member-item';
+        selfElement.innerHTML = `
+            <div class="member-avatar">${(client.username || 'Вы').charAt(0).toUpperCase()}</div>
+            <div class="member-name">${client.username || 'Вы'}</div>
+            <div class="member-status ${client.isMicActive ? 'active' : ''}"></div>
+        `;
+        membersList.appendChild(selfElement);
+        
+        members.forEach(member => {
+            if (member.clientId === client.clientID) return;
+            
+            const memberElement = document.createElement('div');
+            memberElement.className = 'member-item';
+            const displayName = member.username || 'Пользователь';
+            memberElement.innerHTML = `
+                <div class="member-avatar">${displayName.charAt(0).toUpperCase()}</div>
+                <div class="member-name">${this.escapeHtml(displayName)}</div>
+                <div class="member-status ${member.isMicActive ? 'active' : ''}"></div>
+            `;
+            membersList.appendChild(memberElement);
+        });
+    }
+
+    static openModal(title, content, onSubmit) {
+        const modalOverlay = document.querySelector('.modal-overlay');
+        const modalContent = document.querySelector('.modal-content');
+        
+        if (!modalOverlay || !modalContent) return;
+        
+        modalContent.innerHTML = `
+            <h2>${title}</h2>
+            ${content}
+            <button class="modal-submit">OK</button>
+        `;
+        
+        modalOverlay.classList.remove('hidden');
+        
+        const submitButton = modalContent.querySelector('.modal-submit');
+        if (submitButton && onSubmit) {
+            submitButton.addEventListener('click', onSubmit);
+        }
+    }
+
+    static closeModal() {
+        const modalOverlay = document.querySelector('.modal-overlay');
+        if (modalOverlay) modalOverlay.classList.add('hidden');
+    }
+
+    static showError(message) {
+        alert(message);
+    }
+
+    static escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    static openSettings(client) {
+        const modalContent = `
+            <h2>Настройки</h2>
+            <div class="setting-item">
+                <label>Битрейт: <span id="bitrateValue">${client.bitrate / 1000}</span> kbps</label>
+                <input type="range" id="bitrateSlider" min="16" max="64" value="${client.bitrate / 1000}" step="1">
+            </div>
+            <div class="setting-item">
+                <label>
+                    <input type="checkbox" id="dtxCheckbox" ${client.dtxEnabled ? 'checked' : ''}>
+                    DTX (Discontinuous Transmission)
+                </label>
+            </div>
+            <div class="setting-item">
+                <label>
+                    <input type="checkbox" id="fecCheckbox" ${client.fecEnabled ? 'checked' : ''}>
+                    FEC (Forward Error Correction)
+                </label>
+            </div>
+            <button class="apply-settings-btn">Применить</button>
+        `;
+        
+        this.openModal('Настройки', modalContent, () => {
+            client.bitrate = document.getElementById('bitrateSlider').value * 1000;
+            client.dtxEnabled = document.getElementById('dtxCheckbox').checked;
+            client.fecEnabled = document.getElementById('fecCheckbox').checked;
+            this.closeModal();
+        });
+        
+        const bitrateSlider = document.getElementById('bitrateSlider');
+        const bitrateValue = document.getElementById('bitrateValue');
+        
+        if (bitrateSlider && bitrateValue) {
+            bitrateSlider.addEventListener('input', () => {
+                bitrateValue.textContent = bitrateSlider.value;
+            });
+        }
+    }
+
+    static onRoomJoined(client, roomName) {
+        this.updateRoomTitle(roomName);
+        this.updateStatus('Подключено', 'connected');
+    }
+
+    static openPanel(client, panel) {
+        if (!panel) return;
+        panel.style.display = 'flex';
+        setTimeout(() => {
+            panel.style.opacity = '1';
+            panel.style.transform = 'translateX(0)';
+        }, 10);
+    }
+
+    static closePanel(client, panel) {
+        if (!panel) return;
+        panel.style.opacity = '0';
+        panel.style.transform = 'translateX(-100%)';
+        setTimeout(() => {
+            panel.style.display = 'none';
+        }, 300);
+    }
+
+    static toggleSidebar() {
+        const sidebar = document.querySelector('.sidebar');
+        sidebar.classList.toggle('open');
+    }
+
+    static toggleMembersPanel(client) {
+        const membersPanel = document.querySelector('.members-panel');
+        membersPanel.classList.toggle('open');
+    }
+
+    static applySettings(client) {
+        client.bitrate = document.getElementById('bitrateSlider').value * 1000;
+        client.dtxEnabled = document.getElementById('dtxCheckbox').checked;
+        client.fecEnabled = document.getElementById('fecCheckbox').checked;
+        this.closeModal();
+    }
+}
+
+export default UIManager;
+
+
+modules/Utils.js:
+class Utils {
+    static generateClientID() {
+        return 'client_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    static escapeHtml(text) {
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, m => map[m]);
+    }
+}
+
+export default Utils;
+
+
+modules/VoiceChatClient.js:
+import AuthManager from './AuthManager.js';
+import MediaManager from './MediaManager.js';
+import RoomManager from './RoomManager.js';
+import ServerManager from './ServerManager.js';
+import UIManager from './UIManager.js';
+import Utils from './Utils.js';
+
+class VoiceChatClient {
+    constructor() {
+        this.API_SERVER_URL = 'https://ns.fiber-gate.ru';
+        this.CHAT_API_URL = `${this.API_SERVER_URL}/api/join`;
+        this.clientID = Utils.generateClientID();
+        this.device = null;
+        this.sendTransport = null;
+        this.recvTransport = null;
+        this.audioProducer = null;
+        this.consumers = new Map();
+        this.existingProducers = new Set();
+        this.stream = null;
+        this.isMicActive = false;
+        this.currentRoom = null;
+        this.currentServerId = null;
+        this.currentServer = null;
+        this.servers = [];
+        this.members = [];
+        this.keepAliveInterval = null;
+        this.bitrate = 32000;
+        this.dtxEnabled = true;
+        this.fecEnabled = true;
+        this.isConnected = false;
+        this.mediaData = null;
+        this.userId = null;
+        this.token = null;
+        this.username = null;
+        this.syncInterval = null;
+        this.activePanel = 'servers';
+        this.inviteServerId = null;
+        this.isCreatingRoom = false;
+        
+        this.init();
+    }
+
+    async init() {
+        this.initElements();
+        this.initEventListeners();
+        await this.initAutoConnect();
+    }
+
+    initElements() {
+        this.micButton = document.querySelector('.mic-button');
+        this.micToggleBtn = document.querySelector('.mic-toggle-btn');
+        this.messageInput = document.querySelector('.message-input');
+        this.sendButton = document.querySelector('.send-btn');
+        this.currentRoomTitle = document.querySelector('.current-room-title');
+        this.toggleSidebarBtn = document.querySelector('.toggle-sidebar-btn');
+        this.toggleMembersBtn = document.querySelector('.toggle-members-btn');
+        this.settingsBtn = document.querySelector('.settings-btn');
+        this.closePanelBtn = document.querySelector('.close-panel-btn');
+        this.closeSidebarBtn = document.querySelector('.close-sidebar-btn');
+        this.createServerBtn = document.querySelector('.create-server-btn');
+        this.createRoomBtn = document.querySelector('.create-room-btn');
+        this.serversToggleBtn = document.querySelector('#serversToggle');
+        this.roomsToggleBtn = document.querySelector('#roomsToggle');
+        this.serversList = document.querySelector('.servers-list');
+        this.roomsList = document.querySelector('.rooms-list');
+        this.membersList = document.querySelector('.members-list');
+        this.messagesContainer = document.querySelector('.messages-container');
+        this.serversPanel = document.querySelector('.servers-panel');
+        this.roomsPanel = document.querySelector('.rooms-panel');
+        this.sidebar = document.querySelector('.sidebar');
+        this.membersPanel = document.querySelector('.members-panel');
+    }
+
+    initEventListeners() {
+        this.micButton.addEventListener('click', () => this.toggleMicrophone());
+        this.micToggleBtn.addEventListener('click', () => this.toggleMicrophone());
+        
+        this.messageInput.addEventListener('keypress', e => {
+            if (e.key === 'Enter') {
+                this.sendMessage(this.messageInput.value);
+                this.messageInput.value = '';
+            }
+        });
+
+        this.sendButton.addEventListener('click', () => {
+            this.sendMessage(this.messageInput.value);
+            this.messageInput.value = '';
+        });
+
+        this.toggleSidebarBtn.addEventListener('click', () => {
+            this.sidebar.classList.toggle('open');
+        });
+
+        this.toggleMembersBtn.addEventListener('click', () => {
+            this.membersPanel.classList.toggle('open');
+        });
+
+        this.closePanelBtn.addEventListener('click', () => {
+            this.membersPanel.classList.remove('open');
+        });
+
+        this.closeSidebarBtn.addEventListener('click', () => {
+            this.sidebar.classList.remove('open');
+        });
+
+        this.settingsBtn.addEventListener('click', () => {
+            UIManager.openSettings(this);
+        });
+
+        this.createServerBtn.addEventListener('click', () => {
+            ServerManager.createServer(this);
+        });
+
+        this.createRoomBtn.addEventListener('click', () => {
+            RoomManager.createRoom(this);
+        });
+
+        this.serversToggleBtn.addEventListener('click', () => {
+            this.showPanel('servers');
+        });
+
+        this.roomsToggleBtn.addEventListener('click', () => {
+            this.showPanel('rooms');
+        });
+    }
+
+    showPanel(panelName) {
+        this.activePanel = panelName;
+        
+        if (panelName === 'servers') {
+            this.serversToggleBtn.classList.add('active');
+            this.roomsToggleBtn.classList.remove('active');
+            this.serversPanel.classList.add('active');
+            this.roomsPanel.classList.remove('active');
+        } else {
+            this.serversToggleBtn.classList.remove('active');
+            this.roomsToggleBtn.classList.add('active');
+            this.serversPanel.classList.remove('active');
+            this.roomsPanel.classList.add('active');
+        }
+    }
+
+    processUrlParams() {
+        const params = new URLSearchParams(window.location.search);
+        this.currentServerId = params.get('server');
+        this.currentRoom = params.get('room');
+        this.inviteServerId = params.get('invite');
+    }
+
+async initAutoConnect() {
+        this.processUrlParams();
+
+        try {
+            const autoLoggedIn = await AuthManager.tryAutoLogin(this);
+            if (autoLoggedIn) {
+                await ServerManager.loadServers(this);
+
+                let targetServerId = null;
+
+                if (this.inviteServerId) {
+                    const serverExists = this.servers.some(s => s.id === this.inviteServerId);
+                    if (serverExists) {
+                        targetServerId = this.inviteServerId;
+                    } else {
+                        const joined = await this.joinServer(this.inviteServerId);
+                        if (joined) {
+                            targetServerId = this.inviteServerId;
+                            await ServerManager.loadServers(this);
+                        } else {
+                            UIManager.showError('Нет доступа к серверу.');
+                        }
+                    }
+                } else if (this.currentServerId) {
+                    const serverExists = this.servers.some(s => s.id === this.currentServerId);
+                    if (serverExists) {
+                        targetServerId = this.currentServerId;
+                    }
+                }
+
+                if (targetServerId) {
+                    this.currentServerId = targetServerId;
+                    await RoomManager.loadRoomsForServer(this, targetServerId);
+                    if (this.currentRoom) {
+                        await this.reconnectToRoom(this.currentRoom);
+                    }
+                    this.startSyncInterval();
+                } else {
+                    this.autoConnect();
+                }
+                return;
+            }
+
+            AuthManager.showAuthModal(this);
+        } catch (err) {
+            console.error('Ошибка в initAutoConnect:', err);
+            UIManager.showError('Критическая ошибка: не удалось загрузить систему авторизации');
+        }
+    }
+    async joinServer(serverId) {
+        try {
+            const res = await fetch(`${this.API_SERVER_URL}/api/servers/${serverId}/join`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.token}`
+                },
+                body: JSON.stringify({ userId: this.userId, token: this.token })
+            });
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || 'Не удалось присоединиться');
+            }
+
+            const data = await res.json();
+            const server = data.server;
+
+            const exists = this.servers.some(s => s.id === server.id);
+            if (!exists) {
+                this.servers.push(server);
+                ServerManager.saveServersToLocalStorage(this);
+                ServerManager.renderServers(this);
+                this.showMessage('System', `✅ Вы присоединились к "${server.name}"`);
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Ошибка вступления в сервер:', error);
+            this.showError(`❌ Доступ запрещён: ${error.message}`);
+            return false;
+        }
+    }
+
+    async joinRoom(roomId) {
+        try {
+            this.showMessage('System', 'Подключение к комнате...');
+            
+            const res = await fetch(this.CHAT_API_URL, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json', 
+                    'Authorization': `Bearer ${this.token}` 
+                },
+                body: JSON.stringify({ 
+                    roomId, 
+                    userId: this.userId, 
+                    token: this.token, 
+                    clientId: this.clientID 
+                })
+            });
+            
+            if (!res.ok) {
+                const errorText = await res.text();
+                throw new Error(`Ошибка входа: ${res.status} ${errorText}`);
+            }
+            
+            const data = await res.json();
+            
+            if (!data.success) {
+                throw new Error(data.error || 'Не удалось войти в комнату');
+            }
+            
+            this.clientID = data.clientId;
+            this.mediaData = data.mediaData;
+            await MediaManager.connect(this, roomId, data.mediaData);
+            
+            setTimeout(() => {
+                this.startConsuming();
+            }, 1000);
+            
+            this.showMessage('System', 'Вы вошли в комнату');
+            UIManager.onRoomJoined(this, data.roomName);
+            
+        } catch (e) {
+            console.error('Ошибка входа в комнату:', e);
+            UIManager.updateStatus('Ошибка: ' + e.message, 'disconnected');
+        }
+    }
+
+    async toggleMicrophone() {
+        if (this.isMicActive) {
+            await MediaManager.stopMicrophone(this);
+        } else {
+            await MediaManager.startMicrophone(this);
+        }
+        UIManager.updateMicButton(this.isMicActive ? 'active' : 'connected');
+    }
+
+    sendMessage(text) {
+        if (!text.trim()) return;
+        if (!this.currentRoom) {
+            this.showError('Вы не в комнате');
+            return;
+        }
+        
+        this.showMessage(this.username, text);
+        
+        fetch(`${this.API_SERVER_URL}/api/message`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${this.token}`
+            },
+            body: JSON.stringify({
+                roomId: this.currentRoom,
+                userId: this.userId,
+                text: text.trim()
+            })
+        }).catch(error => {
+            this.showError('Ошибка отправки сообщения');
+        });
+    }
+
+    startSyncInterval() {
+        if (this.syncInterval) clearInterval(this.syncInterval);
+        
+        this.syncInterval = setInterval(async () => {
+            try {
+                await ServerManager.loadServers(this);
+                if (this.currentServerId) {
+                    await RoomManager.loadRoomsForServer(this, this.currentServerId);
+                }
+                if (this.currentRoom && this.isConnected) {
+                    await this.startConsuming();
+                }
+            } catch (error) {
+                console.error('Ошибка синхронизации:', error);
+            }
+        }, 15000);
+    }
+
+    async startConsuming() {
+        try {
+            if (!this.mediaData || !this.currentRoom || !this.isConnected) return;
+
+            const response = await fetch(`${this.API_SERVER_URL}/api/room/${this.currentRoom}/producers`, {
+                headers: {
+                    'Authorization': `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            if (!response.ok) return;
+            
+            const data = await response.json();
+            const activeProducerIds = new Set(data.producers.map(p => p.id));
+            
+            for (const producerId of this.existingProducers) {
+                if (!activeProducerIds.has(producerId)) {
+                    const consumer = this.consumers.get(producerId);
+                    if (consumer) {
+                        consumer.close();
+                        this.consumers.delete(producerId);
+                    }
+                    this.existingProducers.delete(producerId);
+                }
+            }
+            
+            for (const producer of data.producers) {
+                if (producer.clientID !== this.clientID && !this.existingProducers.has(producer.id)) {
+                    await MediaManager.createConsumer(this, producer.id);
+                    this.existingProducers.add(producer.id);
+                }
+            }
+        } catch (error) {
+            console.error('Ошибка потребления:', error);
+        }
+    }
+
+    async reconnectToRoom(roomId) {
+        this.disconnectFromMedia();
+        this.destroySocket();
+        this.currentRoom = roomId;
+        await this.joinRoom(roomId);
+    }
+
+    disconnectFromMedia() {
+        MediaManager.disconnect(this);
+    }
+
+    destroySocket() {
+        // Реализация уничтожения сокета
+        if (this.socket) {
+            console.log('Закрытие сокета');
+            this.socket.disconnect();
+            this.socket = null;
+        }
+    }
+    autoConnect() {
+        this.sidebar.classList.add('open');
+    }
+
+    showMessage(user, text) {
+        UIManager.addMessage(user, text);
+    }
+
+    showError(text) {
+        UIManager.showError(text);
+    }
+}
+
+export default VoiceChatClient;
+
+
+styles.css:
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --bg-primary: #36393f;
+    --bg-secondary: #2f3136;
+    --bg-tertiary: #202225;
+    --bg-modifier: rgba(79, 84, 92, 0.16);
+    --text-normal: #dcddde;
+    --text-muted: #72767d;
+    --accent: #5865f2;
+    --success: #3ba55d;
+    --danger: #ed4245;
+    --warning: #faa61a;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-normal);
+    height: 100vh;
+    overflow: hidden;
+}
+
+.app {
+    display: flex;
+    height: 100vh;
+    position: relative;
+}
+
+.sidebar {
+    width: 240px;
+    background: var(--bg-secondary);
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--bg-tertiary);
+    transition: transform 0.3s ease;
+}
+
+.sidebar-header {
+    padding: 12px;
+    display: flex;
+    border-bottom: 1px solid var(--bg-tertiary);
+    background: var(--bg-tertiary);
+}
+
+.panel-toggle-btn {
+    flex: 1;
+    padding: 8px;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: 4px;
+    margin: 0 2px;
+}
+
+.panel-toggle-btn.active {
+    background: var(--accent);
+    color: white;
+}
+
+.close-sidebar-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    margin-left: 4px;
+}
+
+.close-sidebar-btn:hover {
+    background: var(--bg-modifier);
+    color: var(--text-normal);
+}
+
+.panel-content {
+    display: none;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+}
+
+.panel-content.active {
+    display: flex;
+}
+
+.panel-header {
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.servers-list, .rooms-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.server-item, .room-item {
+    padding: 8px 12px;
+    border-radius: 4px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+}
+
+.server-item:hover, .room-item:hover {
+    background: var(--bg-modifier);
+}
+
+.server-item.active, .room-item.active {
+    background: var(--accent);
+}
+
+.owner-badge {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-left: 4px;
+}
+
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: 20px;
+    min-width: 300px;
+    max-width: 500px;
+    width: 90%;
+    color: var(--text-normal);
+}
+
+.saved-users-list {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-bottom: 15px;
+}
+
+.no-users-message {
+    color: var(--text-muted);
+    text-align: center;
+    padding: 10px;
+}
+
+.saved-user-item {
+    padding: 8px 10px;
+    margin: 4px 0;
+    background: var(--bg-modifier);
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.saved-user-item:hover {
+    background: var(--bg-tertiary);
+}
+
+.remove-user-btn {
+    background: var(--danger);
+    color: white;
+    border: none;
+    padding: 2px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+#usernameInput, #passwordInput {
+    width: 100%;
+    padding: 12px;
+    margin: 8px 0;
+    background: var(--bg-modifier);
+    border: 1px solid var(--bg-tertiary);
+    border-radius: 4px;
+    color: var(--text-normal);
+}
+
+#authSubmitBtn, #createNewUserBtn {
+    width: 100%;
+    padding: 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-top: 8px;
+}
+
+#authSubmitBtn {
+    background: var(--accent);
+    color: white;
+}
+
+#createNewUserBtn {
+    background: var(--bg-modifier);
+    color: var(--text-normal);
+}
+
+.server-action-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-size: 12px;
+    margin-left: 4px;
+}
+
+.server-action-btn:hover {
+    color: var(--text-normal);
+    background: var(--bg-modifier);
+}
+
+.create-server-btn, .create-room-btn {
+    background: none;
+    border: none;
+    color: var(--success);
+    cursor: pointer;
+    font-size: 18px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+}
+
+.create-server-btn:hover, .create-room-btn:hover {
+    background: var(--bg-modifier);
+}
+
+.main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.chat-header {
+    padding: 0 16px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--bg-tertiary);
+    background: var(--bg-secondary);
+}
+
+.toggle-sidebar-btn {
+    display: none;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 18px;
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+}
+
+.toggle-sidebar-btn:hover {
+    background: var(--bg-modifier);
+    color: var(--text-normal);
+}
+
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.mic-toggle-btn, .settings-btn, .toggle-members-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 18px;
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mic-toggle-btn:hover, .settings-btn:hover, .toggle-members-btn:hover {
+    background: var(--bg-modifier);
+}
+
+.mic-toggle-btn.disconnected {
+    color: var(--text-muted);
+}
+
+.mic-toggle-btn.connected {
+    color: var(--danger);
+}
+
+.mic-toggle-btn.active {
+    color: var(--success);
+}
+
+.chat-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.messages-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+}
+
+.message {
+    margin-bottom: 16px;
+    display: flex;
+    gap: 12px;
+}
+
+.message-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.message-content {
+    flex: 1;
+}
+
+.message-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.message-username {
+    font-weight: 600;
+}
+
+.message-time {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.message-text {
+    line-height: 1.4;
+}
+
+.input-area {
+    padding: 16px;
+    border-top: 1px solid var(--bg-tertiary);
+    display: flex;
+    gap: 8px;
+}
+
+.message-input {
+    flex: 1;
+    padding: 12px;
+    border-radius: 8px;
+    border: none;
+    background: var(--bg-modifier);
+    color: var(--text-normal);
+    outline: none;
+}
+
+.message-input:focus {
+    background: var(--bg-tertiary);
+}
+
+.send-btn {
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    padding: 0 16px;
+    cursor: pointer;
+}
+
+.send-btn:hover {
+    background: #4752c4;
+}
+
+.members-panel {
+    width: 240px;
+    background: var(--bg-secondary);
+    border-left: 1px solid var(--bg-tertiary);
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.3s ease;
+}
+
+.members-panel .panel-header {
+    padding: 12px 16px;
+}
+
+.close-panel-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 18px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+}
+
+.close-panel-btn:hover {
+    background: var(--bg-modifier);
+    color: var(--text-normal);
+}
+
+.members-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.member-item {
+    padding: 8px 12px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.member-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.member-name {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.member-status {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+
+.member-status.active {
+    background: var(--success);
+}
+
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: 20px;
+    min-width: 300px;
+    max-width: 500px;
+    width: 90%;
+}
+
+.modal-content h2 {
+    margin-bottom: 16px;
+    color: var(--text-normal);
+}
+
+.setting-item {
+    margin-bottom: 16px;
+}
+
+.setting-item label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.apply-settings-btn {
+    width: 100%;
+    padding: 12px;
+    background: var(--accent);
+    border: none;
+    border-radius: 4px;
+    color: white;
+    cursor: pointer;
+    margin-top: 16px;
+}
+
+.apply-settings-btn:hover {
+    background: #4752c4;
+}
+
+.hidden {
+    display: none;
+}
+
+.mic-button {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    border: none;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    cursor: pointer;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    z-index: 100;
+    transition: transform 0.3s ease, opacity 0.3s ease, background-color 0.3s ease;
+}
+
+.mic-button.disconnected {
+    background: var(--text-muted);
+}
+
+.mic-button.connected {
+    background: var(--danger);
+}
+
+.mic-button.active {
+    background: var(--success);
+}
+
+.mic-button.hidden {
+    transform: scale(0);
+    opacity: 0;
+}
+
+@media (max-width: 768px) {
+    .sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        z-index: 100;
+        transform: translateX(-100%);
+        width: 280px;
+    }
+    
+    .sidebar.open {
+        transform: translateX(0);
+    }
+    
+    .members-panel {
+        position: fixed;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        z-index: 100;
+        transform: translateX(100%);
+    }
+    
+    .members-panel.open {
+        transform: translateX(0);
+    }
+    
+    .toggle-sidebar-btn {
+        display: flex;
+    }
+    
+    .mic-button {
+        display: none;
+    }
+    
+    .mic-toggle-btn {
+        display: flex;
+    }
+}
+
+
