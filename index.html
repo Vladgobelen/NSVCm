@@ -3,144 +3,73 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline'">
     <title>Voice Chat</title>
     <link rel="stylesheet" href="styles.css">
-    <!-- Иконки -->
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
     <div class="app">
-        <!-- Панель серверов (всплывающая в мобильной версии) -->
-        <div class="panel-overlay server-selector-panel" id="serverSelectorPanel">
-            <div class="panel-header">
-                <span class="panel-title">Серверы</span>
-                <button class="close-panel-btn" id="closeServerPanelBtn">✕</button>
-            </div>
-            <div class="server-list">
-                <button class="server-item add-server-btn" id="addServerBtn">
-                    <span>+</span> Создать сервер
-                </button>
-                <!-- Серверы будут добавлены динамически -->
-            </div>
-        </div>
-        <!-- Панель комнат (в мобильной версии) -->
-        <div class="panel-overlay room-selector-panel" id="roomSelectorPanel">
-            <div class="panel-header">
-                <span class="panel-title">Комнаты</span>
-                <button class="close-panel-btn" id="closeRoomPanelBtn">✕</button>
-            </div>
-            <div class="rooms-list">
-                <!-- Комнаты будут добавлены динамически -->
-            </div>
-        </div>
-        <!-- ЕДИНАЯ ПАНЕЛЬ участников (работает на всех устройствах) -->
-        <div class="panel-overlay members-panel" id="membersPanel">
-            <div class="panel-header">
-                <span class="panel-title">Участники — <span id="membersCount">0</span></span>
-                <button class="close-panel-btn" id="closeMembersPanelBtn">✕</button>
-            </div>
-            <div class="members-list" id="membersList">
-                <div class="member-item">
-                    <div class="member-avatar">Вы</div>
-                    <div class="member-name">Вы</div>
-                    <div class="member-status muted" id="selfStatus"></div>
-                </div>
-            </div>
-        </div>
-        <!-- Сайдбар (десктоп) -->
-        <div class="sidebar" id="sidebar">
+        <div class="sidebar">
             <div class="sidebar-header">
-                <button class="server-select-btn" id="openServerSelectorBtn">🌐</button>
-                <div class="sidebar-title">🎙 Voice Chat</div>
-                <button class="settings-btn" id="openSettingsBtn">⚙</button>
+                <button class="panel-toggle-btn active" id="serversToggle">Серверы</button>
+                <button class="panel-toggle-btn" id="roomsToggle">Комнаты</button>
+                <button class="close-sidebar-btn">✕</button>
             </div>
-            <div class="rooms-list">
-                <!-- Комнаты будут добавлены динамически -->
+            
+            <div class="panel-content servers-panel active">
+                <div class="panel-header">
+                    <span>Серверы</span>
+                    <button class="create-server-btn" title="Создать сервер">+</button>
+                </div>
+                <div class="servers-list"></div>
             </div>
-            <div class="mic-control">
-                <button id="micButton" class="mic-button" disabled>
-                    <span>🎤</span>
-                    <span id="micButtonText">Ожидание подключения...</span>
-                </button>
+            
+            <div class="panel-content rooms-panel">
+                <div class="panel-header">
+                    <span>Комнаты</span>
+                    <button class="create-room-btn" title="Создать комнату">+</button>
+                </div>
+                <div class="rooms-list"></div>
             </div>
         </div>
-        <!-- Основной чат -->
-        <div class="main-content" id="mainContent">
+        
+        <div class="main-content">
             <div class="chat-header">
-                <div class="chat-header-controls left">
-                    <button class="mobile-btn" id="openServerBtnMobile">🌐</button>
-                    <button class="mobile-btn" id="openRoomBtnMobile">🔊</button>
-                    <button class="mobile-btn" id="toggleSidebarBtn">☰</button>
-                    <button class="mobile-btn" id="openSettingsBtnMobile">⚙</button>
-                </div>
-                <div class="chat-header-title" id="currentRoomTitle">Голосовой чат</div>
-                <div class="chat-header-controls right">
-                    <button class="mobile-btn" id="mobileMicBtn">🎤</button>
-                    <!-- КНОПКА ДЛЯ ОТКРЫТИЯ ПАНЕЛИ УЧАСТНИКОВ НА ВСЕХ УСТРОЙСТВАХ -->
-                    <button class="members-btn" id="toggleMembersBtn">👥</button>
+                <button class="toggle-sidebar-btn">☰</button>
+                <span class="current-room-title">Выберите комнату</span>
+                <div class="header-controls">
+                    <button class="mic-toggle-btn disconnected">🎤</button>
+                    <button class="settings-btn">⚙️</button>
+                    <button class="toggle-members-btn">👥</button>
                 </div>
             </div>
+            
             <div class="chat-area">
-                <div class="messages-container-wrapper">
-                    <div class="messages" id="messagesContainer">
-                        <div class="message appeared">
-                            <div class="message-avatar">S</div>
-                            <div class="message-content">
-                                <div class="message-header">
-                                    <div class="message-username">System</div>
-                                    <div class="message-time" id="systemTime"></div>
-                                </div>
-                                <div class="message-text">Ожидание подключения...</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                <div class="messages-container"></div>
                 <div class="input-area">
-                    <input type="text" class="input-box" placeholder="Написать сообщение..." id="messageInput" disabled>
+                    <input type="text" class="message-input" placeholder="Сообщение...">
+                    <button class="send-btn">➤</button>
                 </div>
             </div>
         </div>
-    </div>
-    <!-- Статус-бар -->
-    <div class="status-bar">
-        <span class="status-indicator" id="statusIndicator"></span>
-        <span class="status-text" id="statusText">Ожидание подключения к серверу...</span>
-    </div>
-    <!-- Модальное окно настроек -->
-    <div id="settingsModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <div class="modal-title">Настройки голоса</div>
-                <span class="close" id="closeSettingsModal">&times;</span>
+        
+        <div class="members-panel">
+            <div class="panel-header">
+                <span>Участники</span>
+                <button class="close-panel-btn">✕</button>
             </div>
-            <div class="setting-item">
-                <label class="setting-label" for="bitrateSlider">Битрейт (кбит/с): <span id="bitrateValue">32</span></label>
-                <input type="range" min="16" max="64" value="32" class="setting-input" id="bitrateSlider">
-            </div>
-            <div class="setting-item">
-                <label class="setting-label">
-                    <input type="checkbox" class="setting-checkbox" id="dtxCheckbox"> Использовать DTX (экономия трафика)
-                </label>
-            </div>
-            <div class="setting-item">
-                <label class="setting-label">
-                    <input type="checkbox" class="setting-checkbox" id="fecCheckbox" checked> Использовать FEC (устойчивость к потерям)
-                </label>
-            </div>
-            <button class="apply-settings-btn" id="applySettingsBtn">Применить настройки</button>
+            <div class="members-list"></div>
         </div>
+        
+        <div class="modal-overlay hidden">
+            <div class="modal-content"></div>
+        </div>
+        
+        <button class="mic-button disconnected">🎤</button>
     </div>
-    <!-- ВАЖНО: Подключаем зависимости -->
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <script src="/mediasoup-client.min.js"></script>
-    <!-- МОДУЛИ — строго в этом порядке -->
-    <script src="utils.js"></script>
-    <script src="auth.js"></script>
-    <script src="servers.js"></script>
-    <script src="rooms.js"></script>
-    <script src="media.js"></script>
-    <script src="chat.js"></script>
-    <script src="ui.js"></script>
-    <script src="app.js"></script>
+    
+    <!-- Используем локальный файл mediasoup-client -->
+    <script src="mediasoup-client.min.js"></script>
+    <script type="module" src="app.js"></script>
 </body>
 </html>
