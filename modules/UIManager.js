@@ -1,4 +1,9 @@
+import ChatManager from './ChatManager.js';
+import MembersManager from './MembersManager.js';
+
 class UIManager {
+    static client = null;
+
     static updateStatus(text, status) {
         const statusText = document.querySelector('.status-text');
         const statusIndicator = document.querySelector('.status-indicator');
@@ -25,26 +30,35 @@ class UIManager {
         }
     }
 
-    static addMessage(user, text) {
+    static addMessage(user, text, timestamp = null) {
         const messagesContainer = document.querySelector('.messages-container');
         if (!messagesContainer) return;
+
+        // Защита от undefined/null пользователя
+        const safeUser = user || 'Unknown';
+        const safeText = text || '';
 
         const messageElement = document.createElement('div');
         messageElement.className = 'message';
         
-        const time = new Date().toLocaleTimeString('ru-RU', {
-            hour: '2-digit',
-            minute: '2-digit'
-        });
+        const time = timestamp ? 
+            new Date(timestamp).toLocaleTimeString('ru-RU', {
+                hour: '2-digit',
+                minute: '2-digit'
+            }) : 
+            new Date().toLocaleTimeString('ru-RU', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
         
         messageElement.innerHTML = `
-            <div class="message-avatar">${user.charAt(0).toUpperCase()}</div>
+            <div class="message-avatar">${safeUser.charAt(0).toUpperCase()}</div>
             <div class="message-content">
                 <div class="message-header">
-                    <span class="message-username">${this.escapeHtml(user)}</span>
+                    <span class="message-username">${this.escapeHtml(safeUser)}</span>
                     <span class="message-time">${time}</span>
                 </div>
-                <div class="message-text">${this.escapeHtml(text)}</div>
+                <div class="message-text">${this.escapeHtml(safeText)}</div>
             </div>
         `;
         
@@ -56,44 +70,46 @@ class UIManager {
         }, 10);
     }
 
-static updateMicButton(status) {
-    const micButton = document.querySelector('.mic-button');
-    const micToggleBtn = document.querySelector('.mic-toggle-btn');
-    
-    const states = {
-        'disconnected': {class: 'disconnected', text: '🎤', title: 'Не подключен к голосовому каналу'},
-        'connecting': {class: 'connecting', text: '🎤', title: 'Подключение...'},
-        'connected': {class: 'connected', text: '🎤', title: 'Микрофон выключен (нажмите чтобы включить)'},
-        'active': {class: 'active', text: '🔴', title: 'Микрофон включен (нажмите чтобы выключить)'},
-        'error': {class: 'error', text: '🎤', title: 'Ошибка доступа к микрофону'}
-    };
-    
-    const state = states[status] || states.disconnected;
-    
-    if (micButton) {
-        micButton.className = 'mic-button ' + state.class;
-        micButton.textContent = state.text;
-        micButton.title = state.title;
+    static updateMicButton(status) {
+        const micButton = document.querySelector('.mic-button');
+        const micToggleBtn = document.querySelector('.mic-toggle-btn');
+        
+        const states = {
+            'disconnected': {class: 'disconnected', text: '🎤', title: 'Не подключен к голосовому каналу'},
+            'connecting': {class: 'connecting', text: '🎤', title: 'Подключение...'},
+            'connected': {class: 'connected', text: '🎤', title: 'Микрофон выключен (нажмите чтобы включить)'},
+            'active': {class: 'active', text: '🔴', title: 'Микрофон включен (нажмите чтобы выключить)'},
+            'error': {class: 'error', text: '🎤', title: 'Ошибка доступа к микрофону'}
+        };
+        
+        const state = states[status] || states.disconnected;
+        
+        if (micButton) {
+            micButton.className = 'mic-button ' + state.class;
+            micButton.textContent = state.text;
+            micButton.title = state.title;
+        }
+        
+        if (micToggleBtn) {
+            micToggleBtn.className = 'mic-toggle-btn ' + state.class;
+            micToggleBtn.textContent = state.text;
+            micToggleBtn.title = state.title;
+        }
     }
-    
-    if (micToggleBtn) {
-        micToggleBtn.className = 'mic-toggle-btn ' + state.class;
-        micToggleBtn.textContent = state.text;
-        micToggleBtn.title = state.title;
-    }
-}
+
     static updateAudioStatus(activeConsumers) {
-    const statusElement = document.querySelector('.audio-status');
-    if (!statusElement) return;
-    
-    if (activeConsumers > 0) {
-        statusElement.textContent = `Активных аудиопотоков: ${activeConsumers}`;
-        statusElement.style.color = 'var(--success)';
-    } else {
-        statusElement.textContent = 'Нет активных аудиопотоков';
-        statusElement.style.color = 'var(--text-muted)';
+        const statusElement = document.querySelector('.audio-status');
+        if (!statusElement) return;
+        
+        if (activeConsumers > 0) {
+            statusElement.textContent = `Активных аудиопотоков: ${activeConsumers}`;
+            statusElement.style.color = 'var(--success)';
+        } else {
+            statusElement.textContent = 'Нет активных аудиопотоков';
+            statusElement.style.color = 'var(--text-muted)';
+        }
     }
-}
+
     static renderServers(client) {
         const serversList = document.querySelector('.servers-list');
         if (!serversList) return;
@@ -173,23 +189,26 @@ static updateMicButton(status) {
         });
     }
 
-    static updateMembersList(client, members) {
+    static updateMembersList(members) {
         const membersList = document.querySelector('.members-list');
         if (!membersList) return;
 
         membersList.innerHTML = '';
         
+        // Добавляем текущего пользователя в начало списка
         const selfElement = document.createElement('div');
         selfElement.className = 'member-item';
+        const selfUsername = this.client.username || 'Вы';
         selfElement.innerHTML = `
-            <div class="member-avatar">${(client.username || 'Вы').charAt(0).toUpperCase()}</div>
-            <div class="member-name">${client.username || 'Вы'}</div>
-            <div class="member-status ${client.isMicActive ? 'active' : ''}"></div>
+            <div class="member-avatar">${selfUsername.charAt(0).toUpperCase()}</div>
+            <div class="member-name">${selfUsername}</div>
+            <div class="member-status ${this.client.isMicActive ? 'active' : ''}"></div>
         `;
         membersList.appendChild(selfElement);
         
+        // Добавляем остальных участников
         members.forEach(member => {
-            if (member.clientId === client.clientID) return;
+            if (member.clientId === this.client.clientID) return;
             
             const memberElement = document.createElement('div');
             memberElement.className = 'member-item';
@@ -228,32 +247,31 @@ static updateMicButton(status) {
         if (modalOverlay) modalOverlay.classList.add('hidden');
     }
 
-static showError(message) {
-    // Создаем элемент для отображения ошибки
-    const errorElement = document.createElement('div');
-    errorElement.className = 'error-message';
-    errorElement.textContent = message;
-    errorElement.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        background: #ed4245;
-        color: white;
-        padding: 10px 15px;
-        border-radius: 5px;
-        z-index: 1000;
-        max-width: 300px;
-    `;
-    
-    document.body.appendChild(errorElement);
-    
-    // Удаляем сообщение через 5 секунд
-    setTimeout(() => {
-        if (document.body.contains(errorElement)) {
-            document.body.removeChild(errorElement);
-        }
-    }, 5000);
-}
+    static showError(message) {
+        const errorElement = document.createElement('div');
+        errorElement.className = 'error-message';
+        errorElement.textContent = message;
+        errorElement.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #ed4245;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            z-index: 1000;
+            max-width: 300px;
+        `;
+        
+        document.body.appendChild(errorElement);
+        
+        setTimeout(() => {
+            if (document.body.contains(errorElement)) {
+                document.body.removeChild(errorElement);
+            }
+        }, 5000);
+    }
+
     static escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
