@@ -38,18 +38,11 @@ class AuthManager {
     }
 
     static async tryAutoLogin(client) {
-        console.log('[AUTH] Попытка автовхода...');
         const lastUser = this.loadLastUser();
-        if (!lastUser) {
-            console.log('[AUTH] Нет сохраненного пользователя');
-            return false;
-        }
+        if (!lastUser) return false;
 
-        console.log('[AUTH] Автовход: найден пользователь', lastUser.username);
-        
         const isValid = await this.validateToken(client, lastUser.userId, lastUser.token);
         if (!isValid) {
-            console.log('[AUTH] Токен невалиден');
             this.removeUser(lastUser.username);
             return false;
         }
@@ -57,12 +50,10 @@ class AuthManager {
         client.userId = lastUser.userId;
         client.token = lastUser.token;
         client.username = lastUser.username;
-        console.log('[AUTH] Автовход успешен');
         return true;
     }
 
     static async validateToken(client, userId, token) {
-        console.log('[AUTH] Проверка токена...');
         try {
             const response = await fetch(`${client.API_SERVER_URL}/api/auth/validate`, {
                 method: 'POST',
@@ -73,21 +64,15 @@ class AuthManager {
                 body: JSON.stringify({ userId, token })
             });
 
-            if (!response.ok) {
-                console.log('[AUTH] Токен не прошёл проверку');
-                return false;
-            }
-
+            if (!response.ok) return false;
             const data = await response.json();
             return data.valid === true;
         } catch (error) {
-            console.error('[AUTH] Ошибка проверки токена:', error);
             return false;
         }
     }
 
     static async registerUser(client, username, password) {
-        console.log('[AUTH] registerUser вызван:', username);
         try {
             const response = await fetch(`${client.API_SERVER_URL}/api/auth`, {
                 method: 'POST',
@@ -96,13 +81,10 @@ class AuthManager {
             });
 
             const responseText = await response.text();
-            console.log('[AUTH] Ответ сервера:', response.status, responseText);
-
             let data;
             try {
                 data = JSON.parse(responseText);
             } catch (e) {
-                console.error('[AUTH] Ошибка парсинга JSON:', e);
                 throw new Error('Сервер вернул неверный формат данных');
             }
 
@@ -128,15 +110,13 @@ class AuthManager {
             client.token = data.token;
             client.username = username;
 
-            console.log('[AUTH] Пользователь зарегистрирован и вошел');
             return true;
         } catch (error) {
-            console.error('[AUTH] Ошибка входа:', error);
             throw error;
         }
     }
 
-	static showAuthModal(client) {
+    static showAuthModal(client) {
         const users = this.getAllUsers();
         const savedUser = this.loadLastUser();
         const modal = document.createElement('div');
@@ -206,8 +186,6 @@ class AuthManager {
                 const success = await this.registerUser(client, u, p);
                 if (success) {
                     modal.remove();
-                    
-                    // Исправляем вызовы методов
                     await import('./ServerManager.js').then(module => {
                         return module.default.loadServers(client);
                     });

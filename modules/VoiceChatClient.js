@@ -4,6 +4,7 @@ import RoomManager from './RoomManager.js';
 import ServerManager from './ServerManager.js';
 import UIManager from './UIManager.js';
 import Utils from './Utils.js';
+
 class VoiceChatClient {
     constructor() {
         this.API_SERVER_URL = 'https://ns.fiber-gate.ru';
@@ -39,11 +40,13 @@ class VoiceChatClient {
         
         this.init();
     }
+
     async init() {
         this.initElements();
         this.initEventListeners();
         await this.initAutoConnect();
     }
+
     initElements() {
         this.micButton = document.querySelector('.mic-button');
         this.micToggleBtn = document.querySelector('.mic-toggle-btn');
@@ -73,6 +76,7 @@ class VoiceChatClient {
             ServerManager.clearSearchAndShowAllServers(this);
         });
     }
+
     initEventListeners() {
         this.micButton.addEventListener('click', () => this.toggleMicrophone());
         this.micToggleBtn.addEventListener('click', () => this.toggleMicrophone());
@@ -105,16 +109,17 @@ class VoiceChatClient {
         this.createServerBtn.addEventListener('click', () => {
             ServerManager.createServer(this);
         });
-this.createRoomBtn.addEventListener('click', () => {
-    if (!this.currentServerId) {
-        alert('Сначала выберите сервер');
-        return;
-    }
-    
-    UIManager.openCreateRoomModal(this, (name, type) => {
-        RoomManager.createRoom(this, this.currentServerId, name, type);
-    });
-});
+
+        this.createRoomBtn.addEventListener('click', () => {
+            if (!this.currentServerId) {
+                alert('Сначала выберите сервер');
+                return;
+            }
+            
+            UIManager.openCreateRoomModal(this, (name, type) => {
+                RoomManager.createRoom(this, this.currentServerId, name, type);
+            });
+        });
 
         this.serversToggleBtn.addEventListener('click', () => {
             ServerManager.clearSearchAndShowAllServers(this);
@@ -127,6 +132,7 @@ this.createRoomBtn.addEventListener('click', () => {
             this.searchServers(e.target.value);
         });
     }
+
     showPanel(panelName) {
         if (!this.serversPanel) this.serversPanel = document.getElementById('servers-panel');
         if (!this.roomsPanel) this.roomsPanel = document.getElementById('rooms-panel');
@@ -134,7 +140,6 @@ this.createRoomBtn.addEventListener('click', () => {
         if (!this.roomsToggleBtn) this.roomsToggleBtn = document.querySelector('#roomsToggle');
     
         if (!this.serversPanel || !this.roomsPanel || !this.serversToggleBtn || !this.roomsToggleBtn) {
-            console.error('Элементы панелей не найдены');
             return;
         }
     
@@ -152,12 +157,14 @@ this.createRoomBtn.addEventListener('click', () => {
             this.roomsPanel.classList.add('active');
         }
     }
+
     processUrlParams() {
         const params = new URLSearchParams(window.location.search);
         this.currentServerId = params.get('server');
         this.currentRoom = params.get('room');
         this.inviteServerId = params.get('invite');
     }
+
     async initAutoConnect() {
         this.processUrlParams();
         try {
@@ -198,21 +205,22 @@ this.createRoomBtn.addEventListener('click', () => {
             }
             AuthManager.showAuthModal(this);
         } catch (err) {
-            console.error('Ошибка в initAutoConnect:', err);
             UIManager.showError('Критическая ошибка: не удалось загрузить систему авторизации');
         }
     }
-async disconnectFromRoom() {
-    if (this.currentRoom) {
-        MediaManager.disconnect(this);
-        this.destroySocket();
-        this.currentRoom = null;
-        this.isConnected = false;
-        this.isMicActive = false;
-        this.existingProducers.clear(); // Очищаем список известных продюсеров
-        this.updateMicButtonState();
+
+    async disconnectFromRoom() {
+        if (this.currentRoom) {
+            MediaManager.disconnect(this);
+            this.destroySocket();
+            this.currentRoom = null;
+            this.isConnected = false;
+            this.isMicActive = false;
+            this.existingProducers.clear();
+            this.updateMicButtonState();
+        }
     }
-}
+
     async joinServer(serverId) {
         try {
             const res = await fetch(`${this.API_SERVER_URL}/api/servers/${serverId}/join`, {
@@ -238,71 +246,64 @@ async disconnectFromRoom() {
             }
             return true;
         } catch (error) {
-            console.error('Ошибка вступления в сервер:', error);
             this.showError(`❌ Доступ запрещён: ${error.message}`);
             return false;
         }
     }
-async joinRoom(roomId) {
-    try {
-        this.showMessage('System', 'Подключение к комнате...');
-        
-        // Очищаем предыдущее соединение
-        this.disconnectFromRoom();
-        
-        const res = await fetch(this.CHAT_API_URL, {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json', 
-                'Authorization': `Bearer ${this.token}` 
-            },
-            body: JSON.stringify({ 
-                roomId, 
-                userId: this.userId, 
-                token: this.token, 
-                clientId: this.clientID 
-            })
-        });
-        
-        if (!res.ok) throw new Error(`Ошибка входа: ${res.status}`);
-        
-        const data = await res.json();
-        if (!data.success) throw new Error(data.error);
-        
-        this.clientID = data.clientId;
-        this.mediaData = data.mediaData;
-        this.currentRoom = roomId;
-        
-        // Настраиваем socket соединение
-        this.setupSocketConnection();
-        
-        if (data.roomType === 'voice') {
-            await MediaManager.connect(this, roomId, data.mediaData);
-            this.updateMicButtonState();
+
+    async joinRoom(roomId) {
+        try {
+            this.showMessage('System', 'Подключение к комнате...');
             
-            // Запрашиваем текущих продюсеров при входе
-            if (this.socket) {
-                this.socket.emit('subscribe-to-producers', { roomId });
-                this.socket.emit('get-current-producers', { roomId });
+            this.disconnectFromRoom();
+            
+            const res = await fetch(this.CHAT_API_URL, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json', 
+                    'Authorization': `Bearer ${this.token}` 
+                },
+                body: JSON.stringify({ 
+                    roomId, 
+                    userId: this.userId, 
+                    token: this.token, 
+                    clientId: this.clientID 
+                })
+            });
+            
+            if (!res.ok) throw new Error(`Ошибка входа: ${res.status}`);
+            
+            const data = await res.json();
+            if (!data.success) throw new Error(data.error);
+            
+            this.clientID = data.clientId;
+            this.mediaData = data.mediaData;
+            this.currentRoom = roomId;
+            
+            this.setupSocketConnection();
+            
+            if (data.roomType === 'voice') {
+                await MediaManager.connect(this, roomId, data.mediaData);
+                this.updateMicButtonState();
+                
+                if (this.socket) {
+                    this.socket.emit('subscribe-to-producers', { roomId });
+                    this.socket.emit('get-current-producers', { roomId });
+                }
             }
+            
+            this.showMessage('System', 'Вы вошли в комнату');
+            UIManager.onRoomJoined(this, data.roomName);
+            
+        } catch (e) {
+            UIManager.updateStatus('Ошибка: ' + e.message, 'disconnected');
         }
-        
-        this.showMessage('System', 'Вы вошли в комнату');
-        UIManager.onRoomJoined(this, data.roomName);
-        
-    } catch (e) {
-        console.error('Ошибка входа в комнату:', e);
-        UIManager.updateStatus('Ошибка: ' + e.message, 'disconnected');
     }
-}
+
     setupSocketConnection() {
-        // Закрываем предыдущее соединение
         this.destroySocket();
-     if (!this.token) {
-        console.error('Токен не установлен для Socket.IO соединения');
-        return;
-    }    
-        // Создаем новое соединение
+        if (!this.token) return;
+        
         this.socket = io(this.API_SERVER_URL, {
             auth: {
                 token: this.token,
@@ -311,49 +312,36 @@ async joinRoom(roomId) {
                 username: this.username
             }
         });
-        // Обработчики событий
-        this.socket.on('connect', () => {
-            console.log('✅ Подключение к Socket.IO установлено');
-        });
-        this.socket.on('disconnect', () => {
-            console.log('❌ Подключение к Socket.IO разорвано');
-        });
         
-        // Новый обработчик для уведомлений о новых продюсерах
         this.socket.on('new-producer', async (data) => {
-            console.log('Получено уведомление о новом продюсере:', data);
             if (data.clientID !== this.clientID) {
                 try {
                     await MediaManager.createConsumer(this, data.producerId);
                     this.existingProducers.add(data.producerId);
-                } catch (error) {
-                    console.error('Ошибка создания consumer:', error);
-                }
+                } catch (error) {}
             }
         });
         
         this.socket.on('current-producers', async (data) => {
-            console.log('Получен список текущих продюсеров:', data.producers);
-            
             for (const producer of data.producers) {
                 if (producer.clientID !== this.clientID && 
                     !this.existingProducers.has(producer.id)) {
                     try {
                         await MediaManager.createConsumer(this, producer.id);
                         this.existingProducers.add(producer.id);
-                    } catch (error) {
-                        console.error('Ошибка создания consumer:', error);
-                    }
+                    } catch (error) {}
                 }
             }
         });
     }
+
     destroySocket() {
         if (this.socket) {
             this.socket.disconnect();
             this.socket = null;
         }
     }
+
     updateMicButtonState() {
         let status;
         if (!this.isConnected) {
@@ -365,6 +353,7 @@ async joinRoom(roomId) {
         }
         UIManager.updateMicButton(status);
     }
+
     async toggleMicrophone() {
         try {
             if (this.isMicActive) {
@@ -373,7 +362,6 @@ async joinRoom(roomId) {
                 try {
                     await MediaManager.startMicrophone(this);
                     
-                    // Уведомляем других клиентов о новом продюсере
                     if (this.socket && this.audioProducer) {
                         this.socket.emit('new-producer-notification', {
                             roomId: this.currentRoom,
@@ -392,11 +380,11 @@ async joinRoom(roomId) {
             }
             this.updateMicButtonState();
         } catch (error) {
-            console.error('Ошибка переключения микрофона:', error);
             UIManager.showError('Ошибка микрофона: ' + error.message);
             this.updateMicButtonState();
         }
     }
+
     sendMessage(text) {
         if (!text.trim()) return;
         if (!this.currentRoom) {
@@ -417,10 +405,11 @@ async joinRoom(roomId) {
                 userId: this.userId,
                 text: text.trim()
             })
-        }).catch(error => {
+        }).catch(() => {
             this.showError('Ошибка отправки сообщения');
         });
     }
+
     startSyncInterval() {
         if (this.syncInterval) clearInterval(this.syncInterval);
         
@@ -434,23 +423,19 @@ async joinRoom(roomId) {
                 if (this.currentRoom && this.isConnected) {
                     await this.startConsuming();
                 }
-            } catch (error) {
-                console.error('Ошибка синхронизации:', error);
-            }
+            } catch (error) {}
         }, 5000);
     }
+
     async startConsuming() {
         if (!this.isConnected || !this.currentRoom) {
-            console.log('[MEDIA] Пропускаем потребление: не подключен к комнате');
             return;
         }
         
         try {
             if (!this.mediaData || !this.currentRoom || !this.isConnected) {
-                console.log('[MEDIA] Не могу начать потребление: отсутствуют необходимые данные');
                 return;
             }
-            console.log('[MEDIA] Запрос производителей комнаты:', this.currentRoom);
             
             const response = await fetch(`${this.API_SERVER_URL}/api/room/${this.currentRoom}/producers`, {
                 headers: {
@@ -460,25 +445,19 @@ async joinRoom(roomId) {
             });
             
             if (!response.ok) {
-                console.warn('[MEDIA] Не удалось получить производителей:', response.status);
                 return;
             }
             
             const data = await response.json();
-            console.log('[MEDIA] Получены производители:', data.producers);
-            
             const activeProducerIds = new Set(data.producers.map(p => p.id));
             
-            // Удаляем старые consumer'ы для неактивных производителей
             for (const producerId of this.existingProducers) {
                 if (!activeProducerIds.has(producerId)) {
                     const consumer = this.consumers.get(producerId);
                     if (consumer) {
                         try {
                             consumer.close();
-                        } catch (e) {
-                            console.warn('[MEDIA] Ошибка при закрытии consumer:', e);
-                        }
+                        } catch (e) {}
                         this.consumers.delete(producerId);
                         
                         if (window.audioElements && window.audioElements.has(producerId)) {
@@ -487,48 +466,45 @@ async joinRoom(roomId) {
                                 window.audioElements.get(producerId).srcObject = null;
                                 window.audioElements.get(producerId).remove();
                                 window.audioElements.delete(producerId);
-                            } catch (e) {
-                                console.warn('[MEDIA] Ошибка при удалении аудио элемента:', e);
-                            }
+                            } catch (e) {}
                         }
                     }
                     this.existingProducers.delete(producerId);
                 }
             }
             
-            // Создаем новые consumer'ы для активных производителей
             for (const producer of data.producers) {
                 if (producer.clientID !== this.clientID && !this.existingProducers.has(producer.id)) {
                     try {
                         await MediaManager.createConsumer(this, producer.id);
                         this.existingProducers.add(producer.id);
-                        console.log('[MEDIA] Создан consumer для producer:', producer.id);
-                    } catch (error) {
-                        console.error('[MEDIA] Ошибка создания consumer:', error);
-                    }
+                    } catch (error) {}
                 }
             }
-        } catch (error) {
-            console.error('[MEDIA] Ошибка потребления:', error);
-        }
+        } catch (error) {}
     }
+
     async reconnectToRoom(roomId) {
-        console.log('Переподключение к комнате:', roomId);
         this.disconnectFromRoom();
         this.currentRoom = roomId;
         await this.joinRoom(roomId);
     }
+
     autoConnect() {
         this.sidebar.classList.add('open');
     }
+
     showMessage(user, text) {
         UIManager.addMessage(user, text);
     }
+
     showError(text) {
         UIManager.showError(text);
     }
+
     async searchServers(query) {
         await ServerManager.searchServers(this, query);
     }
 }
+
 export default VoiceChatClient;

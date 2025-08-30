@@ -19,9 +19,7 @@ class ChatManager {
                     });
                 }
             }
-        } catch (error) {
-            console.error('Ошибка загрузки сообщений:', error);
-        }
+        } catch (error) {}
     }
 
     static async sendMessage(client, text) {
@@ -44,10 +42,7 @@ class ChatManager {
             if (!response.ok) {
                 throw new Error('Ошибка отправки сообщения');
             }
-
-            // Сообщение добавляется через сокет, поэтому здесь не нужно добавлять его в UI
         } catch (error) {
-            console.error('Ошибка отправки сообщения:', error);
             UIManager.showError('Не удалось отправить сообщение');
         }
     }
@@ -55,16 +50,12 @@ class ChatManager {
     static setupSocketHandlers(client) {
         if (!client.socket) return;
 
-        // Новое сообщение
         client.socket.on('new-message', (data) => {
-            console.log('Получено новое сообщение:', data);
             const username = data.username || 'Unknown';
             UIManager.addMessage(username, data.text, data.timestamp);
         });
 
-        // История сообщений при подключении
         client.socket.on('message-history', (messages) => {
-            console.log('Получена история сообщений:', messages);
             messages.forEach(msg => {
                 const username = msg.username || 'Unknown';
                 UIManager.addMessage(username, msg.text, msg.timestamp);

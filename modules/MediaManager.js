@@ -1,42 +1,28 @@
 class MediaManager {
     static async connect(client, roomId, mediaData) {
         try {
-            console.log('[MEDIA] Подключение к медиасерверу...');
-            
             if (typeof mediasoupClient === 'undefined') {
                 throw new Error('Библиотека mediasoup-client не загружена');
             }
             
-            // Инициализируем устройство
             client.device = new mediasoupClient.Device();
             await client.device.load({ routerRtpCapabilities: mediaData.rtpCapabilities });
             
-            console.log('[MEDIA] Устройство инициализировано');
-            
-            // Создаем транспорты
             await this.createTransports(client, mediaData);
-            console.log('[MEDIA] Транспорты созданы');
-            
-            // Запускаем keep-alive
             this.startKeepAlive(client, roomId);
             
             client.isConnected = true;
             client.isMicActive = false;
             
-            // Подписываемся на уведомления
             this.subscribeToProducerNotifications(client, roomId);
             
-            console.log('[MEDIA] Подключение успешно');
-            
         } catch (error) {
-            console.error('[MEDIA] Ошибка подключения:', error);
             throw new Error(`Media connection failed: ${error.message}`);
         }
     }
 
     static async createTransports(client, mediaData) {
         try {
-            // Проверяем существующие транспорты
             if (!client.sendTransport) {
                 client.sendTransport = client.device.createSendTransport({
                     id: mediaData.sendTransport.id,
@@ -57,7 +43,6 @@ class MediaManager {
             }
             
         } catch (error) {
-            console.error('[MEDIA] Ошибка создания транспортов:', error);
             throw error;
         }
     }
@@ -65,7 +50,6 @@ class MediaManager {
     static setupSendTransportHandlers(client) {
         client.sendTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
             try {
-                console.log('[MEDIA] Подключение sendTransport...');
                 await fetch(`${client.API_SERVER_URL}/api/media/transport/connect`, {
                     method: 'POST',
                     headers: { 
@@ -102,7 +86,6 @@ class MediaManager {
                 
                 const data = await response.json();
                 
-                // Уведомляем о новом продюсере
                 if (client.socket) {
                     client.socket.emit('new-producer-notification', {
                         roomId: client.currentRoom,
@@ -142,8 +125,6 @@ class MediaManager {
 
     static async startMicrophone(client) {
         try {
-            console.log('[MEDIA] Запуск микрофона...');
-            
             if (!client.sendTransport) {
                 throw new Error('Send transport не инициализирован');
             }
@@ -155,8 +136,6 @@ class MediaManager {
                     channelCount: 2
                 }
             });
-            
-            console.log('[MEDIA] Микрофон доступен, создаем producer...');
             
             const track = client.stream.getAudioTracks()[0];
             client.audioProducer = await client.sendTransport.produce({
@@ -177,11 +156,8 @@ class MediaManager {
             });
             
             client.isMicActive = true;
-            console.log('[MEDIA] Microphone producer создан:', client.audioProducer.id);
             
         } catch (error) {
-            console.error('[MEDIA] Ошибка запуска микрофона:', error);
-            
             if (client.stream) {
                 client.stream.getTracks().forEach(track => track.stop());
                 client.stream = null;
@@ -193,8 +169,6 @@ class MediaManager {
 
     static async stopMicrophone(client) {
         try {
-            console.log('[MEDIA] Остановка микрофона...');
-            
             if (client.audioProducer) {
                 try {
                     await fetch(`${client.API_SERVER_URL}/api/media/producer/close`, {
@@ -207,9 +181,7 @@ class MediaManager {
                             producerId: client.audioProducer.id
                         })
                     });
-                } catch (error) {
-                    console.warn('[MEDIA] Не удалось закрыть producer на сервере:', error);
-                }
+                } catch (error) {}
                 
                 client.audioProducer.close();
                 client.audioProducer = null;
@@ -221,17 +193,13 @@ class MediaManager {
             }
             
             client.isMicActive = false;
-            console.log('[MEDIA] Микрофон остановлен');
             
         } catch (error) {
-            console.error('[MEDIA] Ошибка остановки микрофона:', error);
             throw new Error(`Microphone stop failed: ${error.message}`);
         }
     }
 
     static startKeepAlive(client, roomId) {
-        console.log('[MEDIA] Запуск keep-alive...');
-        
         if (client.keepAliveInterval) {
             clearInterval(client.keepAliveInterval);
         }
@@ -247,69 +215,45 @@ class MediaManager {
                     clientId: client.clientID,
                     roomId: roomId
                 })
-            })
-            .then(response => {
-                if (!response.ok) {
-                    console.warn('[MEDIA] Keep-alive запрос неуспешен');
-                }
-            })
-            .catch(error => {
-                console.warn('[MEDIA] Ошибка keep-alive:', error);
-            });
+            }).catch(() => {});
         }, 10000);
     }
 
-static subscribeToProducerNotifications(client, roomId) {
-    if (client.socket) {
-        client.socket.emit('subscribe-to-producers', { roomId });
-        
-        // Запрос текущих продюсеров при подключении
-        client.socket.emit('get-current-producers', { roomId });
-        
-        client.socket.on('new-producer', (data) => {
-            console.log('[MEDIA] Получено уведомление о новом продюсере:', data);
+    static subscribeToProducerNotifications(client, roomId) {
+        if (client.socket) {
+            client.socket.emit('subscribe-to-producers', { roomId });
+            client.socket.emit('get-current-producers', { roomId });
             
-            if (data.clientID !== client.clientID) {
-                this.createConsumer(client, data.producerId).then(consumer => {
-                    if (consumer) {
-                        client.existingProducers.add(data.producerId);
-                        console.log('[MEDIA] Consumer создан по уведомлению:', consumer.id);
-                    }
-                }).catch(error => {
-                    console.error('[MEDIA] Ошибка создания consumer:', error);
-                });
-            }
-        });
-
-        // Обработчик для получения текущих продюсеров
-        client.socket.on('current-producers', (producers) => {
-            console.log('[MEDIA] Получен список текущих продюсеров:', producers);
-            
-            producers.forEach(producer => {
-                if (producer.clientID !== client.clientID && 
-                    !client.existingProducers.has(producer.id)) {
-                    this.createConsumer(client, producer.id).then(consumer => {
+            client.socket.on('new-producer', (data) => {
+                if (data.clientID !== client.clientID) {
+                    this.createConsumer(client, data.producerId).then(consumer => {
                         if (consumer) {
-                            client.existingProducers.add(producer.id);
-                            console.log('[MEDIA] Consumer создан для существующего продюсера:', consumer.id);
+                            client.existingProducers.add(data.producerId);
                         }
-                    }).catch(error => {
-                        console.error('[MEDIA] Ошибка создания consumer:', error);
-                    });
+                    }).catch(() => {});
                 }
             });
-        });
+
+            client.socket.on('current-producers', (producers) => {
+                producers.forEach(producer => {
+                    if (producer.clientID !== client.clientID && 
+                        !client.existingProducers.has(producer.id)) {
+                        this.createConsumer(client, producer.id).then(consumer => {
+                            if (consumer) {
+                                client.existingProducers.add(producer.id);
+                            }
+                        }).catch(() => {});
+                    }
+                });
+            });
+        }
     }
-}
+
     static async createConsumer(client, producerId) {
-    console.log('[MEDIA] Создание consumer для producer:', producerId);
-    try {
-            // Проверяем существующий consumer
+        try {
             if (client.consumers.has(producerId)) {
                 return client.consumers.get(producerId);
             }
-            
-            console.log('[MEDIA] Создание consumer для producer:', producerId);
             
             const response = await fetch(`${client.API_SERVER_URL}/api/media/consume`, {
                 method: 'POST',
@@ -338,7 +282,6 @@ static subscribeToProducerNotifications(client, roomId) {
             
             client.consumers.set(producerId, consumer);
             
-            // Создаем аудио элемент
             const audio = new Audio();
             const stream = new MediaStream([consumer.track.clone()]);
             audio.srcObject = stream;
@@ -350,75 +293,57 @@ static subscribeToProducerNotifications(client, roomId) {
             window.audioElements.set(producerId, audio);
             document.body.appendChild(audio);
             
-            console.log('[MEDIA] Consumer создан:', consumer.id);
             return consumer;
             
         } catch (error) {
-            console.error('[MEDIA] Ошибка создания consumer:', error);
             throw error;
         }
     }
 
     static disconnect(client) {
-        console.log('[MEDIA] Отключение от медиасервера...');
-        
-        // Останавливаем keep-alive
         if (client.keepAliveInterval) {
             clearInterval(client.keepAliveInterval);
             client.keepAliveInterval = null;
         }
         
-        // Останавливаем микрофон
         if (client.isMicActive) {
-            this.stopMicrophone(client).catch(console.error);
+            this.stopMicrophone(client).catch(() => {});
         }
         
-        // Закрываем транспорты
         if (client.sendTransport) {
             try {
                 client.sendTransport.close();
-            } catch (error) {
-                console.warn('[MEDIA] Ошибка закрытия sendTransport:', error);
-            }
+            } catch (error) {}
             client.sendTransport = null;
         }
         
         if (client.recvTransport) {
             try {
                 client.recvTransport.close();
-            } catch (error) {
-                console.warn('[MEDIA] Ошибка закрытия recvTransport:', error);
-            }
+            } catch (error) {}
             client.recvTransport = null;
         }
         
-        // Закрываем consumers
         client.consumers.forEach(consumer => {
             try {
                 consumer.close();
-            } catch (error) {
-                console.warn('[MEDIA] Ошибка закрытия consumer:', error);
-            }
+            } catch (error) {}
         });
         client.consumers.clear();
         
-        // Очищаем аудио элементы
         if (window.audioElements) {
             window.audioElements.forEach(audio => {
                 try {
                     audio.pause();
                     audio.srcObject = null;
                     audio.remove();
-                } catch (error) {
-                    console.warn('[MEDIA] Ошибка очистки аудио элемента:', error);
-                }
+                } catch (error) {}
             });
             window.audioElements.clear();
         }
         
         client.device = null;
         client.isConnected = false;
-        console.log('[MEDIA] Отключение завершено');
     }
 }
 
