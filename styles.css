@@ -29,6 +29,40 @@ body {
     color: var(--warning);
 }
 
+.modal-buttons {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+.modal-buttons button {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#confirmCreateRoom {
+    background: var(--accent);
+    color: white;
+}
+
+#cancelCreateRoom {
+    background: var(--bg-modifier);
+    color: var(--text-normal);
+}
+
+#roomTypeSelect {
+    width: 100%;
+    padding: 10px;
+    margin: 8px 0;
+    background: var(--bg-modifier);
+    border: 1px solid var(--bg-tertiary);
+    border-radius: 4px;
+    color: var(--text-normal);
+}
+
 .server-action-btn.leave-btn:hover {
     background: var(--warning);
     color: white;

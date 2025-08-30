@@ -33,6 +33,7 @@ class MediaManager {
             throw new Error(`Media connection failed: ${error.message}`);
         }
     }
+
     static async createTransports(client, mediaData) {
         try {
             // Проверяем существующие транспорты
@@ -43,7 +44,7 @@ class MediaManager {
                     iceCandidates: mediaData.sendTransport.iceCandidates,
                     dtlsParameters: mediaData.sendTransport.dtlsParameters
                 });
-                this.setupSendTransportHandlers(client, mediaData);
+                this.setupSendTransportHandlers(client);
             }
             if (!client.recvTransport) {
                 client.recvTransport = client.device.createRecvTransport({
@@ -52,7 +53,7 @@ class MediaManager {
                     iceCandidates: mediaData.recvTransport.iceCandidates,
                     dtlsParameters: mediaData.recvTransport.dtlsParameters
                 });
-                this.setupRecvTransportHandlers(client, mediaData);
+                this.setupRecvTransportHandlers(client);
             }
             
         } catch (error) {
@@ -60,13 +61,17 @@ class MediaManager {
             throw error;
         }
     }
-    static setupSendTransportHandlers(client, mediaData) {
+
+    static setupSendTransportHandlers(client) {
         client.sendTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
             try {
                 console.log('[MEDIA] Подключение sendTransport...');
-                await fetch(`${mediaData.mediaServerUrl}/api/transport/connect`, {
+                await fetch(`${client.API_SERVER_URL}/api/media/transport/connect`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${client.token}`
+                    },
                     body: JSON.stringify({
                         transportId: client.sendTransport.id,
                         dtlsParameters
@@ -77,11 +82,15 @@ class MediaManager {
                 errback(error);
             }
         });
+
         client.sendTransport.on('produce', async (parameters, callback, errback) => {
             try {
-                const response = await fetch(`${mediaData.mediaServerUrl}/api/produce`, {
+                const response = await fetch(`${client.API_SERVER_URL}/api/media/produce`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${client.token}`
+                    },
                     body: JSON.stringify({
                         transportId: client.sendTransport.id,
                         kind: parameters.kind,
@@ -109,12 +118,16 @@ class MediaManager {
             }
         });
     }
-    static setupRecvTransportHandlers(client, mediaData) {
+
+    static setupRecvTransportHandlers(client) {
         client.recvTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
             try {
-                await fetch(`${mediaData.mediaServerUrl}/api/transport/connect`, {
+                await fetch(`${client.API_SERVER_URL}/api/media/transport/connect`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${client.token}`
+                    },
                     body: JSON.stringify({
                         transportId: client.recvTransport.id,
                         dtlsParameters
@@ -126,6 +139,7 @@ class MediaManager {
             }
         });
     }
+
     static async startMicrophone(client) {
         try {
             console.log('[MEDIA] Запуск микрофона...');
@@ -176,15 +190,19 @@ class MediaManager {
             throw new Error(`Microphone failed: ${error.message}`);
         }
     }
+
     static async stopMicrophone(client) {
         try {
             console.log('[MEDIA] Остановка микрофона...');
             
             if (client.audioProducer) {
                 try {
-                    await fetch(`${client.mediaData.mediaServerUrl}/api/producer/close`, {
+                    await fetch(`${client.API_SERVER_URL}/api/media/producer/close`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${client.token}`
+                        },
                         body: JSON.stringify({
                             producerId: client.audioProducer.id
                         })
@@ -210,6 +228,7 @@ class MediaManager {
             throw new Error(`Microphone stop failed: ${error.message}`);
         }
     }
+
     static startKeepAlive(client, roomId) {
         console.log('[MEDIA] Запуск keep-alive...');
         
@@ -218,9 +237,12 @@ class MediaManager {
         }
         
         client.keepAliveInterval = setInterval(() => {
-            fetch(`${client.mediaData.mediaServerUrl}/api/health`, {
+            fetch(`${client.API_SERVER_URL}/api/media/health`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${client.token}`
+                },
                 body: JSON.stringify({
                     clientId: client.clientID,
                     roomId: roomId
@@ -236,28 +258,52 @@ class MediaManager {
             });
         }, 10000);
     }
-    static subscribeToProducerNotifications(client, roomId) {
-        // Подписываемся на уведомления через API сервер
-        if (client.socket) {
-            client.socket.emit('subscribe-to-producers', { roomId });
+
+static subscribeToProducerNotifications(client, roomId) {
+    if (client.socket) {
+        client.socket.emit('subscribe-to-producers', { roomId });
+        
+        // Запрос текущих продюсеров при подключении
+        client.socket.emit('get-current-producers', { roomId });
+        
+        client.socket.on('new-producer', (data) => {
+            console.log('[MEDIA] Получено уведомление о новом продюсере:', data);
             
-            client.socket.on('new-producer', (data) => {
-                console.log('[MEDIA] Получено уведомление о новом продюсере:', data.producerId);
-                
-                // Немедленно создаем consumer для нового producer
-                if (data.clientID !== client.clientID) {
-                    this.createConsumer(client, data.producerId).then(consumer => {
+            if (data.clientID !== client.clientID) {
+                this.createConsumer(client, data.producerId).then(consumer => {
+                    if (consumer) {
+                        client.existingProducers.add(data.producerId);
+                        console.log('[MEDIA] Consumer создан по уведомлению:', consumer.id);
+                    }
+                }).catch(error => {
+                    console.error('[MEDIA] Ошибка создания consumer:', error);
+                });
+            }
+        });
+
+        // Обработчик для получения текущих продюсеров
+        client.socket.on('current-producers', (producers) => {
+            console.log('[MEDIA] Получен список текущих продюсеров:', producers);
+            
+            producers.forEach(producer => {
+                if (producer.clientID !== client.clientID && 
+                    !client.existingProducers.has(producer.id)) {
+                    this.createConsumer(client, producer.id).then(consumer => {
                         if (consumer) {
-                            client.existingProducers.add(data.producerId);
-                            console.log('[MEDIA] Consumer создан по уведомлению:', consumer.id);
+                            client.existingProducers.add(producer.id);
+                            console.log('[MEDIA] Consumer создан для существующего продюсера:', consumer.id);
                         }
+                    }).catch(error => {
+                        console.error('[MEDIA] Ошибка создания consumer:', error);
                     });
                 }
             });
-        }
+        });
     }
+}
     static async createConsumer(client, producerId) {
-        try {
+    console.log('[MEDIA] Создание consumer для producer:', producerId);
+    try {
             // Проверяем существующий consumer
             if (client.consumers.has(producerId)) {
                 return client.consumers.get(producerId);
@@ -265,9 +311,12 @@ class MediaManager {
             
             console.log('[MEDIA] Создание consumer для producer:', producerId);
             
-            const response = await fetch(`${client.mediaData.mediaServerUrl}/api/consume`, {
+            const response = await fetch(`${client.API_SERVER_URL}/api/media/consume`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${client.token}`
+                },
                 body: JSON.stringify({
                     producerId,
                     rtpCapabilities: client.device.rtpCapabilities,
@@ -309,6 +358,7 @@ class MediaManager {
             throw error;
         }
     }
+
     static disconnect(client) {
         console.log('[MEDIA] Отключение от медиасервера...');
         
@@ -371,4 +421,5 @@ class MediaManager {
         console.log('[MEDIA] Отключение завершено');
     }
 }
+
 export default MediaManager;

@@ -105,9 +105,17 @@ class VoiceChatClient {
         this.createServerBtn.addEventListener('click', () => {
             ServerManager.createServer(this);
         });
-        this.createRoomBtn.addEventListener('click', () => {
-            RoomManager.createRoom(this);
-        });
+this.createRoomBtn.addEventListener('click', () => {
+    if (!this.currentServerId) {
+        alert('Сначала выберите сервер');
+        return;
+    }
+    
+    UIManager.openCreateRoomModal(this, (name, type) => {
+        RoomManager.createRoom(this, this.currentServerId, name, type);
+    });
+});
+
         this.serversToggleBtn.addEventListener('click', () => {
             ServerManager.clearSearchAndShowAllServers(this);
             this.showPanel('servers');
@@ -194,16 +202,17 @@ class VoiceChatClient {
             UIManager.showError('Критическая ошибка: не удалось загрузить систему авторизации');
         }
     }
-    async disconnectFromRoom() {
-        if (this.currentRoom) {
-            MediaManager.disconnect(this);
-            this.destroySocket();
-            this.currentRoom = null;
-            this.isConnected = false;
-            this.isMicActive = false;
-            this.updateMicButtonState();
-        }
+async disconnectFromRoom() {
+    if (this.currentRoom) {
+        MediaManager.disconnect(this);
+        this.destroySocket();
+        this.currentRoom = null;
+        this.isConnected = false;
+        this.isMicActive = false;
+        this.existingProducers.clear(); // Очищаем список известных продюсеров
+        this.updateMicButtonState();
     }
+}
     async joinServer(serverId) {
         try {
             const res = await fetch(`${this.API_SERVER_URL}/api/servers/${serverId}/join`, {
@@ -234,61 +243,65 @@ class VoiceChatClient {
             return false;
         }
     }
-    async joinRoom(roomId) {
-        try {
-            this.showMessage('System', 'Подключение к комнате...');
+async joinRoom(roomId) {
+    try {
+        this.showMessage('System', 'Подключение к комнате...');
+        
+        // Очищаем предыдущее соединение
+        this.disconnectFromRoom();
+        
+        const res = await fetch(this.CHAT_API_URL, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json', 
+                'Authorization': `Bearer ${this.token}` 
+            },
+            body: JSON.stringify({ 
+                roomId, 
+                userId: this.userId, 
+                token: this.token, 
+                clientId: this.clientID 
+            })
+        });
+        
+        if (!res.ok) throw new Error(`Ошибка входа: ${res.status}`);
+        
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error);
+        
+        this.clientID = data.clientId;
+        this.mediaData = data.mediaData;
+        this.currentRoom = roomId;
+        
+        // Настраиваем socket соединение
+        this.setupSocketConnection();
+        
+        if (data.roomType === 'voice') {
+            await MediaManager.connect(this, roomId, data.mediaData);
+            this.updateMicButtonState();
             
-            // Очищаем предыдущее соединение
-            this.disconnectFromRoom();
-            
-            const res = await fetch(this.CHAT_API_URL, {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json', 
-                    'Authorization': `Bearer ${this.token}` 
-                },
-                body: JSON.stringify({ 
-                    roomId, 
-                    userId: this.userId, 
-                    token: this.token, 
-                    clientId: this.clientID 
-                })
-            });
-            
-            if (!res.ok) throw new Error(`Ошибка входа: ${res.status}`);
-            
-            const data = await res.json();
-            if (!data.success) throw new Error(data.error);
-            
-            this.clientID = data.clientId;
-            this.mediaData = data.mediaData;
-            this.currentRoom = roomId;
-            
-            // Настраиваем socket соединение
-            this.setupSocketConnection();
-            
-            if (data.roomType === 'voice') {
-                await MediaManager.connect(this, roomId, data.mediaData);
-                this.updateMicButtonState();
-                
-                // Запрашиваем текущих продюсеров
-                if (this.socket) {
-                    this.socket.emit('subscribe-to-producers', { roomId });
-                }
+            // Запрашиваем текущих продюсеров при входе
+            if (this.socket) {
+                this.socket.emit('subscribe-to-producers', { roomId });
+                this.socket.emit('get-current-producers', { roomId });
             }
-            
-            this.showMessage('System', 'Вы вошли в комнату');
-            UIManager.onRoomJoined(this, data.roomName);
-            
-        } catch (e) {
-            console.error('Ошибка входа в комнату:', e);
-            UIManager.updateStatus('Ошибка: ' + e.message, 'disconnected');
         }
+        
+        this.showMessage('System', 'Вы вошли в комнату');
+        UIManager.onRoomJoined(this, data.roomName);
+        
+    } catch (e) {
+        console.error('Ошибка входа в комнату:', e);
+        UIManager.updateStatus('Ошибка: ' + e.message, 'disconnected');
     }
+}
     setupSocketConnection() {
         // Закрываем предыдущее соединение
         this.destroySocket();
-        
+     if (!this.token) {
+        console.error('Токен не установлен для Socket.IO соединения');
+        return;
+    }    
         // Создаем новое соединение
         this.socket = io(this.API_SERVER_URL, {
             auth: {
@@ -305,18 +318,20 @@ class VoiceChatClient {
         this.socket.on('disconnect', () => {
             console.log('❌ Подключение к Socket.IO разорвано');
         });
+        
+        // Новый обработчик для уведомлений о новых продюсерах
         this.socket.on('new-producer', async (data) => {
             console.log('Получено уведомление о новом продюсере:', data);
-            
-            if (data.clientID === this.clientID) return;
-            
-            try {
-                await MediaManager.createConsumer(this, data.producerId);
-                this.existingProducers.add(data.producerId);
-            } catch (error) {
-                console.error('Ошибка создания consumer:', error);
+            if (data.clientID !== this.clientID) {
+                try {
+                    await MediaManager.createConsumer(this, data.producerId);
+                    this.existingProducers.add(data.producerId);
+                } catch (error) {
+                    console.error('Ошибка создания consumer:', error);
+                }
             }
         });
+        
         this.socket.on('current-producers', async (data) => {
             console.log('Получен список текущих продюсеров:', data.producers);
             

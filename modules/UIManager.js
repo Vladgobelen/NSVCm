@@ -23,6 +23,54 @@ class UIManager {
         }
     }
 
+static openCreateRoomModal(client, onSubmit) {
+    const modalOverlay = document.createElement('div');
+    modalOverlay.className = 'modal-overlay';
+    modalOverlay.style.display = 'flex';
+    modalOverlay.innerHTML = `
+        <div class="modal-content">
+            <h2>Создание комнаты</h2>
+            <input type="text" id="roomNameInput" placeholder="Название комнаты" required>
+            <select id="roomTypeSelect">
+                <option value="voice">Голосовая</option>
+                <option value="text">Текстовая</option>
+            </select>
+            <div class="modal-buttons">
+                <button id="confirmCreateRoom">Создать</button>
+                <button id="cancelCreateRoom">Отмена</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modalOverlay);
+
+    const handleConfirm = () => {
+        const name = document.getElementById('roomNameInput').value.trim();
+        const type = document.getElementById('roomTypeSelect').value;
+        
+        if (name.length < 3) {
+            alert('Название комнаты должно быть не менее 3 символов');
+            return;
+        }
+        
+        modalOverlay.remove();
+        onSubmit(name, type);
+    };
+
+    const handleCancel = () => {
+        modalOverlay.remove();
+    };
+
+    modalOverlay.querySelector('#confirmCreateRoom').addEventListener('click', handleConfirm);
+    modalOverlay.querySelector('#cancelCreateRoom').addEventListener('click', handleCancel);
+    
+    modalOverlay.addEventListener('click', (e) => {
+        if (e.target === modalOverlay) {
+            handleCancel();
+        }
+    });
+}
+    
     static updateRoomTitle(title) {
         const titleElement = document.querySelector('.current-room-title');
         if (titleElement) {
