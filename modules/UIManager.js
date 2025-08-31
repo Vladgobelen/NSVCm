@@ -4,6 +4,11 @@ import MembersManager from './MembersManager.js';
 class UIManager {
     static client = null;
 
+    // Добавляем метод для установки клиента
+    static setClient(client) {
+        this.client = client;
+    }
+
     static updateStatus(text, status) {
         const statusText = document.querySelector('.status-text');
         const statusIndicator = document.querySelector('.status-indicator');
@@ -31,10 +36,6 @@ class UIManager {
             <div class="modal-content">
                 <h2>Создание комнаты</h2>
                 <input type="text" id="roomNameInput" placeholder="Название комнаты" required>
-                <select id="roomTypeSelect">
-                    <option value="voice">Голосовая</option>
-                    <option value="text">Текстовая</option>
-                </select>
                 <div class="modal-buttons">
                     <button id="confirmCreateRoom">Создать</button>
                     <button id="cancelCreateRoom">Отмена</button>
@@ -46,7 +47,6 @@ class UIManager {
 
         const handleConfirm = () => {
             const name = document.getElementById('roomNameInput').value.trim();
-            const type = document.getElementById('roomTypeSelect').value;
             
             if (name.length < 3) {
                 alert('Название комнаты должно быть не менее 3 символов');
@@ -54,7 +54,7 @@ class UIManager {
             }
             
             modalOverlay.remove();
-            onSubmit(name, type);
+            onSubmit(name);
         };
 
         const handleCancel = () => {
@@ -222,10 +222,10 @@ class UIManager {
             const roomElement = document.createElement('div');
             roomElement.className = 'room-item';
             roomElement.dataset.room = room.id;
-            roomElement.dataset.type = room.type;
             
             const isOwner = room.ownerId === client.userId;
-            roomElement.innerHTML = `${room.type === 'voice' ? '🔊' : '💬'} ${room.name} ${isOwner ? '<span class="owner-badge">(Вы)</span>' : ''}`;
+            // Все комнаты теперь голосовые, всегда используем иконку голосовой комнаты
+            roomElement.innerHTML = `🔊 ${room.name} ${isOwner ? '<span class="owner-badge">(Вы)</span>' : ''}`;
             
             roomElement.addEventListener('click', () => {
                 client.currentRoom = room.id;
@@ -242,16 +242,28 @@ class UIManager {
 
         membersList.innerHTML = '';
         
-        const selfElement = document.createElement('div');
-        selfElement.className = 'member-item';
-        const selfUsername = this.client.username || 'Вы';
-        selfElement.innerHTML = `
-            <div class="member-avatar">${selfUsername.charAt(0).toUpperCase()}</div>
-            <div class="member-name">${selfUsername}</div>
-            <div class="member-status ${this.client.isMicActive ? 'active' : ''}"></div>
-        `;
-        membersList.appendChild(selfElement);
+        // Добавляем проверку на наличие клиента
+        if (!this.client) {
+            console.error('UIManager.client is not set');
+            return;
+        }
         
+        // Добавляем текущего пользователя в список
+        if (this.client && this.client.username) {
+            const selfElement = document.createElement('div');
+            selfElement.className = 'member-item';
+            const selfUsername = this.client.username || 'Вы';
+            selfElement.innerHTML = `
+                <div class="member-avatar">${selfUsername.charAt(0).toUpperCase()}</div>
+                <div class="member-name">${selfUsername}</div>
+                <div class="member-status ${this.client.isMicActive ? 'active' : ''}">
+                    <div class="mic-indicator ${this.client.isMicActive ? 'active' : ''}"></div>
+                </div>
+            `;
+            membersList.appendChild(selfElement);
+        }
+        
+        // Добавляем остальных участников
         members.forEach(member => {
             if (member.clientId === this.client.clientID) return;
             
@@ -261,7 +273,9 @@ class UIManager {
             memberElement.innerHTML = `
                 <div class="member-avatar">${displayName.charAt(0).toUpperCase()}</div>
                 <div class="member-name">${this.escapeHtml(displayName)}</div>
-                <div class="member-status ${member.isMicActive ? 'active' : ''}"></div>
+                <div class="member-status ${member.isMicActive ? 'active' : ''}">
+                    <div class="mic-indicator ${member.isMicActive ? 'active' : ''}"></div>
+                </div>
             `;
             membersList.appendChild(memberElement);
         });
@@ -400,6 +414,24 @@ class UIManager {
         client.dtxEnabled = document.getElementById('dtxCheckbox').checked;
         client.fecEnabled = document.getElementById('fecCheckbox').checked;
         this.closeModal();
+    }
+
+    static updateRoomUI(client) {
+        const messagesContainer = document.querySelector('.messages-container');
+        if (messagesContainer) {
+            messagesContainer.innerHTML = '';
+        }
+        
+        this.updateRoomTitle(client.currentRoom ? `Комната: ${client.currentRoom}` : 'Выберите комнату');
+        
+        this.updateMicButton(client.isConnected ? (client.isMicActive ? 'active' : 'connected') : 'disconnected');
+    }
+
+    static clearMessages() {
+        const messagesContainer = document.querySelector('.messages-container');
+        if (messagesContainer) {
+            messagesContainer.innerHTML = '';
+        }
     }
 }
 

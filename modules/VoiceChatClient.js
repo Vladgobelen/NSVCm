@@ -4,6 +4,8 @@ import RoomManager from './RoomManager.js';
 import ServerManager from './ServerManager.js';
 import UIManager from './UIManager.js';
 import Utils from './Utils.js';
+import TextChatManager from './TextChatManager.js';
+import MembersManager from './MembersManager.js';
 
 class VoiceChatClient {
     constructor() {
@@ -37,7 +39,11 @@ class VoiceChatClient {
         this.inviteServerId = null;
         this.isCreatingRoom = false;
         this.socket = null;
-        
+        this.sseConnection = null;
+        this.wasMicActiveBeforeReconnect = false;
+        this.isReconnecting = false;
+        UIManager.setClient(this);
+
         this.init();
     }
 
@@ -116,8 +122,8 @@ class VoiceChatClient {
                 return;
             }
             
-            UIManager.openCreateRoomModal(this, (name, type) => {
-                RoomManager.createRoom(this, this.currentServerId, name, type);
+            UIManager.openCreateRoomModal(this, (name) => {
+                RoomManager.createRoom(this, this.currentServerId, name);
             });
         });
 
@@ -205,6 +211,7 @@ class VoiceChatClient {
             }
             AuthManager.showAuthModal(this);
         } catch (err) {
+            console.error('Auto connect error:', err);
             UIManager.showError('Критическая ошибка: не удалось загрузить систему авторизации');
         }
     }
@@ -212,6 +219,13 @@ class VoiceChatClient {
     async disconnectFromRoom() {
         if (this.currentRoom) {
             MediaManager.disconnect(this);
+            
+            // Отключаемся от текстового чата
+            TextChatManager.leaveTextRoom(this, this.currentRoom);
+            
+            // Очищаем список участников
+            MembersManager.clearMembers();
+            
             this.destroySocket();
             this.currentRoom = null;
             this.isConnected = false;
@@ -246,6 +260,7 @@ class VoiceChatClient {
             }
             return true;
         } catch (error) {
+            console.error('Error joining server:', error);
             this.showError(`❌ Доступ запрещён: ${error.message}`);
             return false;
         }
@@ -271,7 +286,10 @@ class VoiceChatClient {
                 })
             });
             
-            if (!res.ok) throw new Error(`Ошибка входа: ${res.status}`);
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                throw new Error(errorData.error || `Ошибка входа: ${res.status}`);
+            }
             
             const data = await res.json();
             if (!data.success) throw new Error(data.error);
@@ -282,21 +300,27 @@ class VoiceChatClient {
             
             this.setupSocketConnection();
             
-            if (data.roomType === 'voice') {
-                await MediaManager.connect(this, roomId, data.mediaData);
-                this.updateMicButtonState();
-                
-                if (this.socket) {
-                    this.socket.emit('subscribe-to-producers', { roomId });
-                    this.socket.emit('get-current-producers', { roomId });
-                }
+            await MediaManager.connect(this, roomId, data.mediaData);
+            this.updateMicButtonState();
+            
+            if (this.socket) {
+                this.socket.emit('subscribe-to-producers', { roomId });
+                this.socket.emit('get-current-producers', { roomId });
             }
+            
+            // Подключаемся к текстовому чату через SSE
+            TextChatManager.joinTextRoom(this, roomId);
+            
+            // Инициализируем список участников
+            MembersManager.initializeRoomMembers(this, []);
             
             this.showMessage('System', 'Вы вошли в комнату');
             UIManager.onRoomJoined(this, data.roomName);
             
         } catch (e) {
+            console.error('Error joining room:', e);
             UIManager.updateStatus('Ошибка: ' + e.message, 'disconnected');
+            UIManager.showError('Не удалось присоединиться к комнате: ' + e.message);
         }
     }
 
@@ -310,28 +334,71 @@ class VoiceChatClient {
                 userId: this.userId,
                 clientId: this.clientID,
                 username: this.username
-            }
+            },
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            timeout: 20000
         });
         
+        // Обработчики для голосового чата
         this.socket.on('new-producer', async (data) => {
             if (data.clientID !== this.clientID) {
                 try {
                     await MediaManager.createConsumer(this, data.producerId);
                     this.existingProducers.add(data.producerId);
-                } catch (error) {}
+                } catch (error) {
+                    console.error('Error creating consumer:', error);
+                }
             }
         });
         
         this.socket.on('current-producers', async (data) => {
+            // Добавляем проверку на существование data.producers
+            if (!data || !data.producers || !Array.isArray(data.producers)) {
+                console.log('No producers data available');
+                return;
+            }
+            
             for (const producer of data.producers) {
                 if (producer.clientID !== this.clientID && 
                     !this.existingProducers.has(producer.id)) {
                     try {
                         await MediaManager.createConsumer(this, producer.id);
                         this.existingProducers.add(producer.id);
-                    } catch (error) {}
+                    } catch (error) {
+                        console.error('Error creating consumer:', error);
+                    }
                 }
             }
+        });
+        
+        // Настройка обработчиков участников
+        MembersManager.setupSocketHandlers(this);
+        
+        // Настройка обработчиков текстового чата
+        TextChatManager.setupSocketHandlers(this);
+        
+        // Обработчик переподключения
+        this.socket.on('reconnect', (attemptNumber) => {
+            console.log('Socket reconnected after', attemptNumber, 'attempts');
+            UIManager.updateStatus('Переподключено', 'connected');
+            
+            // При переподключении повторно присоединяемся к комнатам
+            if (this.currentRoom) {
+                this.socket.emit('subscribe-to-producers', { roomId: this.currentRoom });
+                this.socket.emit('get-current-producers', { roomId: this.currentRoom });
+                
+                // Переподключаем SSE соединение для текстового чата
+                TextChatManager.joinTextRoom(this, this.currentRoom);
+            }
+        });
+        
+        // Обработчик ошибок сокета
+        this.socket.on('error', (error) => {
+            console.error('Socket error:', error);
+            UIManager.showError('Ошибка соединения: ' + (error.message || 'неизвестная ошибка'));
         });
     }
 
@@ -356,11 +423,19 @@ class VoiceChatClient {
 
     async toggleMicrophone() {
         try {
+            // Проверяем, что мы в комнате
+            if (!this.currentRoom) {
+                UIManager.showError('Микрофон доступен только в комнатах');
+                return;
+            }
+            
             if (this.isMicActive) {
                 await MediaManager.stopMicrophone(this);
+                MembersManager.updateCurrentUserMicState(this, false);
             } else {
                 try {
                     await MediaManager.startMicrophone(this);
+                    MembersManager.updateCurrentUserMicState(this, true);
                     
                     if (this.socket && this.audioProducer) {
                         this.socket.emit('new-producer-notification', {
@@ -380,6 +455,7 @@ class VoiceChatClient {
             }
             this.updateMicButtonState();
         } catch (error) {
+            console.error('Error toggling microphone:', error);
             UIManager.showError('Ошибка микрофона: ' + error.message);
             this.updateMicButtonState();
         }
@@ -392,20 +468,9 @@ class VoiceChatClient {
             return;
         }
         
-        this.showMessage(this.username, text);
-        
-        fetch(`${this.API_SERVER_URL}/api/message`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this.token}`
-            },
-            body: JSON.stringify({
-                roomId: this.currentRoom,
-                userId: this.userId,
-                text: text.trim()
-            })
-        }).catch(() => {
+        // Отправка текстового сообщения через REST API
+        TextChatManager.sendMessage(this, text).catch((error) => {
+            console.error('Error sending message:', error);
             this.showError('Ошибка отправки сообщения');
         });
     }
@@ -423,7 +488,9 @@ class VoiceChatClient {
                 if (this.currentRoom && this.isConnected) {
                     await this.startConsuming();
                 }
-            } catch (error) {}
+            } catch (error) {
+                console.error('Sync error:', error);
+            }
         }, 5000);
     }
 
@@ -449,6 +516,12 @@ class VoiceChatClient {
             }
             
             const data = await response.json();
+            
+            // Добавляем проверку на существование data.producers
+            if (!data || !data.producers || !Array.isArray(data.producers)) {
+                return;
+            }
+            
             const activeProducerIds = new Set(data.producers.map(p => p.id));
             
             for (const producerId of this.existingProducers) {
@@ -457,7 +530,9 @@ class VoiceChatClient {
                     if (consumer) {
                         try {
                             consumer.close();
-                        } catch (e) {}
+                        } catch (e) {
+                            console.error('Error closing consumer:', e);
+                        }
                         this.consumers.delete(producerId);
                         
                         if (window.audioElements && window.audioElements.has(producerId)) {
@@ -466,7 +541,9 @@ class VoiceChatClient {
                                 window.audioElements.get(producerId).srcObject = null;
                                 window.audioElements.get(producerId).remove();
                                 window.audioElements.delete(producerId);
-                            } catch (e) {}
+                            } catch (e) {
+                                console.error('Error cleaning up audio element:', e);
+                            }
                         }
                     }
                     this.existingProducers.delete(producerId);
@@ -478,10 +555,14 @@ class VoiceChatClient {
                     try {
                         await MediaManager.createConsumer(this, producer.id);
                         this.existingProducers.add(producer.id);
-                    } catch (error) {}
+                    } catch (error) {
+                        console.error('Error creating consumer:', error);
+                    }
                 }
             }
-        } catch (error) {}
+        } catch (error) {
+            console.error('Error starting consuming:', error);
+        }
     }
 
     async reconnectToRoom(roomId) {

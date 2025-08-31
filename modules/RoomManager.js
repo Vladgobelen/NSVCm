@@ -1,5 +1,7 @@
 import UIManager from './UIManager.js';
 import MediaManager from './MediaManager.js';
+import TextChatManager from './TextChatManager.js';
+import MembersManager from './MembersManager.js';
 
 class RoomManager {
   static async loadRoomsForServer(client, serverId) {
@@ -30,7 +32,7 @@ class RoomManager {
       
       if (client.currentRoom) {
         const room = data.rooms.find(r => r.id === client.currentRoom);
-        if (room && room.type === 'voice') {
+        if (room) {
           UIManager.updateMicStatus(client.isMicActive);
         }
       }
@@ -57,20 +59,24 @@ class RoomManager {
       
       const data = await res.json();
       client.currentRoom = roomId;
-      client.roomType = data.roomType;
+      client.roomType = 'voice'; // Все комнаты теперь голосовые
       
-      if (client.roomType === 'voice') {
-        try {
-          await MediaManager.connectToMediaServer(client, roomId);
-          UIManager.updateRoomUI(client);
-          await MediaManager.startConsumingProducers(client);
-        } catch (mediaError) {
-          UIManager.showError('Не удалось подключиться к голосовой комнате: ' + mediaError.message);
-          throw mediaError;
-        }
-      } else {
+      try {
+        await MediaManager.connect(client, roomId, data.mediaData);
         UIManager.updateRoomUI(client);
+        await MediaManager.startConsumingProducers(client);
+      } catch (mediaError) {
+        UIManager.showError('Не удалось подключиться к комнате: ' + mediaError.message);
+        throw mediaError;
       }
+      
+      // Подключаемся к текстовому чату
+      UIManager.updateRoomUI(client);
+      TextChatManager.joinTextRoom(client, roomId);
+      await TextChatManager.loadMessages(client, roomId);
+      
+      // Инициализируем список участников
+      MembersManager.initializeRoomMembers(client, []);
       
       UIManager.addMessage('System', `✅ Вы присоединились к комнате`);
       return true;
@@ -84,7 +90,7 @@ class RoomManager {
     if (!client.currentRoom) return;
     
     try {
-      if (client.roomType === 'voice' && client.isConnected) {
+      if (client.isConnected) {
         MediaManager.disconnect(client);
       }
       
@@ -95,6 +101,9 @@ class RoomManager {
           'Content-Type': 'application/json'
         }
       });
+      
+      // Очищаем список участников
+      MembersManager.clearMembers();
       
       client.currentRoom = null;
       client.roomType = null;
@@ -108,7 +117,7 @@ class RoomManager {
     }
   }
 
-  static async createRoom(client, serverId, name, type) {
+  static async createRoom(client, serverId, name) {
     if (!name || name.length < 3) {
       alert('Название должно быть от 3 символов');
       return;
@@ -124,7 +133,7 @@ class RoomManager {
         body: JSON.stringify({
           name: name.trim(),
           serverId: serverId,
-          type: type,
+          type: 'voice', // Все комнаты теперь голосовые
           userId: client.userId,
           token: client.token
         })
@@ -205,7 +214,7 @@ class RoomManager {
       
       client.isReconnecting = false;
       
-      if (client.wasMicActiveBeforeReconnect && client.mediaData && client.roomType === 'voice') {
+      if (client.wasMicActiveBeforeReconnect && client.mediaData) {
         setTimeout(async () => {
           try {
             await MediaManager.startMicrophone(client);
