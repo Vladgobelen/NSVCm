@@ -1,3 +1,5 @@
+import InviteManager from './InviteManager.js';
+
 class AuthManager {
     static STORAGE_KEY = 'voicechat_users';
     static LAST_USER_KEY = 'voicechat_lastuser';
@@ -50,6 +52,10 @@ class AuthManager {
         client.userId = lastUser.userId;
         client.token = lastUser.token;
         client.username = lastUser.username;
+        
+        // НОВОЕ: Инициализируем InviteManager после успешного авто-логина
+        InviteManager.init(client);
+        
         return true;
     }
 
@@ -110,6 +116,9 @@ class AuthManager {
             client.token = data.token;
             client.username = username;
 
+            // НОВОЕ: Инициализируем InviteManager после регистрации
+            InviteManager.init(client);
+            
             return true;
         } catch (error) {
             throw error;
@@ -186,10 +195,22 @@ class AuthManager {
                 const success = await this.registerUser(client, u, p);
                 if (success) {
                     modal.remove();
+                    
+                    // НОВОЕ: Загружаем серверы через импорт
                     await import('./ServerManager.js').then(module => {
                         return module.default.loadServers(client);
                     });
 
+                    // НОВОЕ: Применяем отложенный инвайт после авторизации
+                    const inviteApplied = await InviteManager.applyPendingInvite();
+                    
+                    // Если инвайт был применен, он сам позаботится о навигации
+                    if (inviteApplied) {
+                        client.startSyncInterval();
+                        return;
+                    }
+
+                    // Старая логика для обратной совместимости
                     if (client.inviteServerId) {
                         const serverExists = client.servers.some(s => s.id === client.inviteServerId);
                         if (serverExists) {
@@ -227,6 +248,9 @@ class AuthManager {
                 modal.remove();
             }
         });
+        
+        // НОВОЕ: Инициализируем InviteManager при показе модального окна
+        InviteManager.init(client);
     }
 }
 

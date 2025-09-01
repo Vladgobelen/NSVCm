@@ -1,5 +1,7 @@
 class MediaManager {
     static async connect(client, roomId, mediaData) {
+        console.log('MediaManager connecting to room:', roomId);
+        
         try {
             if (typeof mediasoupClient === 'undefined') {
                 throw new Error('Библиотека mediasoup-client не загружена');
@@ -16,14 +18,20 @@ class MediaManager {
             
             this.subscribeToProducerNotifications(client, roomId);
             
+            console.log('MediaManager connected successfully');
+            
         } catch (error) {
+            console.error('MediaManager connection failed:', error);
             throw new Error(`Media connection failed: ${error.message}`);
         }
     }
 
     static async createTransports(client, mediaData) {
+        console.log('Creating transports for client:', client.clientID);
+        
         try {
             if (!client.sendTransport) {
+                console.log('Creating send transport');
                 client.sendTransport = client.device.createSendTransport({
                     id: mediaData.sendTransport.id,
                     iceParameters: mediaData.sendTransport.iceParameters,
@@ -31,8 +39,12 @@ class MediaManager {
                     dtlsParameters: mediaData.sendTransport.dtlsParameters
                 });
                 this.setupSendTransportHandlers(client);
+            } else {
+                console.log('Send transport already exists, reusing');
             }
+            
             if (!client.recvTransport) {
+                console.log('Creating receive transport');
                 client.recvTransport = client.device.createRecvTransport({
                     id: mediaData.recvTransport.id,
                     iceParameters: mediaData.recvTransport.iceParameters,
@@ -40,15 +52,22 @@ class MediaManager {
                     dtlsParameters: mediaData.recvTransport.dtlsParameters
                 });
                 this.setupRecvTransportHandlers(client);
+            } else {
+                console.log('Receive transport already exists, reusing');
             }
             
         } catch (error) {
+            console.error('Error creating transports:', error);
             throw error;
         }
     }
 
     static setupSendTransportHandlers(client) {
+        console.log('Setting up send transport handlers');
+        
         client.sendTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+            console.log('Send transport connecting...');
+            
             try {
                 await fetch(`${client.API_SERVER_URL}/api/media/transport/connect`, {
                     method: 'POST',
@@ -61,13 +80,17 @@ class MediaManager {
                         dtlsParameters
                     })
                 });
+                console.log('Send transport connected successfully');
                 callback();
             } catch (error) {
+                console.error('Send transport connection failed:', error);
                 errback(error);
             }
         });
 
         client.sendTransport.on('produce', async (parameters, callback, errback) => {
+            console.log('Producing media:', parameters.kind);
+            
             try {
                 const response = await fetch(`${client.API_SERVER_URL}/api/media/produce`, {
                     method: 'POST',
@@ -95,15 +118,21 @@ class MediaManager {
                     });
                 }
                 
+                console.log('Media produced successfully:', data.producerId);
                 callback({ id: data.producerId });
             } catch (error) {
+                console.error('Produce failed:', error);
                 errback(error);
             }
         });
     }
 
     static setupRecvTransportHandlers(client) {
+        console.log('Setting up receive transport handlers');
+        
         client.recvTransport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+            console.log('Receive transport connecting...');
+            
             try {
                 await fetch(`${client.API_SERVER_URL}/api/media/transport/connect`, {
                     method: 'POST',
@@ -116,18 +145,23 @@ class MediaManager {
                         dtlsParameters
                     })
                 });
+                console.log('Receive transport connected successfully');
                 callback();
             } catch (error) {
+                console.error('Receive transport connection failed:', error);
                 errback(error);
             }
         });
     }
 
     static async startMicrophone(client) {
+        console.log('Starting microphone for client:', client.clientID);
+        
         try {
             if (!client.sendTransport) {
                 throw new Error('Send transport не инициализирован');
             }
+            
             client.stream = await navigator.mediaDevices.getUserMedia({ 
                 audio: {
                     echoCancellation: true,
@@ -156,8 +190,11 @@ class MediaManager {
             });
             
             client.isMicActive = true;
+            console.log('Microphone started successfully');
             
         } catch (error) {
+            console.error('Microphone start failed:', error);
+            
             if (client.stream) {
                 client.stream.getTracks().forEach(track => track.stop());
                 client.stream = null;
@@ -168,6 +205,8 @@ class MediaManager {
     }
 
     static async stopMicrophone(client) {
+        console.log('Stopping microphone for client:', client.clientID);
+        
         try {
             if (client.audioProducer) {
                 try {
@@ -181,7 +220,9 @@ class MediaManager {
                             producerId: client.audioProducer.id
                         })
                     });
-                } catch (error) {}
+                } catch (error) {
+                    console.warn('Error closing producer on server:', error);
+                }
                 
                 client.audioProducer.close();
                 client.audioProducer = null;
@@ -193,13 +234,17 @@ class MediaManager {
             }
             
             client.isMicActive = false;
+            console.log('Microphone stopped successfully');
             
         } catch (error) {
+            console.error('Microphone stop failed:', error);
             throw new Error(`Microphone stop failed: ${error.message}`);
         }
     }
 
     static startKeepAlive(client, roomId) {
+        console.log('Starting keep-alive for client:', client.clientID);
+        
         if (client.keepAliveInterval) {
             clearInterval(client.keepAliveInterval);
         }
@@ -215,26 +260,34 @@ class MediaManager {
                     clientId: client.clientID,
                     roomId: roomId
                 })
-            }).catch(() => {});
+            }).catch(() => {
+                console.warn('Keep-alive request failed');
+            });
         }, 10000);
     }
 
     static subscribeToProducerNotifications(client, roomId) {
+        console.log('Subscribing to producer notifications for room:', roomId);
+        
         if (client.socket) {
             client.socket.emit('subscribe-to-producers', { roomId });
             client.socket.emit('get-current-producers', { roomId });
             
             client.socket.on('new-producer', (data) => {
+                console.log('New producer notification:', data);
                 if (data.clientID !== client.clientID) {
                     this.createConsumer(client, data.producerId).then(consumer => {
                         if (consumer) {
                             client.existingProducers.add(data.producerId);
                         }
-                    }).catch(() => {});
+                    }).catch(error => {
+                        console.error('Error creating consumer from notification:', error);
+                    });
                 }
             });
 
             client.socket.on('current-producers', (producers) => {
+                console.log('Current producers list:', producers);
                 producers.forEach(producer => {
                     if (producer.clientID !== client.clientID && 
                         !client.existingProducers.has(producer.id)) {
@@ -242,7 +295,9 @@ class MediaManager {
                             if (consumer) {
                                 client.existingProducers.add(producer.id);
                             }
-                        }).catch(() => {});
+                        }).catch(error => {
+                            console.error('Error creating consumer from list:', error);
+                        });
                     }
                 });
             });
@@ -250,8 +305,12 @@ class MediaManager {
     }
 
     static async createConsumer(client, producerId) {
+        console.log('Creating consumer for producer:', producerId);
+        
         try {
+            // Проверяем, не создали ли мы уже потребителя для этого продюсера
             if (client.consumers.has(producerId)) {
+                console.log('Consumer already exists for producer:', producerId);
                 return client.consumers.get(producerId);
             }
             
@@ -293,41 +352,94 @@ class MediaManager {
             window.audioElements.set(producerId, audio);
             document.body.appendChild(audio);
             
+            console.log('Consumer created successfully:', data.id);
             return consumer;
             
         } catch (error) {
+            console.error('Error creating consumer:', error);
             throw error;
         }
     }
 
+    static async startConsumingProducers(client) {
+        console.log('Starting to consume existing producers');
+        
+        try {
+            const response = await fetch(`${client.API_SERVER_URL}/api/media/room/${client.currentRoom}/producers`, {
+                headers: {
+                    'Authorization': `Bearer ${client.token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            if (!response.ok) {
+                console.warn('Failed to get producers list:', response.status);
+                return;
+            }
+            
+            const data = await response.json();
+            
+            if (!data || !data.producers || !Array.isArray(data.producers)) {
+                console.warn('Invalid producers data received');
+                return;
+            }
+            
+            console.log('Found producers:', data.producers.length);
+            
+            for (const producer of data.producers) {
+                if (producer.clientID !== client.clientID && 
+                    !client.existingProducers.has(producer.id)) {
+                    try {
+                        await this.createConsumer(client, producer.id);
+                        client.existingProducers.add(producer.id);
+                    } catch (error) {
+                        console.error('Error consuming producer:', producer.id, error);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Error starting to consume producers:', error);
+        }
+    }
+
     static disconnect(client) {
+        console.log('Disconnecting media for client:', client.clientID);
+        
         if (client.keepAliveInterval) {
             clearInterval(client.keepAliveInterval);
             client.keepAliveInterval = null;
         }
         
         if (client.isMicActive) {
-            this.stopMicrophone(client).catch(() => {});
+            this.stopMicrophone(client).catch(() => {
+                console.warn('Error stopping microphone during disconnect');
+            });
         }
         
         if (client.sendTransport) {
             try {
                 client.sendTransport.close();
-            } catch (error) {}
+            } catch (error) {
+                console.warn('Error closing send transport:', error);
+            }
             client.sendTransport = null;
         }
         
         if (client.recvTransport) {
             try {
                 client.recvTransport.close();
-            } catch (error) {}
+            } catch (error) {
+                console.warn('Error closing receive transport:', error);
+            }
             client.recvTransport = null;
         }
         
         client.consumers.forEach(consumer => {
             try {
                 consumer.close();
-            } catch (error) {}
+            } catch (error) {
+                console.warn('Error closing consumer:', error);
+            }
         });
         client.consumers.clear();
         
@@ -337,13 +449,17 @@ class MediaManager {
                     audio.pause();
                     audio.srcObject = null;
                     audio.remove();
-                } catch (error) {}
+                } catch (error) {
+                    console.warn('Error cleaning up audio element:', error);
+                }
             });
             window.audioElements.clear();
         }
         
         client.device = null;
         client.isConnected = false;
+        
+        console.log('Media disconnected successfully');
     }
 }
 

@@ -108,22 +108,21 @@ class TextChatManager {
                             break;
                             
                         case 'member-joined':
-                            if (data.member) {
+                            if (data.userId && data.username) {
                                 MembersManager.addMember({
-                                    clientId: `sse_${data.member.userId}`,
-                                    username: data.member.username,
-                                    isMicActive: data.member.isMicActive || false
+                                    userId: data.userId,
+                                    username: data.username,
+                                    isMicActive: data.isMicActive || false
                                 });
                                 
                                 // Показываем системное сообщение о присоединении пользователя
-                                UIManager.addMessage('System', `Пользователь ${data.member.username} присоединился к чату`, data.timestamp);
+                                UIManager.addMessage('System', `Пользователь ${data.username} присоединился к чату`, data.timestamp);
                             }
                             break;
                             
                         case 'member-left':
                             if (data.userId) {
-                                const clientId = `sse_${data.userId}`;
-                                MembersManager.removeMember(clientId);
+                                MembersManager.removeMember(data.userId);
                                 
                                 // Показываем системное сообщение о выходе пользователя
                                 UIManager.addMessage('System', `Пользователь покинул чат`, data.timestamp);
@@ -132,17 +131,22 @@ class TextChatManager {
                             
                         case 'member-mic-state':
                             if (data.userId && typeof data.isActive !== 'undefined') {
-                                const clientId = `sse_${data.userId}`;
-                                MembersManager.updateMemberMicState(clientId, data.isActive);
+                                MembersManager.updateMember(data.userId, { isMicActive: data.isActive });
                             }
                             break;
                             
                         case 'user-joined':
-                            UIManager.addMessage('System', `Пользователь ${data.username} присоединился к чату`, data.timestamp);
+                            // Старый формат для обратной совместимости
+                            if (data.username) {
+                                UIManager.addMessage('System', `Пользователь ${data.username} присоединился к чату`, data.timestamp);
+                            }
                             break;
                             
                         case 'user-left':
-                            UIManager.addMessage('System', `Пользователь ${data.username} покинул чат`, data.timestamp);
+                            // Старый формат для обратной совместимости
+                            if (data.username) {
+                                UIManager.addMessage('System', `Пользователь ${data.username} покинул чат`, data.timestamp);
+                            }
                             break;
                             
                         case 'chat-cleared':
@@ -238,11 +242,11 @@ class TextChatManager {
         });
 
         client.socket.on('member-left', (data) => {
-            MembersManager.removeMember(data.clientId);
+            MembersManager.removeMember(data.userId);
         });
 
         client.socket.on('member-mic-state', (data) => {
-            MembersManager.updateMemberMicState(data.clientId, data.isActive);
+            MembersManager.updateMember(data.userId, { isMicActive: data.isActive });
         });
 
         client.socket.on('members-list', (members) => {

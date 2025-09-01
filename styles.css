@@ -173,13 +173,13 @@ body {
     margin-left: 4px;
 }
 
-.server-actions {
+.server-actions, .room-actions {
     display: flex;
     gap: 4px;
     margin-left: auto;
 }
 
-.server-action-btn {
+.server-action-btn, .room-action-btn {
     background: none;
     border: none;
     color: var(--text-muted);
@@ -187,10 +187,12 @@ body {
     padding: 2px 4px;
     border-radius: 3px;
     font-size: 12px;
-    margin-left: 4px;
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
 }
 
-.server-action-btn:hover {
+.server-action-btn:hover, .room-action-btn:hover {
+    opacity: 1;
     color: var(--text-normal);
     background: var(--bg-modifier);
 }
@@ -323,6 +325,14 @@ body {
     margin-bottom: 16px;
     display: flex;
     gap: 12px;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.message.appeared {
+    opacity: 1;
+    transform: translateY(0);
 }
 
 .message-avatar {
@@ -463,14 +473,43 @@ body {
 }
 
 .member-status {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+/* Новые стили для индикаторов статуса */
+.status-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.status-indicator.online {
+    background: var(--success);
+}
+
+.status-indicator.offline {
+    background: var(--text-muted);
+}
+
+.mic-indicator {
     width: 8px;
     height: 8px;
     border-radius: 50%;
     background: var(--text-muted);
+    position: relative;
 }
 
-.member-status.active {
+.mic-indicator.active {
     background: var(--success);
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
 }
 
 /* Modal Styles */
@@ -656,15 +695,97 @@ body {
     animation: pulse 1s infinite;
 }
 
-@keyframes pulse {
-    0% { opacity: 1; }
-    50% { opacity: 0.5; }
-    100% { opacity: 1; }
-}
-
 .mic-button.hidden {
     transform: scale(0);
     opacity: 0;
+}
+
+/* Invite Link Styles */
+.invite-link-container {
+    display: flex;
+    gap: 8px;
+    margin: 16px 0;
+}
+
+#inviteLinkInput {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid var(--bg-tertiary);
+    border-radius: 4px;
+    background: var(--bg-modifier);
+    color: var(--text-normal);
+    font-family: monospace;
+}
+
+.invite-link-container button {
+    padding: 8px 12px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.invite-link-container button:hover {
+    background: #4752c4;
+}
+
+/* Error Message Styles */
+.error-message {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: var(--danger);
+    color: white;
+    padding: 10px 15px;
+    border-radius: 5px;
+    z-index: 1000;
+    max-width: 300px;
+    animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Status Styles */
+.status-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+    display: inline-block;
+}
+
+.status-indicator.connecting {
+    background: var(--warning);
+    animation: pulse 1.5s infinite;
+}
+
+.status-indicator.disconnected {
+    background: var(--danger);
+}
+
+.status-indicator.connected {
+    background: var(--success);
+}
+
+.status-text {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.no-results {
+    padding: 16px;
+    text-align: center;
+    color: var(--text-muted);
 }
 
 /* Responsive Styles */
@@ -706,5 +827,19 @@ body {
     
     .mic-toggle-btn {
         display: flex;
+    }
+    
+    .server-actions, .room-actions {
+        flex-direction: column;
+        gap: 2px;
+    }
+    
+    .server-action-btn, .room-action-btn {
+        padding: 4px;
+        font-size: 14px;
+    }
+    
+    .invite-link-container {
+        flex-direction: column;
     }
 }

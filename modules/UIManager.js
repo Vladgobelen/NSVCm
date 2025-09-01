@@ -1,4 +1,3 @@
-import ChatManager from './ChatManager.js';
 import MembersManager from './MembersManager.js';
 
 class UIManager {
@@ -236,17 +235,11 @@ class UIManager {
         });
     }
 
-    static updateMembersList(members) {
+    static updateMembersList(users) {
         const membersList = document.querySelector('.members-list');
         if (!membersList) return;
 
         membersList.innerHTML = '';
-        
-        // Добавляем проверку на наличие клиента
-        if (!this.client) {
-            console.error('UIManager.client is not set');
-            return;
-        }
         
         // Добавляем текущего пользователя в список
         if (this.client && this.client.username) {
@@ -256,25 +249,27 @@ class UIManager {
             selfElement.innerHTML = `
                 <div class="member-avatar">${selfUsername.charAt(0).toUpperCase()}</div>
                 <div class="member-name">${selfUsername}</div>
-                <div class="member-status ${this.client.isMicActive ? 'active' : ''}">
-                    <div class="mic-indicator ${this.client.isMicActive ? 'active' : ''}"></div>
+                <div class="member-status">
+                    <div class="status-indicator online" title="Online"></div>
+                    <div class="mic-indicator ${this.client.isMicActive ? 'active' : ''}" title="${this.client.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
                 </div>
             `;
             membersList.appendChild(selfElement);
         }
         
         // Добавляем остальных участников
-        members.forEach(member => {
-            if (member.clientId === this.client.clientID) return;
+        users.forEach(user => {
+            if (user.userId === this.client.userId) return;
             
             const memberElement = document.createElement('div');
             memberElement.className = 'member-item';
-            const displayName = member.username || 'Пользователь';
+            const displayName = user.username || 'Пользователь';
             memberElement.innerHTML = `
                 <div class="member-avatar">${displayName.charAt(0).toUpperCase()}</div>
                 <div class="member-name">${this.escapeHtml(displayName)}</div>
-                <div class="member-status ${member.isMicActive ? 'active' : ''}">
-                    <div class="mic-indicator ${member.isMicActive ? 'active' : ''}"></div>
+                <div class="member-status">
+                    <div class="status-indicator ${user.isOnline ? 'online' : 'offline'}" title="${user.isOnline ? 'Online' : 'Offline'}"></div>
+                    <div class="mic-indicator ${user.isMicActive ? 'active' : ''}" title="${user.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
                 </div>
             `;
             membersList.appendChild(memberElement);

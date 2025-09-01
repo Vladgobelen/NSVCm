@@ -5,6 +5,8 @@ import ServerManager from './ServerManager.js';
 import UIManager from './UIManager.js';
 import Utils from './Utils.js';
 import TextChatManager from './TextChatManager.js';
+import UserPresenceManager from './UserPresenceManager.js';
+import InviteManager from './InviteManager.js';
 import MembersManager from './MembersManager.js';
 
 class VoiceChatClient {
@@ -24,7 +26,7 @@ class VoiceChatClient {
         this.currentServerId = null;
         this.currentServer = null;
         this.servers = [];
-        this.members = [];
+        this.rooms = [];
         this.keepAliveInterval = null;
         this.bitrate = 32000;
         this.dtxEnabled = true;
@@ -42,18 +44,25 @@ class VoiceChatClient {
         this.sseConnection = null;
         this.wasMicActiveBeforeReconnect = false;
         this.isReconnecting = false;
+        this.pendingInviteCode = null;
         UIManager.setClient(this);
 
         this.init();
     }
 
     async init() {
+        console.log('VoiceChatClient initializing...');
         this.initElements();
         this.initEventListeners();
+        
+        UserPresenceManager.init(this);
+        InviteManager.init(this);
+        
         await this.initAutoConnect();
     }
 
     initElements() {
+        console.log('Initializing UI elements...');
         this.micButton = document.querySelector('.mic-button');
         this.micToggleBtn = document.querySelector('.mic-toggle-btn');
         this.messageInput = document.querySelector('.message-input');
@@ -78,74 +87,122 @@ class VoiceChatClient {
         this.membersPanel = document.querySelector('.members-panel');
         this.serverSearchInput = document.querySelector('#serverSearch');
         this.clearSearchBtn = document.querySelector('#clearSearchBtn');    
-        this.clearSearchBtn.addEventListener('click', () => {
-            ServerManager.clearSearchAndShowAllServers(this);
-        });
+        
+        if (this.clearSearchBtn) {
+            this.clearSearchBtn.addEventListener('click', () => {
+                ServerManager.clearSearchAndShowAllServers(this);
+            });
+        } else {
+            console.warn('Clear search button not found');
+        }
     }
 
     initEventListeners() {
-        this.micButton.addEventListener('click', () => this.toggleMicrophone());
-        this.micToggleBtn.addEventListener('click', () => this.toggleMicrophone());
+        console.log('Setting up event listeners...');
         
-        this.messageInput.addEventListener('keypress', e => {
-            if (e.key === 'Enter') {
+        if (this.micButton) {
+            this.micButton.addEventListener('click', () => this.toggleMicrophone());
+        }
+        
+        if (this.micToggleBtn) {
+            this.micToggleBtn.addEventListener('click', () => this.toggleMicrophone());
+        }
+        
+        if (this.messageInput) {
+            this.messageInput.addEventListener('keypress', e => {
+                if (e.key === 'Enter') {
+                    this.sendMessage(this.messageInput.value);
+                    this.messageInput.value = '';
+                }
+            });
+        }
+        
+        if (this.sendButton) {
+            this.sendButton.addEventListener('click', () => {
                 this.sendMessage(this.messageInput.value);
                 this.messageInput.value = '';
-            }
-        });
-        this.sendButton.addEventListener('click', () => {
-            this.sendMessage(this.messageInput.value);
-            this.messageInput.value = '';
-        });
-        this.toggleSidebarBtn.addEventListener('click', () => {
-            this.sidebar.classList.toggle('open');
-        });
-        this.toggleMembersBtn.addEventListener('click', () => {
-            this.membersPanel.classList.toggle('open');
-        });
-        this.closePanelBtn.addEventListener('click', () => {
-            this.membersPanel.classList.remove('open');
-        });
-        this.closeSidebarBtn.addEventListener('click', () => {
-            this.sidebar.classList.remove('open');
-        });
-        this.settingsBtn.addEventListener('click', () => {
-            UIManager.openSettings(this);
-        });
-        this.createServerBtn.addEventListener('click', () => {
-            ServerManager.createServer(this);
-        });
-
-        this.createRoomBtn.addEventListener('click', () => {
-            if (!this.currentServerId) {
-                alert('Сначала выберите сервер');
-                return;
-            }
-            
-            UIManager.openCreateRoomModal(this, (name) => {
-                RoomManager.createRoom(this, this.currentServerId, name);
             });
-        });
+        }
+        
+        if (this.toggleSidebarBtn) {
+            this.toggleSidebarBtn.addEventListener('click', () => {
+                this.sidebar.classList.toggle('open');
+            });
+        }
+        
+        if (this.toggleMembersBtn) {
+            this.toggleMembersBtn.addEventListener('click', () => {
+                this.membersPanel.classList.toggle('open');
+            });
+        }
+        
+        if (this.closePanelBtn) {
+            this.closePanelBtn.addEventListener('click', () => {
+                this.membersPanel.classList.remove('open');
+            });
+        }
+        
+        if (this.closeSidebarBtn) {
+            this.closeSidebarBtn.addEventListener('click', () => {
+                this.sidebar.classList.remove('open');
+            });
+        }
+        
+        if (this.settingsBtn) {
+            this.settingsBtn.addEventListener('click', () => {
+                UIManager.openSettings(this);
+            });
+        }
+        
+        if (this.createServerBtn) {
+            this.createServerBtn.addEventListener('click', () => {
+                ServerManager.createServer(this);
+            });
+        }
 
-        this.serversToggleBtn.addEventListener('click', () => {
-            ServerManager.clearSearchAndShowAllServers(this);
-            this.showPanel('servers');
-        });
-        this.roomsToggleBtn.addEventListener('click', () => {
-            this.showPanel('rooms');
-        });
-        this.serverSearchInput.addEventListener('input', (e) => {
-            this.searchServers(e.target.value);
-        });
+        if (this.createRoomBtn) {
+            this.createRoomBtn.addEventListener('click', () => {
+                if (!this.currentServerId) {
+                    alert('Сначала выберите сервер');
+                    return;
+                }
+                
+                UIManager.openCreateRoomModal(this, (name) => {
+                    RoomManager.createRoom(this, this.currentServerId, name);
+                });
+            });
+        }
+
+        if (this.serversToggleBtn) {
+            this.serversToggleBtn.addEventListener('click', () => {
+                ServerManager.clearSearchAndShowAllServers(this);
+                this.showPanel('servers');
+            });
+        }
+        
+        if (this.roomsToggleBtn) {
+            this.roomsToggleBtn.addEventListener('click', () => {
+                this.showPanel('rooms');
+            });
+        }
+        
+        if (this.serverSearchInput) {
+            this.serverSearchInput.addEventListener('input', (e) => {
+                this.searchServers(e.target.value);
+            });
+        }
     }
 
     showPanel(panelName) {
+        console.log('Showing panel:', panelName);
+        
         if (!this.serversPanel) this.serversPanel = document.getElementById('servers-panel');
         if (!this.roomsPanel) this.roomsPanel = document.getElementById('rooms-panel');
         if (!this.serversToggleBtn) this.serversToggleBtn = document.querySelector('#serversToggle');
         if (!this.roomsToggleBtn) this.roomsToggleBtn = document.querySelector('#roomsToggle');
     
         if (!this.serversPanel || !this.roomsPanel || !this.serversToggleBtn || !this.roomsToggleBtn) {
+            console.error('Required panel elements not found');
             return;
         }
     
@@ -165,20 +222,79 @@ class VoiceChatClient {
     }
 
     processUrlParams() {
+        console.log('Processing URL parameters...');
         const params = new URLSearchParams(window.location.search);
         this.currentServerId = params.get('server');
         this.currentRoom = params.get('room');
         this.inviteServerId = params.get('invite');
+        
+        const inviteCode = params.get('invite');
+        if (inviteCode && /^[a-zA-Z0-9]{4}$/.test(inviteCode)) {
+            this.pendingInviteCode = inviteCode;
+            console.log('Found pending invite code:', inviteCode);
+        }
+        
+        console.log('URL params processed - server:', this.currentServerId, 'room:', this.currentRoom, 'invite:', this.inviteServerId);
     }
 
     async initAutoConnect() {
+        console.log('Starting auto-connect process...');
         this.processUrlParams();
+        
         try {
             const autoLoggedIn = await AuthManager.tryAutoLogin(this);
             if (autoLoggedIn) {
+                console.log('Auto-login successful, loading servers...');
                 await ServerManager.loadServers(this);
+                
+                // Применяем отложенный инвайт после авторизации
+                if (this.pendingInviteCode) {
+                    console.log('Applying pending invite:', this.pendingInviteCode);
+                    const inviteApplied = await InviteManager.applyPendingInvite();
+                    
+                    if (inviteApplied) {
+                        console.log('Invite applied successfully');
+                        this.clearPendingInvite();
+                        this.startSyncInterval();
+                        return;
+                    } else {
+                        console.log('Failed to apply invite, continuing with normal flow');
+                    }
+                }
+                
+                // Восстанавливаем последний сервер и комнату из localStorage
+                const lastServerId = localStorage.getItem('lastServerId');
+                const lastRoomId = localStorage.getItem('lastRoomId');
+                
+                if (lastServerId) {
+                    console.log('Found last server in localStorage:', lastServerId);
+                    const serverExists = this.servers.some(s => s.id === lastServerId);
+                    if (serverExists) {
+                        this.currentServerId = lastServerId;
+                        this.currentServer = this.servers.find(s => s.id === lastServerId);
+                        
+                        await RoomManager.loadRoomsForServer(this, lastServerId);
+                        
+                        // Восстанавливаем последнюю комнату, если она существует
+                        if (lastRoomId) {
+                            console.log('Found last room in localStorage:', lastRoomId);
+                            const roomExists = this.rooms.some(room => room.id === lastRoomId);
+                            
+                            if (roomExists) {
+                                this.currentRoom = lastRoomId;
+                                await this.reconnectToRoom(lastRoomId);
+                            }
+                        }
+                        
+                        this.startSyncInterval();
+                        return;
+                    }
+                }
+                
+                // Старая логика для обратной совместимости
                 let targetServerId = null;
                 if (this.inviteServerId) {
+                    console.log('Processing invite server ID:', this.inviteServerId);
                     const serverExists = this.servers.some(s => s.id === this.inviteServerId);
                     if (serverExists) {
                         targetServerId = this.inviteServerId;
@@ -192,12 +308,15 @@ class VoiceChatClient {
                         }
                     }
                 } else if (this.currentServerId) {
+                    console.log('Processing current server ID:', this.currentServerId);
                     const serverExists = this.servers.some(s => s.id === this.currentServerId);
                     if (serverExists) {
                         targetServerId = this.currentServerId;
                     }
                 }
+                
                 if (targetServerId) {
+                    console.log('Setting target server:', targetServerId);
                     this.currentServerId = targetServerId;
                     await RoomManager.loadRoomsForServer(this, targetServerId);
                     if (this.currentRoom) {
@@ -205,10 +324,12 @@ class VoiceChatClient {
                     }
                     this.startSyncInterval();
                 } else {
+                    console.log('No target server found, showing auto-connect UI');
                     this.autoConnect();
                 }
                 return;
             }
+            console.log('No auto-login found, showing auth modal');
             AuthManager.showAuthModal(this);
         } catch (err) {
             console.error('Auto connect error:', err);
@@ -216,26 +337,20 @@ class VoiceChatClient {
         }
     }
 
-    async disconnectFromRoom() {
-        if (this.currentRoom) {
-            MediaManager.disconnect(this);
-            
-            // Отключаемся от текстового чата
-            TextChatManager.leaveTextRoom(this, this.currentRoom);
-            
-            // Очищаем список участников
-            MembersManager.clearMembers();
-            
-            this.destroySocket();
-            this.currentRoom = null;
-            this.isConnected = false;
-            this.isMicActive = false;
-            this.existingProducers.clear();
-            this.updateMicButtonState();
-        }
+    clearPendingInvite() {
+        console.log('Clearing pending invite');
+        this.pendingInviteCode = null;
+        localStorage.removeItem('pending_invite');
+        
+        // Очищаем параметр invite из URL
+        const url = new URL(window.location);
+        url.searchParams.delete('invite');
+        window.history.replaceState({}, '', url);
     }
 
     async joinServer(serverId) {
+        console.log('Joining server:', serverId);
+        
         try {
             const res = await fetch(`${this.API_SERVER_URL}/api/servers/${serverId}/join`, {
                 method: 'POST',
@@ -245,30 +360,47 @@ class VoiceChatClient {
                 },
                 body: JSON.stringify({ userId: this.userId, token: this.token })
             });
+
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
                 throw new Error(err.error || 'Не удалось присоединиться');
             }
+
             const data = await res.json();
             const server = data.server;
+
             const exists = this.servers.some(s => s.id === server.id);
             if (!exists) {
                 this.servers.push(server);
                 ServerManager.saveServersToLocalStorage(this);
-                ServerManager.renderServers(this);
-                this.showMessage('System', `✅ Вы присоединились к "${server.name}"`);
             }
+
+            if (this.serverSearchInput) {
+                this.serverSearchInput.value = '';
+            }
+
+            // Сохраняем выбор сервера
+            localStorage.setItem('lastServerId', server.id);
+            
+            ServerManager.renderServers(this);
+            this.showPanel('servers');
+            
+            UIManager.addMessage('System', `✅ Вы присоединились к "${server.name}"`);
+
             return true;
+
         } catch (error) {
             console.error('Error joining server:', error);
-            this.showError(`❌ Доступ запрещён: ${error.message}`);
+            UIManager.showError(`❌ Не удалось присоединиться: ${error.message}`);
             return false;
         }
     }
 
     async joinRoom(roomId) {
+        console.log('Joining room:', roomId);
+        
         try {
-            this.showMessage('System', 'Подключение к комнате...');
+            UIManager.addMessage('System', 'Подключение к комнате...');
             
             this.disconnectFromRoom();
             
@@ -297,6 +429,11 @@ class VoiceChatClient {
             this.clientID = data.clientId;
             this.mediaData = data.mediaData;
             this.currentRoom = roomId;
+            this.roomType = 'voice';
+            
+            // Сохраняем выбор сервера и комнаты
+            localStorage.setItem('lastServerId', this.currentServerId);
+            localStorage.setItem('lastRoomId', this.currentRoom);
             
             this.setupSocketConnection();
             
@@ -308,23 +445,25 @@ class VoiceChatClient {
                 this.socket.emit('get-current-producers', { roomId });
             }
             
-            // Подключаемся к текстовому чату через SSE
+            UIManager.updateRoomUI(this);
             TextChatManager.joinTextRoom(this, roomId);
+            await TextChatManager.loadMessages(this, roomId);
             
-            // Инициализируем список участников
+            // Используем MembersManager вместо UserPresenceManager
             MembersManager.initializeRoomMembers(this, []);
             
-            this.showMessage('System', 'Вы вошли в комнату');
-            UIManager.onRoomJoined(this, data.roomName);
-            
+            UIManager.addMessage('System', `✅ Вы присоединились к комнате`);
+            return true;
         } catch (e) {
             console.error('Error joining room:', e);
             UIManager.updateStatus('Ошибка: ' + e.message, 'disconnected');
             UIManager.showError('Не удалось присоединиться к комнате: ' + e.message);
+            throw e;
         }
     }
 
     setupSocketConnection() {
+        console.log('Setting up socket connection...');
         this.destroySocket();
         if (!this.token) return;
         
@@ -342,8 +481,8 @@ class VoiceChatClient {
             timeout: 20000
         });
         
-        // Обработчики для голосового чата
         this.socket.on('new-producer', async (data) => {
+            console.log('New producer event:', data);
             if (data.clientID !== this.clientID) {
                 try {
                     await MediaManager.createConsumer(this, data.producerId);
@@ -355,7 +494,7 @@ class VoiceChatClient {
         });
         
         this.socket.on('current-producers', async (data) => {
-            // Добавляем проверку на существование data.producers
+            console.log('Current producers event:', data);
             if (!data || !data.producers || !Array.isArray(data.producers)) {
                 console.log('No producers data available');
                 return;
@@ -374,35 +513,36 @@ class VoiceChatClient {
             }
         });
         
-        // Настройка обработчиков участников
+        // Настраиваем обработчики MembersManager вместо UserPresenceManager
         MembersManager.setupSocketHandlers(this);
         
-        // Настройка обработчиков текстового чата
         TextChatManager.setupSocketHandlers(this);
         
-        // Обработчик переподключения
         this.socket.on('reconnect', (attemptNumber) => {
             console.log('Socket reconnected after', attemptNumber, 'attempts');
             UIManager.updateStatus('Переподключено', 'connected');
             
-            // При переподключении повторно присоединяемся к комнатам
             if (this.currentRoom) {
                 this.socket.emit('subscribe-to-producers', { roomId: this.currentRoom });
                 this.socket.emit('get-current-producers', { roomId: this.currentRoom });
                 
-                // Переподключаем SSE соединение для текстового чата
                 TextChatManager.joinTextRoom(this, this.currentRoom);
             }
         });
         
-        // Обработчик ошибок сокета
         this.socket.on('error', (error) => {
             console.error('Socket error:', error);
             UIManager.showError('Ошибка соединения: ' + (error.message || 'неизвестная ошибка'));
         });
+        
+        this.socket.on('disconnect', (reason) => {
+            console.log('Socket disconnected:', reason);
+            UIManager.updateStatus('Отключено', 'disconnected');
+        });
     }
 
     destroySocket() {
+        console.log('Destroying socket connection...');
         if (this.socket) {
             this.socket.disconnect();
             this.socket = null;
@@ -422,8 +562,9 @@ class VoiceChatClient {
     }
 
     async toggleMicrophone() {
+        console.log('Toggling microphone, current state:', this.isMicActive);
+        
         try {
-            // Проверяем, что мы в комнате
             if (!this.currentRoom) {
                 UIManager.showError('Микрофон доступен только в комнатах');
                 return;
@@ -462,13 +603,14 @@ class VoiceChatClient {
     }
 
     sendMessage(text) {
+        console.log('Sending message:', text);
+        
         if (!text.trim()) return;
         if (!this.currentRoom) {
             this.showError('Вы не в комнате');
             return;
         }
         
-        // Отправка текстового сообщения через REST API
         TextChatManager.sendMessage(this, text).catch((error) => {
             console.error('Error sending message:', error);
             this.showError('Ошибка отправки сообщения');
@@ -476,6 +618,8 @@ class VoiceChatClient {
     }
 
     startSyncInterval() {
+        console.log('Starting sync interval...');
+        
         if (this.syncInterval) clearInterval(this.syncInterval);
         
         this.syncInterval = setInterval(async () => {
@@ -495,6 +639,8 @@ class VoiceChatClient {
     }
 
     async startConsuming() {
+        console.log('Starting media consumption...');
+        
         if (!this.isConnected || !this.currentRoom) {
             return;
         }
@@ -517,7 +663,6 @@ class VoiceChatClient {
             
             const data = await response.json();
             
-            // Добавляем проверку на существование data.producers
             if (!data || !data.producers || !Array.isArray(data.producers)) {
                 return;
             }
@@ -565,13 +710,103 @@ class VoiceChatClient {
         }
     }
 
+    async disconnectFromRoom() {
+        console.log('Disconnecting from room:', this.currentRoom);
+        
+        if (this.currentRoom) {
+            MediaManager.disconnect(this);
+            
+            TextChatManager.leaveTextRoom(this, this.currentRoom);
+            
+            // Используем MembersManager вместо UserPresenceManager
+            MembersManager.clearMembers();
+            
+            this.destroySocket();
+            this.currentRoom = null;
+            this.isConnected = false;
+            this.isMicActive = false;
+            this.existingProducers.clear();
+            this.updateMicButtonState();
+        }
+    }
+
     async reconnectToRoom(roomId) {
-        this.disconnectFromRoom();
-        this.currentRoom = roomId;
-        await this.joinRoom(roomId);
+        console.log('Reconnecting to room:', roomId);
+        
+        try {
+            UIManager.addMessage('System', 'Переподключение к комнате...');
+            
+            this.wasMicActiveBeforeReconnect = this.isMicActive;
+            
+            if (this.isMicActive && this.mediaData) {
+                await MediaManager.stopMicrophone(this);
+            }
+            
+            await this.leaveRoom();
+            
+            this.isReconnecting = true;
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            const result = await this.joinRoom(roomId);
+            
+            this.isReconnecting = false;
+            
+            if (this.wasMicActiveBeforeReconnect && this.mediaData) {
+                setTimeout(async () => {
+                    try {
+                        await MediaManager.startMicrophone(this);
+                        this.wasMicActiveBeforeReconnect = false;
+                    } catch (error) {
+                        UIManager.showError('Не удалось восстановить микрофон после переподключения');
+                    }
+                }, 1000);
+            }
+            
+            return result;
+        } catch (error) {
+            this.isReconnecting = false;
+            UIManager.addMessage('System', 'Ошибка переподключения: ' + error.message);
+            throw error;
+        }
+    }
+
+    async leaveRoom() {
+        console.log('Leaving room:', this.currentRoom);
+        
+        if (!this.currentRoom) return;
+        
+        try {
+            if (this.isConnected) {
+                MediaManager.disconnect(this);
+            }
+            
+            await fetch(`${this.API_SERVER_URL}/api/rooms/${this.currentRoom}/leave`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            // Используем MembersManager вместо UserPresenceManager
+            MembersManager.clearMembers();
+            
+            this.currentRoom = null;
+            this.roomType = null;
+            
+            UIManager.updateRoomUI(this);
+            UIManager.addMessage('System', `✅ Вы покинули комнату`);
+            return true;
+        } catch (error) {
+            console.error('Error leaving room:', error);
+            UIManager.showError('Ошибка при покидании комнаты: ' + error.message);
+            return false;
+        }
     }
 
     autoConnect() {
+        console.log('Showing auto-connect UI');
         this.sidebar.classList.add('open');
     }
 
@@ -584,6 +819,7 @@ class VoiceChatClient {
     }
 
     async searchServers(query) {
+        console.log('Searching servers:', query);
         await ServerManager.searchServers(this, query);
     }
 }

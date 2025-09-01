@@ -2,6 +2,7 @@ import UIManager from './UIManager.js';
 import MediaManager from './MediaManager.js';
 import TextChatManager from './TextChatManager.js';
 import MembersManager from './MembersManager.js';
+import InviteManager from './InviteManager.js';
 
 class RoomManager {
   static async loadRoomsForServer(client, serverId) {
@@ -27,15 +28,12 @@ class RoomManager {
         throw new Error('Некорректные данные от сервера');
       }
       
-      UIManager.renderRooms(client, data.rooms);
+      // СОХРАНЯЕМ КОМНАТЫ В КЛИЕНТЕ
+      client.rooms = data.rooms;
+      
+      this.renderRooms(client, data.rooms);
       UIManager.updateStatus('Комнаты загружены', 'normal');
       
-      if (client.currentRoom) {
-        const room = data.rooms.find(r => r.id === client.currentRoom);
-        if (room) {
-          UIManager.updateMicStatus(client.isMicActive);
-        }
-      }
     } catch (error) {
       UIManager.updateStatus('Ошибка загрузки комнат', 'error');
       UIManager.showError('Не удалось загрузить комнаты: ' + error.message);
@@ -59,7 +57,7 @@ class RoomManager {
       
       const data = await res.json();
       client.currentRoom = roomId;
-      client.roomType = 'voice'; // Все комнаты теперь голосовые
+      client.roomType = 'voice';
       
       try {
         await MediaManager.connect(client, roomId, data.mediaData);
@@ -70,12 +68,10 @@ class RoomManager {
         throw mediaError;
       }
       
-      // Подключаемся к текстовому чату
       UIManager.updateRoomUI(client);
       TextChatManager.joinTextRoom(client, roomId);
       await TextChatManager.loadMessages(client, roomId);
       
-      // Инициализируем список участников
       MembersManager.initializeRoomMembers(client, []);
       
       UIManager.addMessage('System', `✅ Вы присоединились к комнате`);
@@ -102,7 +98,6 @@ class RoomManager {
         }
       });
       
-      // Очищаем список участников
       MembersManager.clearMembers();
       
       client.currentRoom = null;
@@ -133,7 +128,7 @@ class RoomManager {
         body: JSON.stringify({
           name: name.trim(),
           serverId: serverId,
-          type: 'voice', // Все комнаты теперь голосовые
+          type: 'voice',
           userId: client.userId,
           token: client.token
         })
@@ -160,6 +155,53 @@ class RoomManager {
       UIManager.addMessage('System', `✅ Создана комната "${name}"`);
     } catch (error) {
       alert('Ошибка: ' + error.message);
+    }
+  }
+
+  static async createRoomInvite(client, roomId) {
+    try {
+      const invite = await InviteManager.createRoomInvite(roomId);
+      
+      if (invite) {
+        const inviteLink = InviteManager.generateInviteLink(invite.code);
+        
+        UIManager.openModal('Приглашение создано', `
+          <p>Приглашение для комнаты создано!</p>
+          <div class="invite-link-container">
+            <input type="text" id="inviteLinkInput" value="${inviteLink}" readonly>
+            <button onclick="navigator.clipboard.writeText('${inviteLink}').then(() => alert('Ссылка скопирована!'))">Копировать</button>
+          </div>
+          <p>Ссылка действительна до: ${new Date(invite.expiresAt).toLocaleDateString()}</p>
+        `, () => {
+          UIManager.closeModal();
+        });
+      }
+    } catch (error) {
+      console.error('Ошибка создания инвайта комнаты:', error);
+      UIManager.showError('Не удалось создать приглашение: ' + error.message);
+    }
+  }
+
+  static async copyRoomInviteLink(client, roomId) {
+    try {
+      const invites = await InviteManager.getRoomInvites(roomId);
+      
+      if (invites && invites.length > 0) {
+        const activeInvite = invites.find(invite => new Date(invite.expiresAt) > new Date());
+        
+        if (activeInvite) {
+          InviteManager.copyInviteLink(activeInvite.code);
+          return;
+        }
+      }
+      
+      const invite = await InviteManager.createRoomInvite(roomId);
+      if (invite) {
+        InviteManager.copyInviteLink(invite.code);
+      }
+    } catch (error) {
+      console.error('Ошибка копирования ссылки инвайта комнаты:', error);
+      UIManager.showError('Не удалось скопировать ссылку приглашения');
     }
   }
 
@@ -231,6 +273,84 @@ class RoomManager {
       UIManager.addMessage('System', 'Ошибка переподключения: ' + error.message);
       throw error;
     }
+  }
+
+  static renderRooms(client, rooms) {
+    const roomsList = document.querySelector('.rooms-list');
+    if (!roomsList) return;
+
+    roomsList.innerHTML = '';
+    
+    rooms.forEach(room => {
+      const roomElement = document.createElement('div');
+      roomElement.className = 'room-item';
+      roomElement.dataset.room = room.id;
+      
+      const isOwner = room.ownerId === client.userId;
+      const isMember = client.currentServer?.members?.includes(client.userId);
+      
+      roomElement.innerHTML = `🔊 ${room.name} ${isOwner ? '<span class="owner-badge">(Вы)</span>' : ''}`;
+      
+      roomElement.addEventListener('click', () => {
+        client.currentRoom = room.id;
+        client.joinRoom(room.id);
+        
+        localStorage.setItem('lastRoomId', room.id);
+        localStorage.setItem('lastServerId', client.currentServerId);
+      });
+      
+      if (isMember) {
+        const actionButtons = document.createElement('div');
+        actionButtons.className = 'room-actions';
+        
+        const shareBtn = document.createElement('button');
+        shareBtn.className = 'room-action-btn';
+        shareBtn.innerHTML = '📋';
+        shareBtn.title = 'Скопировать ссылку на комнату';
+        shareBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          try {
+            const invite = await InviteManager.createRoomInvite(room.id);
+            const inviteLink = InviteManager.generateInviteLink(invite.code);
+            
+            await navigator.clipboard.writeText(inviteLink);
+            UIManager.showError('Ссылка скопирована!');
+          } catch (error) {
+            console.error('Ошибка копирования ссылки:', error);
+            UIManager.showError('Не удалось скопировать ссылку');
+          }
+        });
+        
+        actionButtons.appendChild(shareBtn);
+        
+        if (isOwner) {
+          const inviteBtn = document.createElement('button');
+          inviteBtn.className = 'room-action-btn';
+          inviteBtn.innerHTML = '🔗';
+          inviteBtn.title = 'Создать приглашение';
+          inviteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.createRoomInvite(client, room.id);
+          });
+          
+          const deleteBtn = document.createElement('button');
+          deleteBtn.className = 'room-action-btn';
+          deleteBtn.innerHTML = '✕';
+          deleteBtn.title = 'Удалить комнату';
+          deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.deleteRoom(client, room.id);
+          });
+          
+          actionButtons.appendChild(inviteBtn);
+          actionButtons.appendChild(deleteBtn);
+        }
+        
+        roomElement.appendChild(actionButtons);
+      }
+      
+      roomsList.appendChild(roomElement);
+    });
   }
 }
 

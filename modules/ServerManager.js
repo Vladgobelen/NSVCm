@@ -1,5 +1,6 @@
 import UIManager from './UIManager.js';
 import RoomManager from './RoomManager.js';
+import InviteManager from './InviteManager.js';
 
 class ServerManager {
     static getLocalStorageKey(client) {
@@ -80,6 +81,9 @@ class ServerManager {
                 client.currentServerId = server.id;
                 client.currentServer = server;
                 
+                // Сохраняем выбор сервера
+                localStorage.setItem('lastServerId', server.id);
+                
                 if (client.serverSearchInput) {
                     client.serverSearchInput.value = '';
                 }
@@ -94,16 +98,23 @@ class ServerManager {
             actionButtons.className = 'server-actions';
             
             if (isOwner) {
+                // Кнопка для создания инвайта
+                const inviteBtn = document.createElement('button');
+                inviteBtn.className = 'server-action-btn';
+                inviteBtn.innerHTML = '🔗';
+                inviteBtn.title = 'Создать приглашение';
+                inviteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.createServerInvite(client, server.id);
+                });
+                
                 const shareBtn = document.createElement('button');
                 shareBtn.className = 'server-action-btn';
-                shareBtn.innerHTML = '🔗';
-                shareBtn.title = 'Пригласить';
+                shareBtn.innerHTML = '📋';
+                shareBtn.title = 'Скопировать ссылку';
                 shareBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    const inviteLink = `${window.location.origin}${window.location.pathname}?invite=${server.id}`;
-                    navigator.clipboard.writeText(inviteLink)
-                        .then(() => alert(`Ссылка скопирована: ${inviteLink}`))
-                        .catch(() => {});
+                    this.copyServerInviteLink(client, server.id);
                 });
                 
                 const deleteBtn = document.createElement('button');
@@ -115,6 +126,7 @@ class ServerManager {
                     this.deleteServer(client, server.id);
                 });
                 
+                actionButtons.appendChild(inviteBtn);
                 actionButtons.appendChild(shareBtn);
                 actionButtons.appendChild(deleteBtn);
             } else if (isMember) {
@@ -133,6 +145,53 @@ class ServerManager {
             serverElement.appendChild(actionButtons);
             serversList.appendChild(serverElement);
         });
+    }
+
+    static async createServerInvite(client, serverId) {
+        try {
+            const invite = await InviteManager.createServerInvite(serverId);
+            
+            if (invite) {
+                const inviteLink = InviteManager.generateInviteLink(invite.code);
+                
+                UIManager.openModal('Приглашение создано', `
+                    <p>Приглашение для сервера создано!</p>
+                    <div class="invite-link-container">
+                        <input type="text" id="inviteLinkInput" value="${inviteLink}" readonly>
+                        <button onclick="navigator.clipboard.writeText('${inviteLink}').then(() => alert('Ссылка скопирована!'))">Копировать</button>
+                    </div>
+                    <p>Ссылка действительна до: ${new Date(invite.expiresAt).toLocaleDateString()}</p>
+                `, () => {
+                    UIManager.closeModal();
+                });
+            }
+        } catch (error) {
+            console.error('Ошибка создания инвайта:', error);
+            UIManager.showError('Не удалось создать приглашение: ' + error.message);
+        }
+    }
+
+    static async copyServerInviteLink(client, serverId) {
+        try {
+            const invites = await InviteManager.getServerInvites(serverId);
+            
+            if (invites && invites.length > 0) {
+                const activeInvite = invites.find(invite => new Date(invite.expiresAt) > new Date());
+                
+                if (activeInvite) {
+                    InviteManager.copyInviteLink(activeInvite.code);
+                    return;
+                }
+            }
+            
+            const invite = await InviteManager.createServerInvite(serverId);
+            if (invite) {
+                InviteManager.copyInviteLink(invite.code);
+            }
+        } catch (error) {
+            console.error('Ошибка копирования ссылки инвайта:', error);
+            UIManager.showError('Не удалось скопировать ссылку приглашения');
+        }
     }
 
     static async createServer(client) {
@@ -179,6 +238,9 @@ class ServerManager {
             client.currentServerId = serverData.id;
             client.currentServer = serverData;
             
+            // Сохраняем выбор сервера
+            localStorage.setItem('lastServerId', serverData.id);
+            
             await RoomManager.loadRoomsForServer(client, client.currentServerId);
             
         } catch (error) {
@@ -199,6 +261,10 @@ class ServerManager {
             if (client.currentServerId === serverId) {
                 client.currentServerId = null;
                 client.currentServer = null;
+                
+                // Очищаем сохраненное состояние
+                localStorage.removeItem('lastServerId');
+                localStorage.removeItem('lastRoomId');
             }
             
             UIManager.addMessage('System', `✅ Сервер "${serverName}" удален`);
@@ -257,6 +323,9 @@ class ServerManager {
                     client.currentServerId = server.id;
                     client.currentServer = server;
                     
+                    // Сохраняем выбор сервера
+                    localStorage.setItem('lastServerId', server.id);
+                    
                     if (client.serverSearchInput) {
                         client.serverSearchInput.value = '';
                     }
@@ -292,10 +361,7 @@ class ServerManager {
                 shareBtn.title = 'Пригласить';
                 shareBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    const inviteLink = `${window.location.origin}${window.location.pathname}?invite=${server.id}`;
-                    navigator.clipboard.writeText(inviteLink)
-                        .then(() => alert(`Ссылка скопирована: ${inviteLink}`))
-                        .catch(() => {});
+                    this.copyServerInviteLink(client, server.id);
                 });
                 
                 const deleteBtn = document.createElement('button');
@@ -345,6 +411,9 @@ class ServerManager {
                 client.serverSearchInput.value = '';
             }
 
+            // Сохраняем выбор сервера
+            localStorage.setItem('lastServerId', server.id);
+            
             this.renderServers(client);
             client.showPanel('servers');
             
@@ -375,9 +444,14 @@ class ServerManager {
             client.servers = client.servers.filter(server => server.id !== serverId);
             this.saveServersToLocalStorage(client);
             
+            // Очищаем сохраненное состояние, если выходим с текущего сервера
             if (client.currentServerId === serverId) {
                 client.currentServerId = null;
                 client.currentServer = null;
+                client.currentRoom = null;
+                
+                localStorage.removeItem('lastServerId');
+                localStorage.removeItem('lastRoomId');
             }
             
             this.renderServers(client);
