@@ -404,6 +404,10 @@ class VoiceChatClient {
             
             this.disconnectFromRoom();
             
+            // СНАЧАЛА НАСТРАИВАЕМ СОКЕТНОЕ СОЕДИНЕНИЕ
+            this.setupSocketConnection();
+            
+            // ТОЛЬКО ПОСЛЕ ЭТОГО ПРИСОЕДИНЯЕМСЯ К КОМНАТЕ
             const res = await fetch(this.CHAT_API_URL, {
                 method: 'POST',
                 headers: { 
@@ -435,8 +439,7 @@ class VoiceChatClient {
             localStorage.setItem('lastServerId', this.currentServerId);
             localStorage.setItem('lastRoomId', this.currentRoom);
             
-            this.setupSocketConnection();
-            
+            // ПОДКЛЮЧАЕМСЯ К МЕДИА
             await MediaManager.connect(this, roomId, data.mediaData);
             this.updateMicButtonState();
             
@@ -449,8 +452,32 @@ class VoiceChatClient {
             TextChatManager.joinTextRoom(this, roomId);
             await TextChatManager.loadMessages(this, roomId);
             
-            // Используем MembersManager вместо UserPresenceManager
-            MembersManager.initializeRoomMembers(this, []);
+            // КЛЮЧЕВАЯ ИЗМЕНЕНИЕ: ЗАПРАШИВАЕМ СПИСОК УЧАСТНИКОВ ЧЕРЕЗ REST API
+            try {
+                // Добавляем небольшую задержку, чтобы сервер успел обновить данные
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                const participantsResponse = await fetch(`${this.API_SERVER_URL}/api/media/rooms/${roomId}/participants`, {
+                    headers: {
+                        'Authorization': `Bearer ${this.token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (participantsResponse.ok) {
+                    const participantsData = await participantsResponse.json();
+                    if (participantsData.participants && Array.isArray(participantsData.participants)) {
+                        console.log('[CLIENT] Инициализируем список участников с', participantsData.participants.length, 'участниками');
+                        MembersManager.initializeRoomMembers(this, participantsData.participants);
+                    } else {
+                        console.log('[CLIENT] Пустой или некорректный список участников от сервера');
+                    }
+                } else {
+                    console.error('[CLIENT] Ошибка при получении списка участников:', participantsResponse.status);
+                }
+            } catch (error) {
+                console.error('[CLIENT] Ошибка запроса списка участников:', error);
+            }
             
             UIManager.addMessage('System', `✅ Вы присоединились к комнате`);
             return true;
@@ -481,6 +508,7 @@ class VoiceChatClient {
             timeout: 20000
         });
         
+        // Обработчики для медиа-потоков
         this.socket.on('new-producer', async (data) => {
             console.log('New producer event:', data);
             if (data.clientID !== this.clientID) {
@@ -513,28 +541,68 @@ class VoiceChatClient {
             }
         });
         
-        // Настраиваем обработчики MembersManager вместо UserPresenceManager
-        MembersManager.setupSocketHandlers(this);
-        
-        TextChatManager.setupSocketHandlers(this);
-        
-        this.socket.on('reconnect', (attemptNumber) => {
-            console.log('Socket reconnected after', attemptNumber, 'attempts');
-            UIManager.updateStatus('Переподключено', 'connected');
-            
-            if (this.currentRoom) {
-                this.socket.emit('subscribe-to-producers', { roomId: this.currentRoom });
-                this.socket.emit('get-current-producers', { roomId: this.currentRoom });
-                
-                TextChatManager.joinTextRoom(this, this.currentRoom);
+        // НОВЫЕ ОБРАБОТЧИКИ ДЛЯ УЧАСТНИКОВ
+        this.socket.on('room-participants', (participants) => {
+            console.log('Room participants received:', participants);
+            MembersManager.updateAllMembers(participants);
+        });
+
+        this.socket.on('user-joined', (user) => {
+            console.log('User joined:', user);
+            MembersManager.addMember(user);
+            UIManager.addMessage('System', `Пользователь ${user.username} присоединился к комнате`);
+        });
+
+        this.socket.on('user-left', (data) => {
+            console.log('User left:', data);
+            MembersManager.removeMember(data.userId);
+            UIManager.addMessage('System', `Пользователь покинул комнату`);
+        });
+
+        this.socket.on('user-mic-state', (data) => {
+            console.log('User mic state changed:', data);
+            MembersManager.updateMember(data.userId, { isMicActive: data.isActive });
+        });
+
+        // Обработчики для чата
+        this.socket.on('new-message', (message) => {
+            console.log('New message received:', message);
+            if (message.roomId === this.currentRoom) {
+                UIManager.addMessage(message.username, message.text, message.timestamp);
             }
         });
-        
+
+        this.socket.on('message-history', (data) => {
+            console.log('Message history received:', data);
+            if (data.roomId === this.currentRoom && data.messages) {
+                UIManager.clearMessages();
+                
+                data.messages.forEach(msg => {
+                    UIManager.addMessage(msg.username, msg.text, msg.timestamp);
+                });
+            }
+        });
+
+        // Обработчик ошибок
         this.socket.on('error', (error) => {
             console.error('Socket error:', error);
             UIManager.showError('Ошибка соединения: ' + (error.message || 'неизвестная ошибка'));
         });
-        
+
+        // Обработчик подключения
+        this.socket.on('connect', () => {
+            console.log('Socket connected');
+            UIManager.updateStatus('Подключено', 'connected');
+            
+            // При переподключении присоединяемся к комнате
+            if (this.currentRoom) {
+                this.socket.emit('join-room', { roomId: this.currentRoom });
+                this.socket.emit('subscribe-to-producers', { roomId: this.currentRoom });
+                this.socket.emit('get-current-producers', { roomId: this.currentRoom });
+            }
+        });
+
+        // Обработчик отключения
         this.socket.on('disconnect', (reason) => {
             console.log('Socket disconnected:', reason);
             UIManager.updateStatus('Отключено', 'disconnected');
@@ -572,11 +640,23 @@ class VoiceChatClient {
             
             if (this.isMicActive) {
                 await MediaManager.stopMicrophone(this);
-                MembersManager.updateCurrentUserMicState(this, false);
+                // Отправляем событие изменения состояния микрофона
+                if (this.socket) {
+                    this.socket.emit('mic-state-change', {
+                        roomId: this.currentRoom,
+                        isActive: false
+                    });
+                }
             } else {
                 try {
                     await MediaManager.startMicrophone(this);
-                    MembersManager.updateCurrentUserMicState(this, true);
+                    // Отправляем событие изменения состояния микрофона
+                    if (this.socket) {
+                        this.socket.emit('mic-state-change', {
+                            roomId: this.currentRoom,
+                            isActive: true
+                        });
+                    }
                     
                     if (this.socket && this.audioProducer) {
                         this.socket.emit('new-producer-notification', {
@@ -611,10 +691,19 @@ class VoiceChatClient {
             return;
         }
         
-        TextChatManager.sendMessage(this, text).catch((error) => {
-            console.error('Error sending message:', error);
-            this.showError('Ошибка отправки сообщения');
-        });
+        // Используем socket для отправки сообщения
+        if (this.socket) {
+            this.socket.emit('send-message', {
+                roomId: this.currentRoom,
+                text: text.trim()
+            });
+        } else {
+            // Fallback на старый метод
+            TextChatManager.sendMessage(this, text).catch((error) => {
+                console.error('Error sending message:', error);
+                this.showError('Ошибка отправки сообщения');
+            });
+        }
     }
 
     startSyncInterval() {
@@ -650,7 +739,7 @@ class VoiceChatClient {
                 return;
             }
             
-            const response = await fetch(`${this.API_SERVER_URL}/api/room/${this.currentRoom}/producers`, {
+const response = await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.currentRoom}/producers`, {
                 headers: {
                     'Authorization': `Bearer ${this.token}`,
                     'Content-Type': 'application/json'
@@ -662,7 +751,15 @@ class VoiceChatClient {
             }
             
             const data = await response.json();
-            
+            const producers = data.producers || [];
+
+// Создание consumers для всех audio producers
+for (const producer of producers) {
+  if (producer.kind === 'audio') {
+   // await this.mediaManager.createConsumer(producer.id);
+await MediaManager.createConsumer(this, producer.id);
+  }
+}
             if (!data || !data.producers || !Array.isArray(data.producers)) {
                 return;
             }
@@ -714,11 +811,15 @@ class VoiceChatClient {
         console.log('Disconnecting from room:', this.currentRoom);
         
         if (this.currentRoom) {
+            // Отправляем событие выхода из комнаты
+            if (this.socket) {
+                this.socket.emit('leave-room', { roomId: this.currentRoom });
+            }
+            
             MediaManager.disconnect(this);
             
             TextChatManager.leaveTextRoom(this, this.currentRoom);
             
-            // Используем MembersManager вместо UserPresenceManager
             MembersManager.clearMembers();
             
             this.destroySocket();
@@ -777,11 +878,16 @@ class VoiceChatClient {
         if (!this.currentRoom) return;
         
         try {
+            // Отправляем событие выхода из комнаты
+            if (this.socket) {
+                this.socket.emit('leave-room', { roomId: this.currentRoom });
+            }
+            
             if (this.isConnected) {
                 MediaManager.disconnect(this);
             }
             
-            await fetch(`${this.API_SERVER_URL}/api/rooms/${this.currentRoom}/leave`, {
+            await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.currentRoom}/leave`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${this.token}`,
@@ -789,7 +895,6 @@ class VoiceChatClient {
                 }
             });
             
-            // Используем MembersManager вместо UserPresenceManager
             MembersManager.clearMembers();
             
             this.currentRoom = null;

@@ -53,25 +53,20 @@ class MembersManager {
     static setupSocketHandlers(client) {
         if (!client.socket) return;
 
-        client.socket.on('member-mic-state', (data) => {
-            this.updateMember(data.userId, { isMicActive: data.isActive });
+        client.socket.on('room-participants', (participants) => {
+            this.updateAllMembers(participants);
         });
 
-        client.socket.on('member-joined', (data) => {
-            this.addMember({
-                userId: data.userId,
-                username: data.username,
-                isMicActive: data.isMicActive || false,
-                clientId: data.clientId
-            });
+        client.socket.on('user-joined', (user) => {
+            this.addMember(user);
         });
 
-        client.socket.on('member-left', (data) => {
+        client.socket.on('user-left', (data) => {
             this.removeMember(data.userId);
         });
 
-        client.socket.on('members-list', (members) => {
-            this.updateAllMembers(members);
+        client.socket.on('user-mic-state', (data) => {
+            this.updateMember(data.userId, { isMicActive: data.isActive });
         });
     }
 
@@ -90,40 +85,6 @@ class MembersManager {
 
     static isCurrentUser(client, userId) {
         return client.userId === userId;
-    }
-
-    static updateCurrentUserMicState(client, isActive) {
-        if (client.userId) {
-            this.updateMember(client.userId, { isMicActive: isActive });
-            
-            if (client.socket && client.currentRoom) {
-                client.socket.emit('mic-state-change', {
-                    roomId: client.currentRoom,
-                    isActive: isActive
-                });
-            }
-        }
-    }
-
-    static initializeRoomMembers(client, members) {
-        this.clearMembers();
-        
-        if (client.userId && client.username) {
-            this.addMember({
-                userId: client.userId,
-                username: client.username,
-                isMicActive: client.isMicActive || false,
-                clientId: client.clientID
-            });
-        }
-        
-        if (members && Array.isArray(members)) {
-            members.forEach(member => {
-                if (member.userId !== client.userId) {
-                    this.addMember(member);
-                }
-            });
-        }
     }
 }
 

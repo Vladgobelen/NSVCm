@@ -235,47 +235,43 @@ class UIManager {
         });
     }
 
-    static updateMembersList(users) {
-        const membersList = document.querySelector('.members-list');
-        if (!membersList) return;
+static updateMembersList(members) {
+    const membersList = document.querySelector('.members-list');
+    if (!membersList) return;
 
-        membersList.innerHTML = '';
-        
-        // Добавляем текущего пользователя в список
-        if (this.client && this.client.username) {
-            const selfElement = document.createElement('div');
-            selfElement.className = 'member-item';
-            const selfUsername = this.client.username || 'Вы';
-            selfElement.innerHTML = `
-                <div class="member-avatar">${selfUsername.charAt(0).toUpperCase()}</div>
-                <div class="member-name">${selfUsername}</div>
-                <div class="member-status">
-                    <div class="status-indicator online" title="Online"></div>
-                    <div class="mic-indicator ${this.client.isMicActive ? 'active' : ''}" title="${this.client.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
-                </div>
-            `;
-            membersList.appendChild(selfElement);
-        }
-        
-        // Добавляем остальных участников
-        users.forEach(user => {
-            if (user.userId === this.client.userId) return;
-            
-            const memberElement = document.createElement('div');
-            memberElement.className = 'member-item';
-            const displayName = user.username || 'Пользователь';
-            memberElement.innerHTML = `
-                <div class="member-avatar">${displayName.charAt(0).toUpperCase()}</div>
-                <div class="member-name">${this.escapeHtml(displayName)}</div>
-                <div class="member-status">
-                    <div class="status-indicator ${user.isOnline ? 'online' : 'offline'}" title="${user.isOnline ? 'Online' : 'Offline'}"></div>
-                    <div class="mic-indicator ${user.isMicActive ? 'active' : ''}" title="${user.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
-                </div>
-            `;
-            membersList.appendChild(memberElement);
-        });
+    membersList.innerHTML = '';
+    
+    if (this.client && this.client.username) {
+        const selfElement = document.createElement('div');
+        selfElement.className = 'member-item';
+        const selfUsername = this.client.username || 'Вы';
+        selfElement.innerHTML = `
+            <div class="member-avatar">${selfUsername.charAt(0).toUpperCase()}</div>
+            <div class="member-name">${selfUsername}</div>
+            <div class="member-status">
+                <div class="status-indicator online" title="Online"></div>
+                <div class="mic-indicator ${this.client.isMicActive ? 'active' : ''}" title="${this.client.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
+            </div>
+        `;
+        membersList.appendChild(selfElement);
     }
-
+    
+    members.forEach(user => {
+        if (user.userId === this.client.userId) return;
+        
+        const memberElement = document.createElement('div');
+        memberElement.className = 'member-item';
+        memberElement.innerHTML = `
+            <div class="member-avatar">${user.username.charAt(0).toUpperCase()}</div>
+            <div class="member-name">${user.username}</div>
+            <div class="member-status">
+                <div class="status-indicator online" title="Online"></div>
+                <div class="mic-indicator ${user.isMicActive ? 'active' : ''}" title="${user.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
+            </div>
+        `;
+        membersList.appendChild(memberElement);
+    });
+}
     static openModal(title, content, onSubmit) {
         const modalOverlay = document.querySelector('.modal-overlay');
         const modalContent = document.querySelector('.modal-content');

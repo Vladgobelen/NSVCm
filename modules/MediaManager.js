@@ -17,6 +17,7 @@ class MediaManager {
             client.isMicActive = false;
             
             this.subscribeToProducerNotifications(client, roomId);
+            this.startProducerSync(client);
             
             console.log('MediaManager connected successfully');
             
@@ -154,56 +155,78 @@ class MediaManager {
         });
     }
 
-    static async startMicrophone(client) {
-        console.log('Starting microphone for client:', client.clientID);
-        
-        try {
-            if (!client.sendTransport) {
-                throw new Error('Send transport не инициализирован');
-            }
-            
-            client.stream = await navigator.mediaDevices.getUserMedia({ 
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    sampleRate: 48000,
-                    channelCount: 2
-                }
-            });
-            
-            const track = client.stream.getAudioTracks()[0];
-            client.audioProducer = await client.sendTransport.produce({
-                track,
-                encodings: [{ 
-                    maxBitrate: client.bitrate,
-                    dtx: client.dtxEnabled
-                }],
-                codecOptions: {
-                    opusStereo: true,
-                    opusDtx: client.dtxEnabled,
-                    opusFec: client.fecEnabled
-                },
-                appData: { 
-                    clientID: client.clientID, 
-                    roomId: client.currentRoom 
-                }
-            });
-            
-            client.isMicActive = true;
-            console.log('Microphone started successfully');
-            
-        } catch (error) {
-            console.error('Microphone start failed:', error);
-            
-            if (client.stream) {
-                client.stream.getTracks().forEach(track => track.stop());
-                client.stream = null;
-            }
-            
-            throw new Error(`Microphone failed: ${error.message}`);
+static async startMicrophone(client) {
+    console.log('Starting microphone for client:', client.clientID);
+    
+    try {
+        if (!client.sendTransport) {
+            throw new Error('Send transport не инициализирован');
         }
+        
+        client.stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                sampleRate: 48000,
+                channelCount: 2
+            }
+        });
+        
+        const track = client.stream.getAudioTracks()[0];
+        client.audioProducer = await client.sendTransport.produce({
+            track,
+            encodings: [{ 
+                maxBitrate: client.bitrate,
+                dtx: client.dtxEnabled
+            }],
+            codecOptions: {
+                opusStereo: true,
+                opusDtx: client.dtxEnabled,
+                opusFec: client.fecEnabled
+            },
+            appData: { 
+                clientID: client.clientID, 
+                roomId: client.currentRoom 
+            }
+        });
+        
+        client.isMicActive = true;
+        console.log('Microphone started successfully');
+        
+        // НЕМЕДЛЕННОЕ УВЕДОМЛЕНИЕ О НОВОМ ПРОДЮСЕРЕ
+        if (client.audioProducer) {
+            try {
+                await fetch(`${client.API_SERVER_URL}/api/media/notify-new-producer`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${client.token}`
+                    },
+                    body: JSON.stringify({
+                        roomId: client.currentRoom,
+                        producerId: client.audioProducer.id,
+                        clientID: client.clientID,
+                        kind: 'audio'
+                    })
+                });
+                console.log('✅ Producer notification sent successfully');
+            } catch (error) {
+                console.warn('⚠️ Failed to send producer notification:', error);
+                // Не бросаем ошибку, чтобы не ломать включение микрофона
+            }
+        }
+        
+    } catch (error) {
+        console.error('Microphone start failed:', error);
+        
+        if (client.stream) {
+            client.stream.getTracks().forEach(track => track.stop());
+            client.stream = null;
+        }
+        
+        throw new Error(`Microphone failed: ${error.message}`);
     }
-
+}
     static async stopMicrophone(client) {
         console.log('Stopping microphone for client:', client.clientID);
         
@@ -305,10 +328,13 @@ class MediaManager {
     }
 
     static async createConsumer(client, producerId) {
-        console.log('Creating consumer for producer:', producerId);
+if (client.audioProducer && producerId === client.audioProducer.id) {
+        console.log('⚠️ Skipping own producer (echo protection)');
+        return null;
+    }        
+console.log('Creating consumer for producer:', producerId);
         
         try {
-            // Проверяем, не создали ли мы уже потребителя для этого продюсера
             if (client.consumers.has(producerId)) {
                 console.log('Consumer already exists for producer:', producerId);
                 return client.consumers.get(producerId);
@@ -361,45 +387,55 @@ class MediaManager {
         }
     }
 
-    static async startConsumingProducers(client) {
+    static startProducerSync(client) {
         console.log('Starting to consume existing producers');
         
-        try {
-            const response = await fetch(`${client.API_SERVER_URL}/api/media/room/${client.currentRoom}/producers`, {
-                headers: {
-                    'Authorization': `Bearer ${client.token}`,
-                    'Content-Type': 'application/json'
+        if (client.producerSyncInterval) {
+            clearInterval(client.producerSyncInterval);
+        }
+        
+        client.producerSyncInterval = setInterval(async () => {
+            if (!client.isConnected || !client.currentRoom) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${client.API_SERVER_URL}/api/media/rooms/${client.currentRoom}/producers`, {
+                    headers: {
+                        'Authorization': `Bearer ${client.token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    console.warn('Failed to get producers list:', response.status);
+                    return;
                 }
-            });
-            
-            if (!response.ok) {
-                console.warn('Failed to get producers list:', response.status);
-                return;
-            }
-            
-            const data = await response.json();
-            
-            if (!data || !data.producers || !Array.isArray(data.producers)) {
-                console.warn('Invalid producers data received');
-                return;
-            }
-            
-            console.log('Found producers:', data.producers.length);
-            
-            for (const producer of data.producers) {
-                if (producer.clientID !== client.clientID && 
-                    !client.existingProducers.has(producer.id)) {
-                    try {
-                        await this.createConsumer(client, producer.id);
-                        client.existingProducers.add(producer.id);
-                    } catch (error) {
-                        console.error('Error consuming producer:', producer.id, error);
+                
+                const data = await response.json();
+                
+                if (!data || !data.producers || !Array.isArray(data.producers)) {
+                    console.warn('Invalid producers data received');
+                    return;
+                }
+                
+                console.log('Found producers:', data.producers.length);
+                
+                for (const producer of data.producers) {
+                    if (producer.clientID !== client.clientID && 
+                        !client.existingProducers.has(producer.id)) {
+                        try {
+                            await this.createConsumer(client, producer.id);
+                            client.existingProducers.add(producer.id);
+                        } catch (error) {
+                            console.error('Error consuming producer:', producer.id, error);
+                        }
                     }
                 }
+            } catch (error) {
+                console.error('Error syncing producers:', error);
             }
-        } catch (error) {
-            console.error('Error starting to consume producers:', error);
-        }
+        }, 2000);
     }
 
     static disconnect(client) {
@@ -408,6 +444,11 @@ class MediaManager {
         if (client.keepAliveInterval) {
             clearInterval(client.keepAliveInterval);
             client.keepAliveInterval = null;
+        }
+        
+        if (client.producerSyncInterval) {
+            clearInterval(client.producerSyncInterval);
+            client.producerSyncInterval = null;
         }
         
         if (client.isMicActive) {

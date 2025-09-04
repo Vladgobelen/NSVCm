@@ -72,8 +72,6 @@ class RoomManager {
       TextChatManager.joinTextRoom(client, roomId);
       await TextChatManager.loadMessages(client, roomId);
       
-      MembersManager.initializeRoomMembers(client, []);
-      
       UIManager.addMessage('System', `✅ Вы присоединились к комнате`);
       return true;
     } catch (error) {
