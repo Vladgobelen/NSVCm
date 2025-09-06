@@ -48,7 +48,8 @@ class UserPresenceManager {
         this.isUserActive = isActive;
 
         try {
-            const response = await fetch(`${this.client.API_SERVER_URL}/api/presence/status`, {
+            // Используем существующий эндпоинт для обновления присутствия
+            const response = await fetch(`${this.client.API_SERVER_URL}/api/presence/update`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

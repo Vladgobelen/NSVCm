@@ -3,6 +3,10 @@ import RoomManager from './RoomManager.js';
 import InviteManager from './InviteManager.js';
 
 class ServerManager {
+    static cachedServers = null;
+    static lastUpdateTime = 0;
+    static CACHE_DURATION = 30000; // 30 секунд кеширования
+
     static getLocalStorageKey(client) {
         return client.userId ? `voiceChatServers_${client.userId}` : null;
     }
@@ -32,8 +36,16 @@ class ServerManager {
         return [];
     }
 
-    static async loadServers(client) {
+    static async loadServers(client, forceUpdate = false) {
         try {
+            // Используем кеширование для уменьшения запросов
+            const now = Date.now();
+            if (!forceUpdate && this.cachedServers && (now - this.lastUpdateTime) < this.CACHE_DURATION) {
+                client.servers = this.cachedServers;
+                this.renderServers(client);
+                return true;
+            }
+            
             let servers = [];
             
             try {
@@ -43,6 +55,10 @@ class ServerManager {
                 if (res.ok) {
                     const data = await res.json();
                     servers = Array.isArray(data.servers) ? data.servers : [];
+                    
+                    // Обновляем кеш
+                    this.cachedServers = servers;
+                    this.lastUpdateTime = now;
                 }
             } catch (apiError) {
                 servers = this.loadServersFromLocalStorage(client);

@@ -8,6 +8,9 @@ class MembersManager {
             const member = { ...this.members.get(userId), ...updates };
             this.members.set(userId, member);
             UIManager.updateMembersList(Array.from(this.members.values()));
+            
+            // Обновляем UI для конкретного участника
+            UIManager.updateMemberMicState(userId, updates.isMicActive);
         }
     }
 
@@ -66,12 +69,20 @@ class MembersManager {
         });
 
         client.socket.on('user-mic-state', (data) => {
-            this.updateMember(data.userId, { isMicActive: data.isActive });
+            if (data.userId) {
+                this.updateMember(data.userId, { isMicActive: data.isActive });
+            } else if (data.clientID) {
+                // Находим пользователя по clientID
+                const members = Array.from(this.members.values());
+                const member = members.find(m => m.clientId === data.clientID);
+                if (member) {
+                    this.updateMember(member.userId, { isMicActive: data.isActive });
+                }
+            }
         });
     }
 
     static setupSSEHandlers() {
-        // Обработчики SSE будут настроены в TextChatManager
         console.log('SSE handlers for members are setup in TextChatManager');
     }
 
@@ -85,6 +96,12 @@ class MembersManager {
 
     static isCurrentUser(client, userId) {
         return client.userId === userId;
+    }
+
+    static initializeRoomMembers(client, participants) {
+        console.log('Initializing room members with:', participants);
+        this.clearMembers();
+        participants.forEach(participant => this.addMember(participant));
     }
 }
 

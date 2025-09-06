@@ -15,10 +15,9 @@ class MediaManager {
             
             client.isConnected = true;
             client.isMicActive = false;
-            client.existingProducers = new Set();
-            client.consumers = new Map();
             
-            await this.requestCurrentProducers(client, roomId);
+            this.subscribeToProducerNotifications(client, roomId);
+            this.startProducerSync(client);
             
             console.log('MediaManager connected successfully');
             
@@ -71,9 +70,6 @@ class MediaManager {
             console.log('Send transport connecting...');
             
             try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 10000);
-                
                 await fetch(`${client.API_SERVER_URL}/api/media/transport/connect`, {
                     method: 'POST',
                     headers: { 
@@ -82,12 +78,9 @@ class MediaManager {
                     },
                     body: JSON.stringify({
                         transportId: client.sendTransport.id,
-                        dtlsParameters: dtlsParameters
-                    }),
-                    signal: controller.signal
+                        dtlsParameters
+                    })
                 });
-                
-                clearTimeout(timeoutId);
                 console.log('Send transport connected successfully');
                 callback();
             } catch (error) {
@@ -95,7 +88,7 @@ class MediaManager {
                 errback(error);
             }
         });
-        
+
         client.sendTransport.on('produce', async (parameters, callback, errback) => {
             console.log('Producing media:', parameters.kind);
             
@@ -109,33 +102,22 @@ class MediaManager {
                     body: JSON.stringify({
                         transportId: client.sendTransport.id,
                         kind: parameters.kind,
-                        rtpParameters: parameters.rtpParameters,
-                        clientId: client.clientID,
-                        roomId: client.currentRoom
+                        rtpParameters: parameters.rtpParameters
                     })
                 });
                 
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    console.error('Produce failed:', response.status, errorText);
-                    throw new Error(`HTTP error: ${response.status}`);
-                }
+                if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
                 
                 const data = await response.json();
                 
-                await fetch(`${client.API_SERVER_URL}/api/media/notify-new-producer`, {
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${client.token}`
-                    },
-                    body: JSON.stringify({
+                if (client.socket) {
+                    client.socket.emit('new-producer-notification', {
                         roomId: client.currentRoom,
                         producerId: data.producerId,
                         clientID: client.clientID,
                         kind: parameters.kind
-                    })
-                });
+                    });
+                }
                 
                 console.log('Media produced successfully:', data.producerId);
                 callback({ id: data.producerId });
@@ -153,9 +135,6 @@ class MediaManager {
             console.log('Receive transport connecting...');
             
             try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 10000);
-                
                 await fetch(`${client.API_SERVER_URL}/api/media/transport/connect`, {
                     method: 'POST',
                     headers: { 
@@ -164,12 +143,9 @@ class MediaManager {
                     },
                     body: JSON.stringify({
                         transportId: client.recvTransport.id,
-                        dtlsParameters: dtlsParameters
-                    }),
-                    signal: controller.signal
+                        dtlsParameters
+                    })
                 });
-                
-                clearTimeout(timeoutId);
                 console.log('Receive transport connected successfully');
                 callback();
             } catch (error) {
@@ -179,65 +155,78 @@ class MediaManager {
         });
     }
 
-    static async startMicrophone(client) {
-        console.log('Starting microphone for client:', client.clientID);
-        
-        try {
-            if (!client.sendTransport) {
-                throw new Error('Send transport не инициализирован');
-            }
-            
-            client.stream = await navigator.mediaDevices.getUserMedia({ 
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    sampleRate: 48000,
-                    channelCount: 2
-                }
-            });
-            
-            const track = client.stream.getAudioTracks()[0];
-            client.audioProducer = await client.sendTransport.produce({
-                track,
-                encodings: [{ 
-                    maxBitrate: 64000,
-                    dtx: true
-                }],
-                codecOptions: {
-                    opusStereo: true,
-                    opusDtx: true,
-                    opusFec: true
-                },
-                appData: { 
-                    clientID: client.clientID, 
-                    roomId: client.currentRoom 
-                }
-            });
-            
-            client.isMicActive = true;
-            console.log('Microphone started successfully');
-            
-            if (client.socket && client.audioProducer) {
-                client.socket.emit('new-producer-notification', {
-                    roomId: client.currentRoom,
-                    producerId: client.audioProducer.id,
-                    clientID: client.clientID,
-                    kind: 'audio'
-                });
-            }
-            
-        } catch (error) {
-            console.error('Microphone start failed:', error);
-            
-            if (client.stream) {
-                client.stream.getTracks().forEach(track => track.stop());
-                client.stream = null;
-            }
-            
-            throw new Error(`Microphone failed: ${error.message}`);
+static async startMicrophone(client) {
+    console.log('Starting microphone for client:', client.clientID);
+    
+    try {
+        if (!client.sendTransport) {
+            throw new Error('Send transport не инициализирован');
         }
+        
+        client.stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                sampleRate: 48000,
+                channelCount: 2
+            }
+        });
+        
+        const track = client.stream.getAudioTracks()[0];
+        client.audioProducer = await client.sendTransport.produce({
+            track,
+            encodings: [{ 
+                maxBitrate: client.bitrate,
+                dtx: client.dtxEnabled
+            }],
+            codecOptions: {
+                opusStereo: true,
+                opusDtx: client.dtxEnabled,
+                opusFec: client.fecEnabled
+            },
+            appData: { 
+                clientID: client.clientID, 
+                roomId: client.currentRoom 
+            }
+        });
+        
+        client.isMicActive = true;
+        console.log('Microphone started successfully');
+        
+        // НЕМЕДЛЕННОЕ УВЕДОМЛЕНИЕ О НОВОМ ПРОДЮСЕРЕ
+        if (client.audioProducer) {
+            try {
+                await fetch(`${client.API_SERVER_URL}/api/media/notify-new-producer`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${client.token}`
+                    },
+                    body: JSON.stringify({
+                        roomId: client.currentRoom,
+                        producerId: client.audioProducer.id,
+                        clientID: client.clientID,
+                        kind: 'audio'
+                    })
+                });
+                console.log('✅ Producer notification sent successfully');
+            } catch (error) {
+                console.warn('⚠️ Failed to send producer notification:', error);
+                // Не бросаем ошибку, чтобы не ломать включение микрофона
+            }
+        }
+        
+    } catch (error) {
+        console.error('Microphone start failed:', error);
+        
+        if (client.stream) {
+            client.stream.getTracks().forEach(track => track.stop());
+            client.stream = null;
+        }
+        
+        throw new Error(`Microphone failed: ${error.message}`);
     }
-
+}
     static async stopMicrophone(client) {
         console.log('Stopping microphone for client:', client.clientID);
         
@@ -300,68 +289,57 @@ class MediaManager {
         }, 10000);
     }
 
-    static async requestCurrentProducers(client, roomId) {
-        console.log('Requesting current producers for room:', roomId);
+    static subscribeToProducerNotifications(client, roomId) {
+        console.log('Subscribing to producer notifications for room:', roomId);
         
-        try {
-            const response = await fetch(`${client.API_SERVER_URL}/api/media/rooms/${roomId}/producers`, {
-                headers: {
-                    'Authorization': `Bearer ${client.token}`,
-                    'Content-Type': 'application/json'
+        if (client.socket) {
+            client.socket.emit('subscribe-to-producers', { roomId });
+            client.socket.emit('get-current-producers', { roomId });
+            
+            client.socket.on('new-producer', (data) => {
+                console.log('New producer notification:', data);
+                if (data.clientID !== client.clientID) {
+                    this.createConsumer(client, data.producerId).then(consumer => {
+                        if (consumer) {
+                            client.existingProducers.add(data.producerId);
+                        }
+                    }).catch(error => {
+                        console.error('Error creating consumer from notification:', error);
+                    });
                 }
             });
-            
-            if (!response.ok) {
-                console.warn('Failed to get producers list:', response.status);
-                return;
-            }
-            
-            const data = await response.json();
-            
-            if (!data || !data.producers || !Array.isArray(data.producers)) {
-                console.warn('Invalid producers data received:', data);
-                return;
-            }
-            
-            console.log('Found', data.producers.length, 'producers in room');
-            
-            for (const producer of data.producers) {
-                if (producer.clientID !== client.clientID && 
-                    !client.existingProducers.has(producer.id)) {
-                    try {
-                        await this.createConsumer(client, producer.id);
-                        client.existingProducers.add(producer.id);
-                    } catch (error) {
-                        console.error('Error creating consumer for producer:', producer.id, error);
+
+            client.socket.on('current-producers', (producers) => {
+                console.log('Current producers list:', producers);
+                producers.forEach(producer => {
+                    if (producer.clientID !== client.clientID && 
+                        !client.existingProducers.has(producer.id)) {
+                        this.createConsumer(client, producer.id).then(consumer => {
+                            if (consumer) {
+                                client.existingProducers.add(producer.id);
+                            }
+                        }).catch(error => {
+                            console.error('Error creating consumer from list:', error);
+                        });
                     }
-                }
-            }
-        } catch (error) {
-            console.error('Error requesting current producers:', error);
+                });
+            });
         }
     }
 
     static async createConsumer(client, producerId) {
-        console.log('Creating consumer for producer:', producerId);
-        
-        if (client.audioProducer && client.audioProducer.id === producerId) {
-            console.log('Skipping own producer');
-            throw new Error('Cannot consume own producer');
-        }
-        
-        if (client.consumers.has(producerId)) {
-            console.log('Consumer already exists for producer:', producerId);
-            const existingConsumer = client.consumers.get(producerId);
-            
-            if (existingConsumer.closed || existingConsumer.transportClosed) {
-                console.log('Existing consumer is closed, creating new one');
-                client.consumers.delete(producerId);
-            } else {
-                return existingConsumer;
-            }
-        }
+if (client.audioProducer && producerId === client.audioProducer.id) {
+        console.log('⚠️ Skipping own producer (echo protection)');
+        return null;
+    }        
+console.log('Creating consumer for producer:', producerId);
         
         try {
+            if (client.consumers.has(producerId)) {
+                console.log('Consumer already exists for producer:', producerId);
+                return client.consumers.get(producerId);
+            }
+            
             const response = await fetch(`${client.API_SERVER_URL}/api/media/consume`, {
                 method: 'POST',
                 headers: { 
@@ -369,33 +347,17 @@ class MediaManager {
                     'Authorization': `Bearer ${client.token}`
                 },
                 body: JSON.stringify({
-                    producerId: producerId,
+                    producerId,
                     rtpCapabilities: client.device.rtpCapabilities,
-                    transportId: client.recvTransport.id,
-                    clientId: client.clientID
+                    transportId: client.recvTransport.id
                 })
             });
             
             if (!response.ok) {
-                const errorText = await response.text();
-                console.error('HTTP error:', response.status, errorText);
-                
-                if (response.status === 400 && errorText.includes('own audio')) {
-                    throw new Error('Cannot consume own audio');
-                }
-                
                 throw new Error(`HTTP error: ${response.status}`);
             }
             
             const data = await response.json();
-            
-            if (!data || !data.id) {
-                console.error('Invalid consumer data received:', data);
-                throw new Error('Invalid consumer data received');
-            }
-            
-            console.log('Consumer data received from server:', data.id);
-            
             const consumer = await client.recvTransport.consume({
                 id: data.id,
                 producerId: data.producerId,
@@ -405,48 +367,75 @@ class MediaManager {
             
             client.consumers.set(producerId, consumer);
             
-            let audioElement = window.audioElements?.get(producerId);
-            
-            if (!audioElement || audioElement.closed) {
-                audioElement = new Audio();
-                audioElement.id = `audio-${producerId}`;
-                audioElement.autoplay = true;
-                audioElement.volume = 0.8;
-                audioElement.style.display = 'none';
-                
-                if (!window.audioElements) window.audioElements = new Map();
-                window.audioElements.set(producerId, audioElement);
-                document.body.appendChild(audioElement);
-            }
-            
+            const audio = new Audio();
             const stream = new MediaStream([consumer.track.clone()]);
-            audioElement.srcObject = stream;
+            audio.srcObject = stream;
+            audio.autoplay = true;
+            audio.volume = 0.8;
+            audio.style.display = 'none';
             
-            consumer.on('transportclose', () => {
-                console.log('Consumer transport closed:', consumer.id);
-                consumer.transportClosed = true;
-            });
-            
-            consumer.on('trackended', () => {
-                console.log('Consumer track ended:', consumer.id);
-            });
+            if (!window.audioElements) window.audioElements = new Map();
+            window.audioElements.set(producerId, audio);
+            document.body.appendChild(audio);
             
             console.log('Consumer created successfully:', data.id);
             return consumer;
             
         } catch (error) {
             console.error('Error creating consumer:', error);
-            
-            if (error.message.includes('consume own') || 
-                error.message.includes('own audio') || 
-                error.message.includes('400') ||
-                error.message.includes('Cannot consume own')) {
-                client.existingProducers.add(producerId);
-                console.log('Added to excluded producers:', producerId);
-            }
-            
             throw error;
         }
+    }
+
+    static startProducerSync(client) {
+        console.log('Starting to consume existing producers');
+        
+        if (client.producerSyncInterval) {
+            clearInterval(client.producerSyncInterval);
+        }
+        
+        client.producerSyncInterval = setInterval(async () => {
+            if (!client.isConnected || !client.currentRoom) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${client.API_SERVER_URL}/api/media/rooms/${client.currentRoom}/producers`, {
+                    headers: {
+                        'Authorization': `Bearer ${client.token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (!response.ok) {
+                    console.warn('Failed to get producers list:', response.status);
+                    return;
+                }
+                
+                const data = await response.json();
+                
+                if (!data || !data.producers || !Array.isArray(data.producers)) {
+                    console.warn('Invalid producers data received');
+                    return;
+                }
+                
+                console.log('Found producers:', data.producers.length);
+                
+                for (const producer of data.producers) {
+                    if (producer.clientID !== client.clientID && 
+                        !client.existingProducers.has(producer.id)) {
+                        try {
+                            await this.createConsumer(client, producer.id);
+                            client.existingProducers.add(producer.id);
+                        } catch (error) {
+                            console.error('Error consuming producer:', producer.id, error);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error syncing producers:', error);
+            }
+        }, 2000);
     }
 
     static disconnect(client) {
@@ -455,6 +444,11 @@ class MediaManager {
         if (client.keepAliveInterval) {
             clearInterval(client.keepAliveInterval);
             client.keepAliveInterval = null;
+        }
+        
+        if (client.producerSyncInterval) {
+            clearInterval(client.producerSyncInterval);
+            client.producerSyncInterval = null;
         }
         
         if (client.isMicActive) {
@@ -505,23 +499,8 @@ class MediaManager {
         
         client.device = null;
         client.isConnected = false;
-        client.existingProducers.clear();
         
         console.log('Media disconnected successfully');
-    }
-
-    static async handleNewProducer(client, producerData) {
-        console.log('Handling new producer notification:', producerData);
-        
-        if (producerData.clientID !== client.clientID && 
-            !client.existingProducers.has(producerData.producerId)) {
-            try {
-                await this.createConsumer(client, producerData.producerId);
-                client.existingProducers.add(producerData.producerId);
-            } catch (error) {
-                console.error('Error creating consumer from notification:', error);
-            }
-        }
     }
 }
 

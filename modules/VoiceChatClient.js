@@ -1,4 +1,3 @@
-import AuthManager from './AuthManager.js';
 import MediaManager from './MediaManager.js';
 import RoomManager from './RoomManager.js';
 import ServerManager from './ServerManager.js';
@@ -8,6 +7,7 @@ import TextChatManager from './TextChatManager.js';
 import UserPresenceManager from './UserPresenceManager.js';
 import InviteManager from './InviteManager.js';
 import MembersManager from './MembersManager.js';
+import AuthManager from './AuthManager.js';
 
 class VoiceChatClient {
     constructor() {
@@ -46,6 +46,10 @@ class VoiceChatClient {
         this.isReconnecting = false;
         this.pendingInviteCode = null;
         UIManager.setClient(this);
+        this.useHttpPolling = false;
+
+        this.elements = {};
+        this.debouncedSync = Utils.debounce(() => this.startConsuming(), 1000);
 
         this.init();
     }
@@ -63,33 +67,34 @@ class VoiceChatClient {
 
     initElements() {
         console.log('Initializing UI elements...');
-        this.micButton = document.querySelector('.mic-button');
-        this.micToggleBtn = document.querySelector('.mic-toggle-btn');
-        this.messageInput = document.querySelector('.message-input');
-        this.sendButton = document.querySelector('.send-btn');
-        this.currentRoomTitle = document.querySelector('.current-room-title');
-        this.toggleSidebarBtn = document.querySelector('.toggle-sidebar-btn');
-        this.toggleMembersBtn = document.querySelector('.toggle-members-btn');
-        this.settingsBtn = document.querySelector('.settings-btn');
-        this.closePanelBtn = document.querySelector('.close-panel-btn');
-        this.closeSidebarBtn = document.querySelector('.close-sidebar-btn');
-        this.createServerBtn = document.querySelector('.create-server-btn');
-        this.createRoomBtn = document.querySelector('.create-room-btn');
-        this.serversToggleBtn = document.querySelector('#serversToggle');
-        this.roomsToggleBtn = document.querySelector('#roomsToggle');
-        this.serversList = document.querySelector('.servers-list');
-        this.roomsList = document.querySelector('.rooms-list');
-        this.membersList = document.querySelector('.members-list');
-        this.messagesContainer = document.querySelector('.messages-container');
-        this.serversPanel = document.getElementById('servers-panel'); 
-        this.roomsPanel = document.getElementById('rooms-panel'); 
-        this.sidebar = document.querySelector('.sidebar');
-        this.membersPanel = document.querySelector('.members-panel');
-        this.serverSearchInput = document.querySelector('#serverSearch');
-        this.clearSearchBtn = document.querySelector('#clearSearchBtn');    
         
-        if (this.clearSearchBtn) {
-            this.clearSearchBtn.addEventListener('click', () => {
+        this.elements.micButton = document.querySelector('.mic-button');
+        this.elements.micToggleBtn = document.querySelector('.mic-toggle-btn');
+        this.elements.messageInput = document.querySelector('.message-input');
+        this.elements.sendButton = document.querySelector('.send-btn');
+        this.elements.currentRoomTitle = document.querySelector('.current-room-title');
+        this.elements.toggleSidebarBtn = document.querySelector('.toggle-sidebar-btn');
+        this.elements.toggleMembersBtn = document.querySelector('.toggle-members-btn');
+        this.elements.settingsBtn = document.querySelector('.settings-btn');
+        this.elements.closePanelBtn = document.querySelector('.close-panel-btn');
+        this.elements.closeSidebarBtn = document.querySelector('.close-sidebar-btn');
+        this.elements.createServerBtn = document.querySelector('.create-server-btn');
+        this.elements.createRoomBtn = document.querySelector('.create-room-btn');
+        this.elements.serversToggleBtn = document.querySelector('#serversToggle');
+        this.elements.roomsToggleBtn = document.querySelector('#roomsToggle');
+        this.elements.serversList = document.querySelector('.servers-list');
+        this.elements.roomsList = document.querySelector('.rooms-list');
+        this.elements.membersList = document.querySelector('.members-list');
+        this.elements.messagesContainer = document.querySelector('.messages-container');
+        this.elements.serversPanel = document.getElementById('servers-panel'); 
+        this.elements.roomsPanel = document.getElementById('rooms-panel'); 
+        this.elements.sidebar = document.querySelector('.sidebar');
+        this.elements.membersPanel = document.querySelector('.members-panel');
+        this.elements.serverSearchInput = document.querySelector('#serverSearch');
+        this.elements.clearSearchBtn = document.querySelector('#clearSearchBtn');    
+        
+        if (this.elements.clearSearchBtn) {
+            this.elements.clearSearchBtn.addEventListener('click', () => {
                 ServerManager.clearSearchAndShowAllServers(this);
             });
         } else {
@@ -100,68 +105,68 @@ class VoiceChatClient {
     initEventListeners() {
         console.log('Setting up event listeners...');
         
-        if (this.micButton) {
-            this.micButton.addEventListener('click', () => this.toggleMicrophone());
+        if (this.elements.micButton) {
+            this.elements.micButton.addEventListener('click', () => this.toggleMicrophone());
         }
         
-        if (this.micToggleBtn) {
-            this.micToggleBtn.addEventListener('click', () => this.toggleMicrophone());
+        if (this.elements.micToggleBtn) {
+            this.elements.micToggleBtn.addEventListener('click', () => this.toggleMicrophone());
         }
         
-        if (this.messageInput) {
-            this.messageInput.addEventListener('keypress', e => {
+        if (this.elements.messageInput) {
+            this.elements.messageInput.addEventListener('keypress', e => {
                 if (e.key === 'Enter') {
-                    this.sendMessage(this.messageInput.value);
-                    this.messageInput.value = '';
+                    this.sendMessage(this.elements.messageInput.value);
+                    this.elements.messageInput.value = '';
                 }
             });
         }
         
-        if (this.sendButton) {
-            this.sendButton.addEventListener('click', () => {
-                this.sendMessage(this.messageInput.value);
-                this.messageInput.value = '';
+        if (this.elements.sendButton) {
+            this.elements.sendButton.addEventListener('click', () => {
+                this.sendMessage(this.elements.messageInput.value);
+                this.elements.messageInput.value = '';
             });
         }
         
-        if (this.toggleSidebarBtn) {
-            this.toggleSidebarBtn.addEventListener('click', () => {
-                this.sidebar.classList.toggle('open');
+        if (this.elements.toggleSidebarBtn) {
+            this.elements.toggleSidebarBtn.addEventListener('click', () => {
+                this.elements.sidebar.classList.toggle('open');
             });
         }
         
-        if (this.toggleMembersBtn) {
-            this.toggleMembersBtn.addEventListener('click', () => {
-                this.membersPanel.classList.toggle('open');
+        if (this.elements.toggleMembersBtn) {
+            this.elements.toggleMembersBtn.addEventListener('click', () => {
+                this.elements.membersPanel.classList.toggle('open');
             });
         }
         
-        if (this.closePanelBtn) {
-            this.closePanelBtn.addEventListener('click', () => {
-                this.membersPanel.classList.remove('open');
+        if (this.elements.closePanelBtn) {
+            this.elements.closePanelBtn.addEventListener('click', () => {
+                this.elements.membersPanel.classList.remove('open');
             });
         }
         
-        if (this.closeSidebarBtn) {
-            this.closeSidebarBtn.addEventListener('click', () => {
-                this.sidebar.classList.remove('open');
+        if (this.elements.closeSidebarBtn) {
+            this.elements.closeSidebarBtn.addEventListener('click', () => {
+                this.elements.sidebar.classList.remove('open');
             });
         }
         
-        if (this.settingsBtn) {
-            this.settingsBtn.addEventListener('click', () => {
+        if (this.elements.settingsBtn) {
+            this.elements.settingsBtn.addEventListener('click', () => {
                 UIManager.openSettings(this);
             });
         }
         
-        if (this.createServerBtn) {
-            this.createServerBtn.addEventListener('click', () => {
+        if (this.elements.createServerBtn) {
+            this.elements.createServerBtn.addEventListener('click', () => {
                 ServerManager.createServer(this);
             });
         }
 
-        if (this.createRoomBtn) {
-            this.createRoomBtn.addEventListener('click', () => {
+        if (this.elements.createRoomBtn) {
+            this.elements.createRoomBtn.addEventListener('click', () => {
                 if (!this.currentServerId) {
                     alert('Сначала выберите сервер');
                     return;
@@ -173,21 +178,21 @@ class VoiceChatClient {
             });
         }
 
-        if (this.serversToggleBtn) {
-            this.serversToggleBtn.addEventListener('click', () => {
+        if (this.elements.serversToggleBtn) {
+            this.elements.serversToggleBtn.addEventListener('click', () => {
                 ServerManager.clearSearchAndShowAllServers(this);
                 this.showPanel('servers');
             });
         }
         
-        if (this.roomsToggleBtn) {
-            this.roomsToggleBtn.addEventListener('click', () => {
+        if (this.elements.roomsToggleBtn) {
+            this.elements.roomsToggleBtn.addEventListener('click', () => {
                 this.showPanel('rooms');
             });
         }
         
-        if (this.serverSearchInput) {
-            this.serverSearchInput.addEventListener('input', (e) => {
+        if (this.elements.serverSearchInput) {
+            this.elements.serverSearchInput.addEventListener('input', (e) => {
                 this.searchServers(e.target.value);
             });
         }
@@ -196,12 +201,12 @@ class VoiceChatClient {
     showPanel(panelName) {
         console.log('Showing panel:', panelName);
         
-        if (!this.serversPanel) this.serversPanel = document.getElementById('servers-panel');
-        if (!this.roomsPanel) this.roomsPanel = document.getElementById('rooms-panel');
-        if (!this.serversToggleBtn) this.serversToggleBtn = document.querySelector('#serversToggle');
-        if (!this.roomsToggleBtn) this.roomsToggleBtn = document.querySelector('#roomsToggle');
+        const serversPanel = this.elements.serversPanel;
+        const roomsPanel = this.elements.roomsPanel;
+        const serversToggleBtn = this.elements.serversToggleBtn;
+        const roomsToggleBtn = this.elements.roomsToggleBtn;
     
-        if (!this.serversPanel || !this.roomsPanel || !this.serversToggleBtn || !this.roomsToggleBtn) {
+        if (!serversPanel || !roomsPanel || !serversToggleBtn || !roomsToggleBtn) {
             console.error('Required panel elements not found');
             return;
         }
@@ -209,15 +214,15 @@ class VoiceChatClient {
         this.activePanel = panelName;
     
         if (panelName === 'servers') {
-            this.serversToggleBtn.classList.add('active');
-            this.roomsToggleBtn.classList.remove('active');
-            this.serversPanel.classList.add('active');
-            this.roomsPanel.classList.remove('active');
+            serversToggleBtn.classList.add('active');
+            roomsToggleBtn.classList.remove('active');
+            serversPanel.classList.add('active');
+            roomsPanel.classList.remove('active');
         } else {
-            this.serversToggleBtn.classList.remove('active');
-            this.roomsToggleBtn.classList.add('active');
-            this.serversPanel.classList.remove('active');
-            this.roomsPanel.classList.add('active');
+            serversToggleBtn.classList.remove('active');
+            roomsToggleBtn.classList.add('active');
+            serversPanel.classList.remove('active');
+            roomsPanel.classList.add('active');
         }
     }
 
@@ -247,7 +252,6 @@ class VoiceChatClient {
                 console.log('Auto-login successful, loading servers...');
                 await ServerManager.loadServers(this);
                 
-                // Применяем отложенный инвайт после авторизации
                 if (this.pendingInviteCode) {
                     console.log('Applying pending invite:', this.pendingInviteCode);
                     const inviteApplied = await InviteManager.applyPendingInvite();
@@ -262,7 +266,6 @@ class VoiceChatClient {
                     }
                 }
                 
-                // Восстанавливаем последний сервер и комнату из localStorage
                 const lastServerId = localStorage.getItem('lastServerId');
                 const lastRoomId = localStorage.getItem('lastRoomId');
                 
@@ -275,7 +278,6 @@ class VoiceChatClient {
                         
                         await RoomManager.loadRoomsForServer(this, lastServerId);
                         
-                        // Восстанавливаем последнюю комнату, если она существует
                         if (lastRoomId) {
                             console.log('Found last room in localStorage:', lastRoomId);
                             const roomExists = this.rooms.some(room => room.id === lastRoomId);
@@ -283,15 +285,13 @@ class VoiceChatClient {
                             if (roomExists) {
                                 this.currentRoom = lastRoomId;
                                 await this.reconnectToRoom(lastRoomId);
+                                this.startSyncInterval();
+                                return;
                             }
                         }
-                        
-                        this.startSyncInterval();
-                        return;
                     }
                 }
                 
-                // Старая логика для обратной совместимости
                 let targetServerId = null;
                 if (this.inviteServerId) {
                     console.log('Processing invite server ID:', this.inviteServerId);
@@ -342,7 +342,6 @@ class VoiceChatClient {
         this.pendingInviteCode = null;
         localStorage.removeItem('pending_invite');
         
-        // Очищаем параметр invite из URL
         const url = new URL(window.location);
         url.searchParams.delete('invite');
         window.history.replaceState({}, '', url);
@@ -375,11 +374,10 @@ class VoiceChatClient {
                 ServerManager.saveServersToLocalStorage(this);
             }
 
-            if (this.serverSearchInput) {
-                this.serverSearchInput.value = '';
+            if (this.elements.serverSearchInput) {
+                this.elements.serverSearchInput.value = '';
             }
 
-            // Сохраняем выбор сервера
             localStorage.setItem('lastServerId', server.id);
             
             ServerManager.renderServers(this);
@@ -404,10 +402,8 @@ class VoiceChatClient {
             
             this.disconnectFromRoom();
             
-            // СНАЧАЛА НАСТРАИВАЕМ СОКЕТНОЕ СОЕДИНЕНИЕ
             this.setupSocketConnection();
             
-            // ТОЛЬКО ПОСЛЕ ЭТОГО ПРИСОЕДИНЯЕМСЯ К КОМНАТЕ
             const res = await fetch(this.CHAT_API_URL, {
                 method: 'POST',
                 headers: { 
@@ -435,11 +431,9 @@ class VoiceChatClient {
             this.currentRoom = roomId;
             this.roomType = 'voice';
             
-            // Сохраняем выбор сервера и комнаты
             localStorage.setItem('lastServerId', this.currentServerId);
             localStorage.setItem('lastRoomId', this.currentRoom);
             
-            // ПОДКЛЮЧАЕМСЯ К МЕДИА
             await MediaManager.connect(this, roomId, data.mediaData);
             this.updateMicButtonState();
             
@@ -452,9 +446,7 @@ class VoiceChatClient {
             TextChatManager.joinTextRoom(this, roomId);
             await TextChatManager.loadMessages(this, roomId);
             
-            // КЛЮЧЕВАЯ ИЗМЕНЕНИЕ: ЗАПРАШИВАЕМ СПИСОК УЧАСТНИКОВ ЧЕРЕЗ REST API
             try {
-                // Добавляем небольшую задержку, чтобы сервер успел обновить данные
                 await new Promise(resolve => setTimeout(resolve, 500));
                 
                 const participantsResponse = await fetch(`${this.API_SERVER_URL}/api/media/rooms/${roomId}/participants`, {
@@ -491,122 +483,148 @@ class VoiceChatClient {
 
     setupSocketConnection() {
         console.log('Setting up socket connection...');
+        
+        if (this.socket && this.socket.connected) {
+            console.log('Socket already connected, reusing');
+            return;
+        }
+        
+        const currentToken = this.token;
+        if (!currentToken) {
+            console.log('No token available, skipping socket connection');
+            return;
+        }
+
         this.destroySocket();
-        if (!this.token) return;
         
-        this.socket = io(this.API_SERVER_URL, {
-            auth: {
-                token: this.token,
-                userId: this.userId,
-                clientId: this.clientID,
-                username: this.username
-            },
-            reconnection: true,
-            reconnectionAttempts: 5,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000,
-            timeout: 20000
-        });
-        
-        // Обработчики для медиа-потоков
-        this.socket.on('new-producer', async (data) => {
-            console.log('New producer event:', data);
-            if (data.clientID !== this.clientID) {
-                try {
-                    await MediaManager.createConsumer(this, data.producerId);
-                    this.existingProducers.add(data.producerId);
-                } catch (error) {
-                    console.error('Error creating consumer:', error);
-                }
-            }
-        });
-        
-        this.socket.on('current-producers', async (data) => {
-            console.log('Current producers event:', data);
-            if (!data || !data.producers || !Array.isArray(data.producers)) {
-                console.log('No producers data available');
-                return;
-            }
+        try {
+            console.log('Creating new socket connection with token:', currentToken);
+            this.socket = io(this.API_SERVER_URL, {
+                auth: {
+                    token: currentToken,
+                    userId: this.userId,
+                    clientId: this.clientID,
+                    username: this.username
+                },
+                reconnection: true,
+                reconnectionAttempts: 5,
+                reconnectionDelay: 1000,
+                reconnectionDelayMax: 5000,
+                timeout: 20000
+            });
+
+            const socket = this.socket;
             
-            for (const producer of data.producers) {
-                if (producer.clientID !== this.clientID && 
-                    !this.existingProducers.has(producer.id)) {
+            socket.on('new-producer', async (data) => {
+                await new Promise(resolve => setTimeout(resolve, 200));
+                console.log('New producer event:', data);
+                if (data.clientID !== this.clientID) {
                     try {
-                        await MediaManager.createConsumer(this, producer.id);
-                        this.existingProducers.add(producer.id);
+                        await MediaManager.createConsumer(this, data.producerId);
+                        this.existingProducers.add(data.producerId);
                     } catch (error) {
                         console.error('Error creating consumer:', error);
                     }
                 }
-            }
-        });
-        
-        // НОВЫЕ ОБРАБОТЧИКИ ДЛЯ УЧАСТНИКОВ
-        this.socket.on('room-participants', (participants) => {
-            console.log('Room participants received:', participants);
-            MembersManager.updateAllMembers(participants);
-        });
+            });
 
-        this.socket.on('user-joined', (user) => {
-            console.log('User joined:', user);
-            MembersManager.addMember(user);
-            UIManager.addMessage('System', `Пользователь ${user.username} присоединился к комнате`);
-        });
+            socket.on('current-producers', async (data) => {
+                console.log('Current producers event:', data);
+                if (!data || !data.producers || !Array.isArray(data.producers)) {
+                    console.log('No producers data available');
+                    return;
+                }
 
-        this.socket.on('user-left', (data) => {
-            console.log('User left:', data);
-            MembersManager.removeMember(data.userId);
-            UIManager.addMessage('System', `Пользователь покинул комнату`);
-        });
+                for (const producer of data.producers) {
+                    if (producer.clientID !== this.clientID && 
+                        !this.existingProducers.has(producer.id)) {
+                        try {
+                            await MediaManager.createConsumer(this, producer.id);
+                            this.existingProducers.add(producer.id);
+                        } catch (error) {
+                            console.error('Error creating consumer:', error);
+                            if (error.message.includes('consume own')) {
+                                this.existingProducers.add(producer.id);
+                            }
+                        }
+                    }
+                }
+            });
 
-        this.socket.on('user-mic-state', (data) => {
-            console.log('User mic state changed:', data);
-            MembersManager.updateMember(data.userId, { isMicActive: data.isActive });
-        });
+            socket.on('room-participants', (participants) => {
+                console.log('Room participants received:', participants);
+                MembersManager.updateAllMembers(participants);
+            });
 
-        // Обработчики для чата
-        this.socket.on('new-message', (message) => {
-            console.log('New message received:', message);
-            if (message.roomId === this.currentRoom) {
-                UIManager.addMessage(message.username, message.text, message.timestamp);
-            }
-        });
+            socket.on('user-joined', (user) => {
+                console.log('User joined:', user);
+                MembersManager.addMember(user);
+                UIManager.addMessage('System', `Пользователь ${user.username} присоединился к комнате`);
+            });
 
-        this.socket.on('message-history', (data) => {
-            console.log('Message history received:', data);
-            if (data.roomId === this.currentRoom && data.messages) {
-                UIManager.clearMessages();
+            socket.on('user-left', (data) => {
+                console.log('User left:', data);
+                MembersManager.removeMember(data.userId);
+                UIManager.addMessage('System', `Пользователь покинул комнату`);
+            });
+
+            socket.on('user-mic-state', (data) => {
+                console.log('User mic state changed:', data);
+                if (data.userId) {
+                    MembersManager.updateMember(data.userId, { isMicActive: data.isActive });
+                } else {
+                    const members = MembersManager.getMembers();
+                    const member = members.find(m => m.clientId === data.clientID);
+                    if (member) {
+                        MembersManager.updateMember(member.userId, { isMicActive: data.isActive });
+                    }
+                }
+            });
+
+            socket.on('new-message', (message) => {
+                console.log('New message received:', message);
+                if (message.roomId === this.currentRoom) {
+                    UIManager.addMessage(message.username, message.text, message.timestamp);
+                }
+            });
+
+            socket.on('message-history', (data) => {
+                console.log('Message history received:', data);
+                if (data.roomId === this.currentRoom && data.messages) {
+                    UIManager.clearMessages();
+                    
+                    data.messages.forEach(msg => {
+                        UIManager.addMessage(msg.username, msg.text, msg.timestamp);
+                    });
+                }
+            });
+
+            socket.on('error', (error) => {
+                console.error('Socket error:', error);
+                UIManager.showError('Ошибка соединения: ' + (error.message || 'неизвестная ошибка'));
+            });
+
+            socket.on('connect', () => {
+                console.log('✅ Socket connected with ID:', socket.id);
+                UIManager.updateStatus('Подключено', 'connected');
                 
-                data.messages.forEach(msg => {
-                    UIManager.addMessage(msg.username, msg.text, msg.timestamp);
-                });
-            }
-        });
+                if (this.currentRoom) {
+                    console.log('Rejoining room after socket reconnect:', this.currentRoom);
+                    socket.emit('join-room', { roomId: this.currentRoom });
+                    socket.emit('subscribe-to-producers', { roomId: this.currentRoom });
+                    socket.emit('get-current-producers', { roomId: this.currentRoom });
+                }
+            });
 
-        // Обработчик ошибок
-        this.socket.on('error', (error) => {
-            console.error('Socket error:', error);
-            UIManager.showError('Ошибка соединения: ' + (error.message || 'неизвестная ошибка'));
-        });
+            socket.on('disconnect', (reason) => {
+                console.log('Socket disconnected:', reason);
+                UIManager.updateStatus('Отключено', 'disconnected');
+            });
 
-        // Обработчик подключения
-        this.socket.on('connect', () => {
-            console.log('Socket connected');
-            UIManager.updateStatus('Подключено', 'connected');
-            
-            // При переподключении присоединяемся к комнате
-            if (this.currentRoom) {
-                this.socket.emit('join-room', { roomId: this.currentRoom });
-                this.socket.emit('subscribe-to-producers', { roomId: this.currentRoom });
-                this.socket.emit('get-current-producers', { roomId: this.currentRoom });
-            }
-        });
-
-        // Обработчик отключения
-        this.socket.on('disconnect', (reason) => {
-            console.log('Socket disconnected:', reason);
-            UIManager.updateStatus('Отключено', 'disconnected');
-        });
+        } catch (error) {
+            console.error('Error setting up socket connection:', error);
+            UIManager.showError('Ошибка подключения к серверу');
+        }
     }
 
     destroySocket() {
@@ -640,31 +658,33 @@ class VoiceChatClient {
             
             if (this.isMicActive) {
                 await MediaManager.stopMicrophone(this);
-                // Отправляем событие изменения состояния микрофона
                 if (this.socket) {
                     this.socket.emit('mic-state-change', {
                         roomId: this.currentRoom,
-                        isActive: false
+                        isActive: false,
+                        clientID: this.clientID,
+                        userId: this.userId
                     });
                 }
             } else {
                 try {
                     await MediaManager.startMicrophone(this);
-                    // Отправляем событие изменения состояния микрофона
                     if (this.socket) {
                         this.socket.emit('mic-state-change', {
                             roomId: this.currentRoom,
-                            isActive: true
-                        });
-                    }
-                    
-                    if (this.socket && this.audioProducer) {
-                        this.socket.emit('new-producer-notification', {
-                            roomId: this.currentRoom,
-                            producerId: this.audioProducer.id,
+                            isActive: true,
                             clientID: this.clientID,
-                            kind: 'audio'
+                            userId: this.userId
                         });
+                        
+                        if (this.audioProducer) {
+                            this.socket.emit('new-producer-notification', {
+                                roomId: this.currentRoom,
+                                producerId: this.audioProducer.id,
+                                clientID: this.clientID,
+                                kind: 'audio'
+                            });
+                        }
                     }
                 } catch (error) {
                     if (error.message.includes('permission') || error.message.includes('разрешение')) {
@@ -691,14 +711,12 @@ class VoiceChatClient {
             return;
         }
         
-        // Используем socket для отправки сообщения
         if (this.socket) {
             this.socket.emit('send-message', {
                 roomId: this.currentRoom,
                 text: text.trim()
             });
         } else {
-            // Fallback на старый метод
             TextChatManager.sendMessage(this, text).catch((error) => {
                 console.error('Error sending message:', error);
                 this.showError('Ошибка отправки сообщения');
@@ -709,8 +727,12 @@ class VoiceChatClient {
     startSyncInterval() {
         console.log('Starting sync interval...');
         
-        if (this.syncInterval) clearInterval(this.syncInterval);
+        window.debugStartConsuming = () => this.startConsuming();
+        window.debugStartSyncInterval = () => this.startSyncInterval();
+        window.debugVoiceClient = this;
         
+        if (this.syncInterval) clearInterval(this.syncInterval);
+           
         this.syncInterval = setInterval(async () => {
             try {
                 await ServerManager.loadServers(this);
@@ -720,11 +742,11 @@ class VoiceChatClient {
                 
                 if (this.currentRoom && this.isConnected) {
                     await this.startConsuming();
-                }
+                } 
             } catch (error) {
                 console.error('Sync error:', error);
             }
-        }, 5000);
+        }, 3000);
     }
 
     async startConsuming() {
@@ -735,11 +757,7 @@ class VoiceChatClient {
         }
         
         try {
-            if (!this.mediaData || !this.currentRoom || !this.isConnected) {
-                return;
-            }
-            
-const response = await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.currentRoom}/producers`, {
+            const response = await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.currentRoom}/producers`, {
                 headers: {
                     'Authorization': `Bearer ${this.token}`,
                     'Content-Type': 'application/json'
@@ -753,52 +771,16 @@ const response = await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.curr
             const data = await response.json();
             const producers = data.producers || [];
 
-// Создание consumers для всех audio producers
-for (const producer of producers) {
-  if (producer.kind === 'audio') {
-   // await this.mediaManager.createConsumer(producer.id);
-await MediaManager.createConsumer(this, producer.id);
-  }
-}
-            if (!data || !data.producers || !Array.isArray(data.producers)) {
-                return;
-            }
-            
-            const activeProducerIds = new Set(data.producers.map(p => p.id));
-            
-            for (const producerId of this.existingProducers) {
-                if (!activeProducerIds.has(producerId)) {
-                    const consumer = this.consumers.get(producerId);
-                    if (consumer) {
-                        try {
-                            consumer.close();
-                        } catch (e) {
-                            console.error('Error closing consumer:', e);
-                        }
-                        this.consumers.delete(producerId);
-                        
-                        if (window.audioElements && window.audioElements.has(producerId)) {
-                            try {
-                                window.audioElements.get(producerId).pause();
-                                window.audioElements.get(producerId).srcObject = null;
-                                window.audioElements.get(producerId).remove();
-                                window.audioElements.delete(producerId);
-                            } catch (e) {
-                                console.error('Error cleaning up audio element:', e);
-                            }
-                        }
-                    }
-                    this.existingProducers.delete(producerId);
-                }
-            }
-            
-            for (const producer of data.producers) {
+            for (const producer of producers) {
                 if (producer.clientID !== this.clientID && !this.existingProducers.has(producer.id)) {
                     try {
                         await MediaManager.createConsumer(this, producer.id);
                         this.existingProducers.add(producer.id);
                     } catch (error) {
                         console.error('Error creating consumer:', error);
+                        if (error.message.includes('consume own')) {
+                            this.existingProducers.add(producer.id);
+                        }
                     }
                 }
             }
@@ -811,7 +793,6 @@ await MediaManager.createConsumer(this, producer.id);
         console.log('Disconnecting from room:', this.currentRoom);
         
         if (this.currentRoom) {
-            // Отправляем событие выхода из комнаты
             if (this.socket) {
                 this.socket.emit('leave-room', { roomId: this.currentRoom });
             }
@@ -878,7 +859,6 @@ await MediaManager.createConsumer(this, producer.id);
         if (!this.currentRoom) return;
         
         try {
-            // Отправляем событие выхода из комнаты
             if (this.socket) {
                 this.socket.emit('leave-room', { roomId: this.currentRoom });
             }
@@ -905,14 +885,14 @@ await MediaManager.createConsumer(this, producer.id);
             return true;
         } catch (error) {
             console.error('Error leaving room:', error);
-            UIManager.showError('Ошибка при покидании комнаты: ' + error.message);
+            UIManager.showError('Ошибка при покидании комната: ' + error.message);
             return false;
         }
     }
 
     autoConnect() {
         console.log('Showing auto-connect UI');
-        this.sidebar.classList.add('open');
+        this.elements.sidebar.classList.add('open');
     }
 
     showMessage(user, text) {
@@ -926,6 +906,39 @@ await MediaManager.createConsumer(this, producer.id);
     async searchServers(query) {
         console.log('Searching servers:', query);
         await ServerManager.searchServers(this, query);
+    }
+
+    async checkRoomState() {
+        if (!this.currentRoom) {
+            console.log('No current room to check');
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${this.API_SERVER_URL}/api/debug/room/${this.currentRoom}`, {
+                headers: {
+                    'Authorization': `Bearer ${this.token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            if (response.ok) {
+                const roomState = await response.json();
+                console.log('🏠 Room state:', roomState);
+                
+                const ourTransport = roomState.transports.find(t => t.clientID === this.clientID && t.direction === 'recv');
+                console.log('📡 Our receive transport:', ourTransport);
+                
+                const ourConsumers = roomState.consumers.filter(c => c.clientID === this.clientID);
+                console.log('🎧 Our consumers:', ourConsumers);
+                
+                return roomState;
+            } else {
+                console.error('Failed to get room state:', response.status);
+            }
+        } catch (error) {
+            console.error('Error checking room state:', error);
+        }
     }
 }
 
