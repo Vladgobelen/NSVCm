@@ -289,14 +289,24 @@ class RoomManager {
       
       roomElement.innerHTML = `🔊 ${room.name} ${isOwner ? '<span class="owner-badge">(Вы)</span>' : ''}`;
       
-      roomElement.addEventListener('click', () => {
-        client.currentRoom = room.id;
-        client.joinRoom(room.id);
+roomElement.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    
+    // Если это уже текущая комната, не делаем ничего
+    if (client.currentRoom === room.id) {
+        return;
+    }
+    
+    try {
+        await client.joinRoom(room.id);
         
         localStorage.setItem('lastRoomId', room.id);
         localStorage.setItem('lastServerId', client.currentServerId);
-      });
-      
+    } catch (error) {
+        console.error('Error joining room:', error);
+        UIManager.showError('Не удалось присоединиться к комнате: ' + error.message);
+    }
+});
       if (isMember) {
         const actionButtons = document.createElement('div');
         actionButtons.className = 'room-actions';

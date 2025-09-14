@@ -28,6 +28,42 @@ class MediaManager {
         }
     }
 
+static async enableMicrophone(client) {
+    console.log('Enabling microphone for client:', client.clientID);
+    if (client.audioProducer && client.audioProducer.track) {
+        // Добавляем проверку, что продюсер и его транспорт не закрыты
+        if (client.audioProducer.closed || (client.sendTransport && client.sendTransport.closed)) {
+            console.log('Audio producer or its transport is closed, restarting microphone...');
+            await MediaManager.stopMicrophone(client, false); // Останавливаем старый, не закрывая транспорт
+            await MediaManager.startMicrophone(client); // Запускаем заново
+            return true;
+        }
+        // Если продюсер валиден, просто включаем трек
+        client.audioProducer.track.enabled = true;
+        client.isMicActive = true;
+        console.log('Microphone enabled successfully');
+        return true;
+    } else {
+        console.log('No audio producer or track found, starting microphone...');
+        await MediaManager.startMicrophone(client);
+        return true;
+    }
+}
+static async disableMicrophone(client) {
+    console.log('Disabling microphone for client:', client.clientID);
+    
+    if (client.audioProducer && client.audioProducer.track) {
+        client.audioProducer.track.enabled = false;
+        client.isMicActive = false;
+        console.log('Microphone disabled successfully');
+        return true;
+    } else {
+        console.log('No audio producer or track found, cannot disable');
+        return false;
+    }
+}
+
+
     static async createTransports(client, mediaData) {
         console.log('Creating transports for client:', client.clientID);
         
@@ -184,6 +220,7 @@ class MediaManager {
         
         try {
             if (!client.sendTransport) {
+                console.error('Send transport is not initialized');
                 throw new Error('Send transport не инициализирован');
             }
             
@@ -234,47 +271,57 @@ class MediaManager {
                 client.stream = null;
             }
             
-            throw new Error(`Microphone failed: ${error.message}`);
+            throw error;
         }
     }
 
-    static async stopMicrophone(client) {
-        console.log('Stopping microphone for client:', client.clientID);
-        
-        try {
-            if (client.audioProducer) {
-                try {
-                    await fetch(`${client.API_SERVER_URL}/api/media/producer/close`, {
-                        method: 'POST',
-                        headers: { 
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${client.token}`
-                        },
-                        body: JSON.stringify({
-                            producerId: client.audioProducer.id
-                        })
-                    });
-                } catch (error) {
-                    console.warn('Error closing producer on server:', error);
-                }
-                
-                client.audioProducer.close();
-                client.audioProducer = null;
+static async stopMicrophone(client, closeTransport = true) {
+    console.log('Stopping microphone for client:', client.clientID);
+    
+    try {
+        if (client.audioProducer) {
+            try {
+                await fetch(`${client.API_SERVER_URL}/api/media/producer/close`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${client.token}`
+                    },
+                    body: JSON.stringify({
+                        producerId: client.audioProducer.id
+                    })
+                });
+            } catch (error) {
+                console.warn('Error closing producer on server:', error);
             }
             
-            if (client.stream) {
-                client.stream.getTracks().forEach(track => track.stop());
-                client.stream = null;
-            }
-            
-            client.isMicActive = false;
-            console.log('Microphone stopped successfully');
-            
-        } catch (error) {
-            console.error('Microphone stop failed:', error);
-            throw new Error(`Microphone stop failed: ${error.message}`);
+            client.audioProducer.close();
+            client.audioProducer = null;
         }
+        
+        if (client.stream) {
+            client.stream.getTracks().forEach(track => track.stop());
+            client.stream = null;
+        }
+        
+        // Закрываем transport только если явно указано
+        if (closeTransport && client.sendTransport) {
+            try {
+                client.sendTransport.close();
+            } catch (error) {
+                console.warn('Error closing send transport:', error);
+            }
+            client.sendTransport = null;
+        }
+        
+        client.isMicActive = false;
+        console.log('Microphone stopped successfully');
+        
+    } catch (error) {
+        console.error('Microphone stop failed:', error);
+        throw new Error(`Microphone stop failed: ${error.message}`);
     }
+}
 
     static startKeepAlive(client, roomId) {
         console.log('Starting keep-alive for client:', client.clientID);
@@ -300,68 +347,74 @@ class MediaManager {
         }, 10000);
     }
 
-    static async requestCurrentProducers(client, roomId) {
-        console.log('Requesting current producers for room:', roomId);
-        
-        try {
-            const response = await fetch(`${client.API_SERVER_URL}/api/media/rooms/${roomId}/producers`, {
-                headers: {
-                    'Authorization': `Bearer ${client.token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-            
-            if (!response.ok) {
-                console.warn('Failed to get producers list:', response.status);
-                return;
+static async requestCurrentProducers(client, roomId) {
+    console.log('Requesting current producers for room:', roomId);
+    try {
+        const response = await fetch(`${client.API_SERVER_URL}/api/media/rooms/${roomId}/producers`, {
+            headers: {
+                'Authorization': `Bearer ${client.token}`,
+                'Content-Type': 'application/json'
             }
-            
-            const data = await response.json();
-            
-            if (!data || !data.producers || !Array.isArray(data.producers)) {
-                console.warn('Invalid producers data received:', data);
-                return;
-            }
-            
-            console.log('Found', data.producers.length, 'producers in room');
-            
-            for (const producer of data.producers) {
-                if (producer.clientID !== client.clientID && 
-                    !client.existingProducers.has(producer.id)) {
-                    try {
-                        await this.createConsumer(client, producer.id);
+        });
+        if (!response.ok) {
+            console.warn('Failed to get producers list:', response.status);
+            return;
+        }
+        const data = await response.json();
+        if (!data || !data.producers || !Array.isArray(data.producers)) {
+            console.warn('Invalid producers data received:', data);
+            return;
+        }
+        console.log('Found', data.producers.length, 'producers in room');
+        for (const producer of data.producers) {
+            // Убираем проверку !client.existingProducers.has(producer.id)
+            // Потому что createConsumer сам позаботится о дедупликации на уровне консьюмеров.
+            if (producer.clientID !== client.clientID) {
+                try {
+                    await this.createConsumer(client, producer.id);
+                    // Добавляем в existingProducers только после успешного создания консьюмера.
+                    client.existingProducers.add(producer.id);
+                } catch (error) {
+                    console.error('Error creating consumer for producer:', producer.id, error);
+                    // Если ошибка связана с тем, что это собственный продюсер (хотя проверка выше должна это исключить),
+                    // добавляем ID в existingProducers, чтобы избежать повторных попыток.
+                    if (error.message.includes('consume own') || error.message.includes('own audio')) {
                         client.existingProducers.add(producer.id);
-                    } catch (error) {
-                        console.error('Error creating consumer for producer:', producer.id, error);
                     }
                 }
+            } else {
+                // Это наш собственный продюсер, добавляем его ID в existingProducers, чтобы избежать попыток его потребления.
+                client.existingProducers.add(producer.id);
+                console.log('Own producer found in initial list:', producer.id);
             }
-        } catch (error) {
-            console.error('Error requesting current producers:', error);
+        }
+    } catch (error) {
+        console.error('Error requesting current producers:', error);
+    }
+}
+static async createConsumer(client, producerId, retries = 3) {
+    console.log('Creating consumer for producer:', producerId);
+    // Проверяем, не пытаемся ли мы создать consumer для собственного producer
+    if (client.audioProducer && client.audioProducer.id === producerId) {
+        console.log('Skipping own producer');
+        throw new Error('Cannot consume own producer');
+    }
+    // Проверяем, существует ли уже consumer для этого producer
+    if (client.consumers.has(producerId)) {
+        console.log('Consumer already exists for producer:', producerId);
+        const existingConsumer = client.consumers.get(producerId);
+        // Проверяем, не закрыт ли существующий consumer
+        if (existingConsumer.closed || existingConsumer.transportClosed) {
+            console.log('Existing consumer is closed, creating new one');
+            client.consumers.delete(producerId);
+        } else {
+            return existingConsumer;
         }
     }
-
-    static async createConsumer(client, producerId) {
-        console.log('Creating consumer for producer:', producerId);
-        
-        if (client.audioProducer && client.audioProducer.id === producerId) {
-            console.log('Skipping own producer');
-            throw new Error('Cannot consume own producer');
-        }
-        
-        if (client.consumers.has(producerId)) {
-            console.log('Consumer already exists for producer:', producerId);
-            const existingConsumer = client.consumers.get(producerId);
-            
-            if (existingConsumer.closed || existingConsumer.transportClosed) {
-                console.log('Existing consumer is closed, creating new one');
-                client.consumers.delete(producerId);
-            } else {
-                return existingConsumer;
-            }
-        }
-        
+    // Пытаемся создать consumer с повторными попытками
+    for (let attempt = 1; attempt <= retries; attempt++) { // <-- ОТКРЫВАЮЩАЯ СКОБКА ЦИКЛА
         try {
+            console.log(`Creating consumer attempt ${attempt}/${retries}`);
             const response = await fetch(`${client.API_SERVER_URL}/api/media/consume`, {
                 method: 'POST',
                 headers: { 
@@ -375,80 +428,70 @@ class MediaManager {
                     clientId: client.clientID
                 })
             });
-            
             if (!response.ok) {
                 const errorText = await response.text();
                 console.error('HTTP error:', response.status, errorText);
-                
                 if (response.status === 400 && errorText.includes('own audio')) {
                     throw new Error('Cannot consume own audio');
                 }
-                
                 throw new Error(`HTTP error: ${response.status}`);
             }
-            
             const data = await response.json();
-            
             if (!data || !data.id) {
                 console.error('Invalid consumer data received:', data);
                 throw new Error('Invalid consumer data received');
             }
-            
             console.log('Consumer data received from server:', data.id);
-            
             const consumer = await client.recvTransport.consume({
                 id: data.id,
                 producerId: data.producerId,
                 kind: data.kind,
                 rtpParameters: data.rtpParameters
             });
-            
             client.consumers.set(producerId, consumer);
-            
             let audioElement = window.audioElements?.get(producerId);
-            
             if (!audioElement || audioElement.closed) {
                 audioElement = new Audio();
                 audioElement.id = `audio-${producerId}`;
                 audioElement.autoplay = true;
                 audioElement.volume = 0.8;
                 audioElement.style.display = 'none';
-                
                 if (!window.audioElements) window.audioElements = new Map();
                 window.audioElements.set(producerId, audioElement);
                 document.body.appendChild(audioElement);
             }
-            
             const stream = new MediaStream([consumer.track.clone()]);
             audioElement.srcObject = stream;
-            
             consumer.on('transportclose', () => {
                 console.log('Consumer transport closed:', consumer.id);
                 consumer.transportClosed = true;
             });
-            
             consumer.on('trackended', () => {
                 console.log('Consumer track ended:', consumer.id);
             });
-            
             console.log('Consumer created successfully:', data.id);
             return consumer;
-            
         } catch (error) {
-            console.error('Error creating consumer:', error);
-            
+            console.error(`Error creating consumer (attempt ${attempt}/${retries}):`, error);
             if (error.message.includes('consume own') || 
                 error.message.includes('own audio') || 
                 error.message.includes('400') ||
                 error.message.includes('Cannot consume own')) {
                 client.existingProducers.add(producerId);
                 console.log('Added to excluded producers:', producerId);
+                throw error;
             }
-            
-            throw error;
+            // Если это последняя попытка, пробрасываем ошибку
+            if (attempt === retries) {
+                throw error;
+            }
+            // Ждем перед следующей попыткой (экспоненциальная задержка)
+            const delay = Math.pow(2, attempt) * 1000;
+            console.log(`Waiting ${delay}ms before next attempt...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
         }
-    }
-
+    } // <-- ЗАКРЫВАЮЩАЯ СКОБКА ЦИКЛА
+}
     static disconnect(client) {
         console.log('Disconnecting media for client:', client.clientID);
         
@@ -510,19 +553,39 @@ class MediaManager {
         console.log('Media disconnected successfully');
     }
 
-    static async handleNewProducer(client, producerData) {
-        console.log('Handling new producer notification:', producerData);
-        
-        if (producerData.clientID !== client.clientID && 
-            !client.existingProducers.has(producerData.producerId)) {
-            try {
-                await this.createConsumer(client, producerData.producerId);
-                client.existingProducers.add(producerData.producerId);
-            } catch (error) {
-                console.error('Error creating consumer from notification:', error);
-            }
+static async handleNewProducer(client, producerData) {
+    // 🔴🔴🔴 АГРЕСИВНЫЙ ДЕБАГ: Логируем ВСЁ
+    console.group('🔴🔴🔴 [DEBUG] MEDIA MANAGER: handleNewProducer');
+    console.log('🎯 [DEBUG] CALLED handleNewProducer with ', JSON.stringify(producerData, null, 2));
+    console.log('🎯 [DEBUG] CLIENT STATE - clientID:', client.clientID);
+    console.log('🎯 [DEBUG] CLIENT STATE - existingProducers (BEFORE):', Array.from(client.existingProducers));
+    console.log('🎯 [DEBUG] CHECK: Is this my own producer?', producerData.clientID === client.clientID);
+    console.log('🎯 [DEBUG] CHECK: Is producer already in existingProducers?', client.existingProducers.has(producerData.producerId));
+    console.groupEnd();
+
+    console.log('Handling new producer notification:', producerData);
+
+    // Проверка: не свой ли это продюсер
+    if (producerData.clientID !== client.clientID) {
+        console.log('🎧 [DEBUG] MediaManager: Attempting to create consumer for producer:', producerData.producerId);
+        try {
+            await this.createConsumer(client, producerData.producerId);
+            client.existingProducers.add(producerData.producerId);
+            console.log('✅ [DEBUG] MediaManager: Consumer created and producerId added to existingProducers:', producerData.producerId);
+        } catch (error) {
+            console.error('❌ Error creating consumer from notification:', error);
+            console.log('❌ [DEBUG] MediaManager: Consumer creation FAILED for producer:', producerData.producerId);
         }
+    } else {
+        console.log('🔇 [DEBUG] MediaManager: Ignoring own producer:', producerData.producerId);
     }
+
+    // 🔴🔴🔴 АГРЕСИВНЫЙ ДЕБАГ: Логируем состояние ПОСЛЕ обработки
+    console.group('🔴🔴🔴 [DEBUG] AFTER MediaManager.handleNewProducer');
+    console.log('🎯 [DEBUG] CLIENT STATE - existingProducers (AFTER):', Array.from(client.existingProducers));
+    console.groupEnd();
+}
+
 }
 
 export default MediaManager;

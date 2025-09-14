@@ -55,7 +55,24 @@ body {
     border-bottom: 1px solid var(--bg-tertiary);
     gap: 8px;
 }
+.audio-unlock-btn {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 10000;
+    padding: 10px 15px;
+    background: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 14px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
 
+.audio-unlock-btn:hover {
+    background: #45a049;
+}
 .search-input {
     width: 100%;
     padding: 8px 12px;
@@ -843,3 +860,4 @@ body {
         flex-direction: column;
     }
 }
+

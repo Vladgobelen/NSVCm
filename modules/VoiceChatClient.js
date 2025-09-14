@@ -396,7 +396,15 @@ class VoiceChatClient {
 
     async joinRoom(roomId) {
         console.log('Joining room:', roomId);
-        
+    
+
+if (this.currentRoom === roomId && this.isConnected) {
+        console.log('Already connected to this room, updating state');
+        await this.startConsuming();
+        return true;
+    }
+
+    
         try {
             UIManager.addMessage('System', 'Подключение к комнате...');
             
@@ -426,6 +434,11 @@ class VoiceChatClient {
             const data = await res.json();
             if (!data.success) throw new Error(data.error);
             
+            // Добавляем проверку mediaData
+            if (!data.mediaData) {
+                throw new Error('No media data received from server');
+            }
+            
             this.clientID = data.clientId;
             this.mediaData = data.mediaData;
             this.currentRoom = roomId;
@@ -433,7 +446,7 @@ class VoiceChatClient {
             
             localStorage.setItem('lastServerId', this.currentServerId);
             localStorage.setItem('lastRoomId', this.currentRoom);
-            
+            this.audioProducer = null;
             await MediaManager.connect(this, roomId, data.mediaData);
             this.updateMicButtonState();
             
@@ -515,21 +528,45 @@ class VoiceChatClient {
 
             const socket = this.socket;
             
-            socket.on('new-producer', async (data) => {
-                await new Promise(resolve => setTimeout(resolve, 200));
-                console.log('New producer event:', data);
-                if (data.clientID !== this.clientID) {
-                    try {
-                        await MediaManager.createConsumer(this, data.producerId);
-                        this.existingProducers.add(data.producerId);
-                    } catch (error) {
-                        console.error('Error creating consumer:', error);
-                    }
-                }
-            });
+socket.on('new-producer', async (data) => {
+    // 🔴🔴🔴 АГРЕССИВНЫЙ ДЕБАГ: Логируем ВСЁ
+    console.group('🔴🔴🔴 [DEBUG] SOCKET EVENT: new-producer');
+    console.log('🎯 [DEBUG] EVENT DATA RECEIVED:', JSON.stringify(data, null, 2));
+    console.log('🎯 [DEBUG] CLIENT STATE - clientID:', this.clientID);
+    console.log('🎯 [DEBUG] CLIENT STATE - existingProducers (BEFORE):', Array.from(this.existingProducers));
+    console.log('🎯 [DEBUG] CLIENT STATE - isConnected:', this.isConnected);
+    console.log('🎯 [DEBUG] CLIENT STATE - currentRoom:', this.currentRoom);
+    console.log('🎯 [DEBUG] CHECK: Is this my own producer?', data.clientID === this.clientID);
+    console.log('🎯 [DEBUG] CHECK: Is producer already in existingProducers?', this.existingProducers.has(data.producerId));
+    console.groupEnd();
 
+    // Оригинальная логика с дебагом
+    await new Promise(resolve => setTimeout(resolve, 200));
+    console.log('🎯 New producer event:', data);
+
+    // Проверка: не свой ли это продюсер
+    if (data.clientID !== this.clientID) {
+        console.log('🎧 [DEBUG] Attempting to create consumer for producer:', data.producerId);
+        try {
+            await MediaManager.createConsumer(this, data.producerId);
+            this.existingProducers.add(data.producerId);
+            console.log('✅ [DEBUG] Consumer created and producerId added to existingProducers:', data.producerId);
+        } catch (error) {
+            console.error('❌ Error creating consumer:', error);
+            // Добавляем дебаг даже при ошибке
+            console.log('❌ [DEBUG] Consumer creation FAILED for producer:', data.producerId);
+        }
+    } else {
+        console.log('🔇 [DEBUG] Ignoring own producer:', data.producerId);
+    }
+
+    // 🔴🔴🔴 АГРЕССИВНЫЙ ДЕБАГ: Логируем состояние ПОСЛЕ обработки
+    console.group('🔴🔴🔴 [DEBUG] AFTER PROCESSING new-producer');
+    console.log('🎯 [DEBUG] CLIENT STATE - existingProducers (AFTER):', Array.from(this.existingProducers));
+    console.groupEnd();
+});
             socket.on('current-producers', async (data) => {
-                console.log('Current producers event:', data);
+                console.log('🎯 Current producers event:', data);
                 if (!data || !data.producers || !Array.isArray(data.producers)) {
                     console.log('No producers data available');
                     return;
@@ -542,7 +579,7 @@ class VoiceChatClient {
                             await MediaManager.createConsumer(this, producer.id);
                             this.existingProducers.add(producer.id);
                         } catch (error) {
-                            console.error('Error creating consumer:', error);
+                            console.error('❌ Error creating consumer:', error);
                             if (error.message.includes('consume own')) {
                                 this.existingProducers.add(producer.id);
                             }
@@ -647,61 +684,77 @@ class VoiceChatClient {
         UIManager.updateMicButton(status);
     }
 
-    async toggleMicrophone() {
-        console.log('Toggling microphone, current state:', this.isMicActive);
+async toggleMicrophone() {
+    console.log('Toggling microphone, current state:', this.isMicActive);
+    
+    try {
+        if (!this.currentRoom) {
+            UIManager.showError('Микрофон доступен только в комнатах');
+            return;
+        }
         
-        try {
-            if (!this.currentRoom) {
-                UIManager.showError('Микрофон доступен только в комнатах');
-                return;
+        if (this.isMicActive) {
+            // Пытаемся отключить микрофон через отключение трека
+            const disabled = await MediaManager.disableMicrophone(this);
+            
+            if (!disabled) {
+                // Если не удалось отключить трек, полностью останавливаем микрофон
+                await MediaManager.stopMicrophone(this, false); // false = не закрывать transport
             }
             
-            if (this.isMicActive) {
-                await MediaManager.stopMicrophone(this);
+            if (this.socket) {
+                this.socket.emit('mic-state-change', {
+                    roomId: this.currentRoom,
+                    isActive: false,
+                    clientID: this.clientID,
+                    userId: this.userId
+                });
+            }
+        } else {
+            try {
+                // Пытаемся включить микрофон через включение трека
+                const enabled = await MediaManager.enableMicrophone(this);
+                
+                if (!enabled) {
+                    // Если не удалось включить трек, запускаем микрофон полностью
+                    if (!this.sendTransport && this.mediaData) {
+                        await MediaManager.connect(this, this.currentRoom, this.mediaData);
+                    }
+                    await MediaManager.startMicrophone(this);
+                }
+                
                 if (this.socket) {
                     this.socket.emit('mic-state-change', {
                         roomId: this.currentRoom,
-                        isActive: false,
+                        isActive: true,
                         clientID: this.clientID,
                         userId: this.userId
                     });
-                }
-            } else {
-                try {
-                    await MediaManager.startMicrophone(this);
-                    if (this.socket) {
-                        this.socket.emit('mic-state-change', {
+                    
+                    if (this.audioProducer) {
+                        this.socket.emit('new-producer-notification', {
                             roomId: this.currentRoom,
-                            isActive: true,
+                            producerId: this.audioProducer.id,
                             clientID: this.clientID,
-                            userId: this.userId
+                            kind: 'audio'
                         });
-                        
-                        if (this.audioProducer) {
-                            this.socket.emit('new-producer-notification', {
-                                roomId: this.currentRoom,
-                                producerId: this.audioProducer.id,
-                                clientID: this.clientID,
-                                kind: 'audio'
-                            });
-                        }
                     }
-                } catch (error) {
-                    if (error.message.includes('permission') || error.message.includes('разрешение')) {
-                        UIManager.showError('Необходимо разрешение на использование микрофона');
-                    } else {
-                        throw error;
-                    }
+                }
+            } catch (error) {
+                if (error.message.includes('permission') || error.message.includes('разрешение')) {
+                    UIManager.showError('Необходимо разрешение на использование микрофона');
+                } else {
+                    throw error;
                 }
             }
-            this.updateMicButtonState();
-        } catch (error) {
-            console.error('Error toggling microphone:', error);
-            UIManager.showError('Ошибка микрофона: ' + error.message);
-            this.updateMicButtonState();
         }
+        this.updateMicButtonState();
+    } catch (error) {
+        console.error('Error toggling microphone:', error);
+        UIManager.showError('Ошибка микрофона: ' + error.message);
+        this.updateMicButtonState();
     }
-
+}
     sendMessage(text) {
         console.log('Sending message:', text);
         
@@ -726,58 +779,66 @@ class VoiceChatClient {
 
     startSyncInterval() {
         console.log('Starting sync interval...');
-        
+
         window.debugStartConsuming = () => this.startConsuming();
         window.debugStartSyncInterval = () => this.startSyncInterval();
         window.debugVoiceClient = this;
-        
-        if (this.syncInterval) clearInterval(this.syncInterval);
            
+        if (this.syncInterval) clearInterval(this.syncInterval);
+
         this.syncInterval = setInterval(async () => {
             try {
                 await ServerManager.loadServers(this);
                 if (this.currentServerId) {
                     await RoomManager.loadRoomsForServer(this, this.currentServerId);
                 }
-                
+                 
                 if (this.currentRoom && this.isConnected) {
                     await this.startConsuming();
                 } 
             } catch (error) {
                 console.error('Sync error:', error);
             }
-        }, 3000);
+        }, 5000); // Увеличен интервал до 5 секунд для снижения нагрузки
     }
 
     async startConsuming() {
-        console.log('Starting media consumption...');
+        console.log('🔄 Starting media consumption...');
         
         if (!this.isConnected || !this.currentRoom) {
+            console.log('Not connected or no room, skipping consumption');
             return;
         }
         
         try {
-            const response = await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.currentRoom}/producers`, {
+            // Добавляем параметр timestamp для предотвращения кэширования
+            const timestamp = Date.now();
+            const response = await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.currentRoom}/producers?t=${timestamp}`, {
                 headers: {
                     'Authorization': `Bearer ${this.token}`,
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache'
                 }
             });
             
             if (!response.ok) {
+                console.error(`❌ HTTP error! status: ${response.status}`);
                 return;
             }
             
             const data = await response.json();
             const producers = data.producers || [];
+            console.log(`📋 Found ${producers.length} producers in room ${this.currentRoom}`);
 
             for (const producer of producers) {
                 if (producer.clientID !== this.clientID && !this.existingProducers.has(producer.id)) {
                     try {
                         await MediaManager.createConsumer(this, producer.id);
                         this.existingProducers.add(producer.id);
+                        console.log(`🎧 Created consumer for producer: ${producer.id}`);
                     } catch (error) {
-                        console.error('Error creating consumer:', error);
+                        console.error('❌ Error creating consumer:', error);
                         if (error.message.includes('consume own')) {
                             this.existingProducers.add(producer.id);
                         }
@@ -785,7 +846,7 @@ class VoiceChatClient {
                 }
             }
         } catch (error) {
-            console.error('Error starting consuming:', error);
+            console.error('❌ Error starting consuming:', error);
         }
     }
 
@@ -839,10 +900,15 @@ class VoiceChatClient {
                     try {
                         await MediaManager.startMicrophone(this);
                         this.wasMicActiveBeforeReconnect = false;
+                        // Добавляем принудительное обновление продюсеров
+                        setTimeout(() => {
+                            this.forceRefreshProducers();
+                        }, 2000);
                     } catch (error) {
+                        console.error('Failed to restart microphone after reconnect:', error);
                         UIManager.showError('Не удалось восстановить микрофон после переподключения');
                     }
-                }, 1000);
+                }, 3000); // Увеличиваем задержку до 3 секунд
             }
             
             return result;
@@ -922,24 +988,74 @@ class VoiceChatClient {
                 }
             });
             
-            if (response.ok) {
-                const roomState = await response.json();
-                console.log('🏠 Room state:', roomState);
-                
-                const ourTransport = roomState.transports.find(t => t.clientID === this.clientID && t.direction === 'recv');
-                console.log('📡 Our receive transport:', ourTransport);
-                
-                const ourConsumers = roomState.consumers.filter(c => c.clientID === this.clientID);
-                console.log('🎧 Our consumers:', ourConsumers);
-                
-                return roomState;
-            } else {
-                console.error('Failed to get room state:', response.status);
-            }
-        } catch (error) {
-            console.error('Error checking room state:', error);
+        if (response.ok) {
+            const roomState = await response.json();
+            console.log('🏠 Room state:', roomState);
+            
+            const ourTransport = roomState.transports.find(t => t.clientID === this.clientID && t.direction === 'recv');
+            console.log('📡 Our receive transport:', ourTransport);
+            
+            const ourConsumers = roomState.consumers.filter(c => c.clientID === this.clientID);
+            console.log('🎧 Our consumers:', ourConsumers);
+            
+            return roomState;
+        } else {
+            console.error('Failed to get room state:', response.status);
         }
+    } catch (error) {
+        console.error('Error checking room state:', error);
     }
 }
+
+// Добавляем функцию для принудительного обновления продюсеров
+async forceRefreshProducers() {
+    try {
+        console.log('🔄 Force refreshing producers...');
+        const timestamp = Date.now();
+        const response = await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.currentRoom}/producers/force?t=${timestamp}`, {
+            headers: {
+                'Authorization': `Bearer ${this.token}`,
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        const producers = data.producers || [];
+        console.log(`📋 Force refresh found ${producers.length} producers`);
+        
+        for (const producer of producers) {
+            if (producer.clientID !== this.clientID && !this.existingProducers.has(producer.id)) {
+                try {
+                    await MediaManager.createConsumer(this, producer.id);
+                    this.existingProducers.add(producer.id);
+                    console.log(`🎧 Created consumer for producer: ${producer.id}`);
+                } catch (error) {
+                    console.error('❌ Error creating consumer:', error);
+                    if (error.message.includes('consume own')) {
+                        this.existingProducers.add(producer.id);
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('❌ Error force refreshing producers:', error);
+    }
+}
+}
+
+// Добавляем функцию в глобальную область видимости для отладки
+window.debugForceRefresh = () => {
+    if (window.debugVoiceClient) {
+        window.debugVoiceClient.forceRefreshProducers();
+    } else {
+        console.error('Voice client not available for debugging');
+    }
+};
 
 export default VoiceChatClient;
