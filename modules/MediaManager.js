@@ -159,19 +159,19 @@ static async disableMicrophone(client) {
                 
                 const data = await response.json();
                 
-                await fetch(`${client.API_SERVER_URL}/api/media/notify-new-producer`, {
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${client.token}`
-                    },
-                    body: JSON.stringify({
-                        roomId: client.currentRoom,
-                        producerId: data.producerId,
-                        clientID: client.clientID,
-                        kind: parameters.kind
-                    })
-                });
+                //await fetch(`${client.API_SERVER_URL}/api/media/notify-new-producer`, {
+                  //  method: 'POST',
+                    //headers: { 
+                      //  'Content-Type': 'application/json',
+                        //'Authorization': `Bearer ${client.token}`
+                    //},
+                    //body: JSON.stringify({
+                      //  roomId: client.currentRoom,
+                       // producerId: data.producerId,
+                        //clientID: client.clientID,
+                        //kind: parameters.kind
+                    //})
+                //});
                 
                 console.log('Media produced successfully:', data.producerId);
                 callback({ id: data.producerId });
