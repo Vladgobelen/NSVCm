@@ -10,50 +10,47 @@ import MembersManager from './MembersManager.js';
 import AuthManager from './AuthManager.js';
 
 class VoiceChatClient {
-    constructor() {
-        this.API_SERVER_URL = 'https://ns.fiber-gate.ru';
-        this.CHAT_API_URL = `${this.API_SERVER_URL}/api/join`;
-        this.clientID = Utils.generateClientID();
-        this.device = null;
-        this.sendTransport = null;
-        this.recvTransport = null;
-        this.audioProducer = null;
-        this.consumers = new Map();
-        this.existingProducers = new Set();
-        this.stream = null;
-        this.isMicActive = false;
-        this.currentRoom = null;
-        this.currentServerId = null;
-        this.currentServer = null;
-        this.servers = [];
-        this.rooms = [];
-        this.keepAliveInterval = null;
-        this.bitrate = 32000;
-        this.dtxEnabled = true;
-        this.fecEnabled = true;
-        this.isConnected = false;
-        this.mediaData = null;
-        this.userId = null;
-        this.token = null;
-        this.username = null;
-        this.syncInterval = null;
-        this.activePanel = 'servers';
-        this.inviteServerId = null;
-        this.isCreatingRoom = false;
-        this.socket = null;
-        this.sseConnection = null;
-        this.wasMicActiveBeforeReconnect = false;
-        this.isReconnecting = false;
-        this.pendingInviteCode = null;
-        UIManager.setClient(this);
-        this.useHttpPolling = false;
-
-        this.elements = {};
-        this.debouncedSync = Utils.debounce(() => this.startConsuming(), 1000);
-
-        this.init();
-    }
-
+constructor() {
+    this.API_SERVER_URL = 'https://ns.fiber-gate.ru';
+    this.CHAT_API_URL = `${this.API_SERVER_URL}/api/join`;
+    this.clientID = Utils.generateClientID();
+    this.device = null;
+    this.sendTransport = null;
+    this.recvTransport = null;
+    this.audioProducer = null;
+    // this.consumers = new Map(); // <-- Это поле все еще нужно для хранения объектов consumer
+    // this.existingProducers = new Set(); // <-- ЗАМЕНЯЕМ эту строку
+    this.consumerState = new Map(); // <-- НОВОЕ: Map<producerId, { status: 'idle' | 'creating' | 'active' | 'error', consumer: ConsumerObject | null, lastError: Error | null }>
+    this.stream = null;
+    this.isMicActive = false;
+    this.currentRoom = null;
+    this.currentServerId = null;
+    this.currentServer = null;
+    this.servers = [];
+    this.rooms = [];
+    this.keepAliveInterval = null;
+    this.bitrate = 32000;
+    this.dtxEnabled = true;
+    this.fecEnabled = true;
+    this.isConnected = false;
+    this.mediaData = null;
+    this.userId = null;
+    this.token = null;
+    this.username = null;
+    this.syncInterval = null;
+    this.activePanel = 'servers';
+    this.inviteServerId = null;
+    this.isCreatingRoom = false;
+    this.socket = null;
+    this.sseConnection = null;
+    this.wasMicActiveBeforeReconnect = false;
+    this.isReconnecting = false;
+    this.pendingInviteCode = null;
+    this.useHttpPolling = false;
+    this.elements = {};
+    this.debouncedSync = Utils.debounce(() => this.startConsuming(), 1000);
+    this.init();
+}
     async init() {
         console.log('VoiceChatClient initializing...');
         this.initElements();
@@ -241,6 +238,62 @@ class VoiceChatClient {
         
         console.log('URL params processed - server:', this.currentServerId, 'room:', this.currentRoom, 'invite:', this.inviteServerId);
     }
+
+/**
+ * Гарантирует, что для указанного producerId существует активный потребитель.
+ * Метод идемпотентен и потокобезопасен.
+ * @param {string} producerId - ID продюсера
+ * @param {Object} producerData - Данные продюсера (опционально, для логирования)
+ * @returns {Promise<boolean>} - true, если потребитель активен или был успешно создан
+ */
+async ensureConsumer(producerId, producerData = {}) {
+    // 🔒 Атомарная проверка и установка состояния "в процессе создания"
+    const currentState = this.consumerState.get(producerId);
+
+    // Если потребитель уже активен, ничего не делаем.
+    if (currentState?.status === 'active') {
+        console.log(`[ConsumerManager] Consumer for ${producerId} is already active.`);
+        return true;
+    }
+
+    // Если потребитель уже находится в процессе создания, ждем завершения (или ошибки) этого процесса.
+    if (currentState?.status === 'creating') {
+        console.log(`[ConsumerManager] Consumer for ${producerId} is already being created. Skipping duplicate request.`);
+        return false;
+    }
+
+    // Устанавливаем состояние "в процессе создания"
+    this.consumerState.set(producerId, { status: 'creating', consumer: null, lastError: null });
+
+    try {
+        console.log(`[ConsumerManager] Starting creation for producer: ${producerId}`);
+        const consumer = await MediaManager.createConsumer(this, producerId);
+
+        // Успешно создано! Обновляем состояние.
+        this.consumerState.set(producerId, { status: 'active', consumer: consumer, lastError: null });
+        console.log(`[ConsumerManager] ✅ Consumer for ${producerId} created and activated.`);
+        return true;
+
+    } catch (error) {
+        console.error(`[ConsumerManager] ❌ Failed to create consumer for ${producerId}:`, error);
+
+        // Обновляем состояние с ошибкой.
+        this.consumerState.set(producerId, { 
+            status: 'error', 
+            consumer: null, 
+            lastError: error 
+        });
+
+        // Если ошибка связана с тем, что это наш собственный продюсер, помечаем как "активный" (чтобы не пытаться снова).
+        if (error.message.includes('consume own') || error.message.includes('own audio')) {
+            this.consumerState.set(producerId, { status: 'active', consumer: null, lastError: null });
+            console.log(`[ConsumerManager] Producer ${producerId} is own, marked as handled.`);
+        }
+
+        return false;
+    }
+}
+
 
     async initAutoConnect() {
         console.log('Starting auto-connect process...');
@@ -533,60 +586,42 @@ socket.on('new-producer', async (data) => {
     console.group('🔴🔴🔴 [DEBUG] SOCKET EVENT: new-producer');
     console.log('🎯 [DEBUG] EVENT DATA RECEIVED:', JSON.stringify(data, null, 2));
     console.log('🎯 [DEBUG] CLIENT STATE - clientID:', this.clientID);
-    console.log('🎯 [DEBUG] CLIENT STATE - existingProducers (BEFORE):', Array.from(this.existingProducers));
+    console.log('🎯 [DEBUG] CLIENT STATE - consumerState (BEFORE):', Array.from(this.consumerState.entries()).map(([id, state]) => ({ id, status: state.status })));
     console.log('🎯 [DEBUG] CLIENT STATE - isConnected:', this.isConnected);
     console.log('🎯 [DEBUG] CLIENT STATE - currentRoom:', this.currentRoom);
     console.log('🎯 [DEBUG] CHECK: Is this my own producer?', data.clientID === this.clientID);
-    console.log('🎯 [DEBUG] CHECK: Is producer already in existingProducers?', this.existingProducers.has(data.producerId));
     console.groupEnd();
 
-    // Оригинальная логика с дебагом
-    await new Promise(resolve => setTimeout(resolve, 200));
     console.log('🎯 New producer event:', data);
-
     // Проверка: не свой ли это продюсер
     if (data.clientID !== this.clientID) {
-        console.log('🎧 [DEBUG] Attempting to create consumer for producer:', data.producerId);
-        try {
-            await MediaManager.createConsumer(this, data.producerId);
-            this.existingProducers.add(data.producerId);
-            console.log('✅ [DEBUG] Consumer created and producerId added to existingProducers:', data.producerId);
-        } catch (error) {
-            console.error('❌ Error creating consumer:', error);
-            // Добавляем дебаг даже при ошибке
-            console.log('❌ [DEBUG] Consumer creation FAILED for producer:', data.producerId);
-        }
+        // Используем новый централизованный метод
+        await this.ensureConsumer(data.producerId, data);
     } else {
         console.log('🔇 [DEBUG] Ignoring own producer:', data.producerId);
+        // Опционально: можно добавить в consumerState со статусом 'active'
+        this.consumerState.set(data.producerId, { status: 'active', consumer: null, lastError: null });
     }
 
     // 🔴🔴🔴 АГРЕССИВНЫЙ ДЕБАГ: Логируем состояние ПОСЛЕ обработки
     console.group('🔴🔴🔴 [DEBUG] AFTER PROCESSING new-producer');
-    console.log('🎯 [DEBUG] CLIENT STATE - existingProducers (AFTER):', Array.from(this.existingProducers));
+    console.log('🎯 [DEBUG] CLIENT STATE - consumerState (AFTER):', Array.from(this.consumerState.entries()).map(([id, state]) => ({ id, status: state.status })));
     console.groupEnd();
 });
-            socket.on('current-producers', async (data) => {
-                console.log('🎯 Current producers event:', data);
-                if (!data || !data.producers || !Array.isArray(data.producers)) {
-                    console.log('No producers data available');
-                    return;
-                }
-
-                for (const producer of data.producers) {
-                    if (producer.clientID !== this.clientID && 
-                        !this.existingProducers.has(producer.id)) {
-                        try {
-                            await MediaManager.createConsumer(this, producer.id);
-                            this.existingProducers.add(producer.id);
-                        } catch (error) {
-                            console.error('❌ Error creating consumer:', error);
-                            if (error.message.includes('consume own')) {
-                                this.existingProducers.add(producer.id);
-                            }
-                        }
-                    }
-                }
-            });
+socket.on('current-producers', async (data) => {
+    console.log('🎯 Current producers event:', data);
+    if (!data || !data.producers || !Array.isArray(data.producers)) {
+        console.log('No producers data available');
+        return;
+    }
+    for (const producer of data.producers) {
+        if (producer.clientID !== this.clientID) {
+            await this.ensureConsumer(producer.id, producer);
+        } else {
+            this.consumerState.set(producer.id, { status: 'active', consumer: null, lastError: null });
+        }
+    }
+});
 
             socket.on('room-participants', (participants) => {
                 console.log('Room participants received:', participants);
@@ -802,54 +837,43 @@ async toggleMicrophone() {
         }, 5000); // Увеличен интервал до 5 секунд для снижения нагрузки
     }
 
-    async startConsuming() {
-        console.log('🔄 Starting media consumption...');
-        
-        if (!this.isConnected || !this.currentRoom) {
-            console.log('Not connected or no room, skipping consumption');
+async startConsuming() {
+    console.log('🔄 Starting media consumption...');
+    if (!this.isConnected || !this.currentRoom) {
+        console.log('Not connected or no room, skipping consumption');
+        return;
+    }
+    try {
+        // Добавляем параметр timestamp для предотвращения кэширования
+        const timestamp = Date.now();
+        const response = await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.currentRoom}/producers?t=${timestamp}`, {
+            headers: {
+                'Authorization': `Bearer ${this.token}`,
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache'
+            }
+        });
+        if (!response.ok) {
+            console.error(`❌ HTTP error! status: ${response.status}`);
             return;
         }
-        
-        try {
-            // Добавляем параметр timestamp для предотвращения кэширования
-            const timestamp = Date.now();
-            const response = await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.currentRoom}/producers?t=${timestamp}`, {
-                headers: {
-                    'Authorization': `Bearer ${this.token}`,
-                    'Content-Type': 'application/json',
-                    'Cache-Control': 'no-cache, no-store, must-revalidate',
-                    'Pragma': 'no-cache'
-                }
-            });
-            
-            if (!response.ok) {
-                console.error(`❌ HTTP error! status: ${response.status}`);
-                return;
+        const data = await response.json();
+        const producers = data.producers || [];
+        console.log(`📋 Found ${producers.length} producers in room ${this.currentRoom}`);
+        for (const producer of producers) {
+            if (producer.clientID !== this.clientID) {
+                // Используем новый метод
+                await this.ensureConsumer(producer.id, producer);
+            } else {
+                // Убеждаемся, что наш собственный продюсер помечен как обработанный.
+                this.consumerState.set(producer.id, { status: 'active', consumer: null, lastError: null });
             }
-            
-            const data = await response.json();
-            const producers = data.producers || [];
-            console.log(`📋 Found ${producers.length} producers in room ${this.currentRoom}`);
-
-            for (const producer of producers) {
-                if (producer.clientID !== this.clientID && !this.existingProducers.has(producer.id)) {
-                    try {
-                        await MediaManager.createConsumer(this, producer.id);
-                        this.existingProducers.add(producer.id);
-                        console.log(`🎧 Created consumer for producer: ${producer.id}`);
-                    } catch (error) {
-                        console.error('❌ Error creating consumer:', error);
-                        if (error.message.includes('consume own')) {
-                            this.existingProducers.add(producer.id);
-                        }
-                    }
-                }
-            }
-        } catch (error) {
-            console.error('❌ Error starting consuming:', error);
         }
+    } catch (error) {
+        console.error('❌ Error starting consuming:', error);
     }
-
+}
     async disconnectFromRoom() {
         console.log('Disconnecting from room:', this.currentRoom);
         

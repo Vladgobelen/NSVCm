@@ -367,24 +367,12 @@ static async requestCurrentProducers(client, roomId) {
         }
         console.log('Found', data.producers.length, 'producers in room');
         for (const producer of data.producers) {
-            // Убираем проверку !client.existingProducers.has(producer.id)
-            // Потому что createConsumer сам позаботится о дедупликации на уровне консьюмеров.
+            // Используем ensureConsumer для надежной обработки
             if (producer.clientID !== client.clientID) {
-                try {
-                    await this.createConsumer(client, producer.id);
-                    // Добавляем в existingProducers только после успешного создания консьюмера.
-                    client.existingProducers.add(producer.id);
-                } catch (error) {
-                    console.error('Error creating consumer for producer:', producer.id, error);
-                    // Если ошибка связана с тем, что это собственный продюсер (хотя проверка выше должна это исключить),
-                    // добавляем ID в existingProducers, чтобы избежать повторных попыток.
-                    if (error.message.includes('consume own') || error.message.includes('own audio')) {
-                        client.existingProducers.add(producer.id);
-                    }
-                }
+                await client.ensureConsumer(producer.id, producer);
             } else {
-                // Это наш собственный продюсер, добавляем его ID в existingProducers, чтобы избежать попыток его потребления.
-                client.existingProducers.add(producer.id);
+                // Это наш собственный продюсер, помечаем как обработанный.
+                client.consumerState.set(producer.id, { status: 'active', consumer: null, lastError: null });
                 console.log('Own producer found in initial list:', producer.id);
             }
         }
@@ -392,6 +380,8 @@ static async requestCurrentProducers(client, roomId) {
         console.error('Error requesting current producers:', error);
     }
 }
+
+
 static async createConsumer(client, producerId, retries = 3) {
     console.log('Creating consumer for producer:', producerId);
     // Проверяем, не пытаемся ли мы создать consumer для собственного producer
