@@ -75,7 +75,7 @@ class RoomManager {
       UIManager.addMessage('System', `✅ Вы присоединились к комнате`);
       return true;
     } catch (error) {
-      UIManager.showError('Не удалось присоединиться к комнате: ' + error.message);
+      //UIManager.showError('Не удалось присоединиться к комнате: ' + error.message);
       throw error;
     }
   }
@@ -334,7 +334,7 @@ roomElement.addEventListener('click', async (e) => {
         if (isOwner) {
           const inviteBtn = document.createElement('button');
           inviteBtn.className = 'room-action-btn';
-          inviteBtn.innerHTML = '🔗';
+          //inviteBtn.innerHTML = '🔗';
           inviteBtn.title = 'Создать приглашение';
           inviteBtn.addEventListener('click', (e) => {
             e.stopPropagation();

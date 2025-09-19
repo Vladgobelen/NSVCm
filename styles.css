@@ -114,25 +114,6 @@ body {
     color: white;
 }
 
-.close-sidebar-btn {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 3px;
-    margin-left: 4px;
-}
-
-.close-sidebar-btn:hover {
-    background: var(--bg-modifier);
-    color: var(--text-normal);
-}
-
 .panel-content {
     display: none;
     flex-direction: column;
@@ -434,25 +415,6 @@ body {
 
 .members-panel .panel-header {
     padding: 12px 16px;
-}
-
-.close-panel-btn {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    font-size: 18px;
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 3px;
-}
-
-.close-panel-btn:hover {
-    background: var(--bg-modifier);
-    color: var(--text-normal);
 }
 
 .members-list {
@@ -815,6 +777,9 @@ body {
         z-index: 100;
         transform: translateX(-100%);
         width: 280px;
+        display: flex !important;
+        flex-direction: column;
+        transition: transform 0.3s ease;
     }
     
     .sidebar.open {
@@ -828,6 +793,9 @@ body {
         bottom: 0;
         z-index: 100;
         transform: translateX(100%);
+        display: flex !important;
+        flex-direction: column;
+        transition: transform 0.3s ease;
     }
     
     .members-panel.open {
@@ -836,6 +804,8 @@ body {
     
     .toggle-sidebar-btn {
         display: flex;
+        z-index: 101;
+        position: relative;
     }
     
     .mic-button {
@@ -860,4 +830,3 @@ body {
         flex-direction: column;
     }
 }
-

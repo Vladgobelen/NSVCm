@@ -233,56 +233,89 @@ class UIManager {
         });
     }
 
-    static updateMembersList(members) {
-        const membersList = document.querySelector('.members-list');
-        if (!membersList) return;
+// modules/UIManager.js
+static updateMembersList(members) {
+    const membersList = document.querySelector('.members-list');
+    if (!membersList) return;
+    membersList.innerHTML = '';
 
-        membersList.innerHTML = '';
-        
-        if (this.client && this.client.username) {
-            const selfElement = document.createElement('div');
-            selfElement.className = 'member-item';
-            const selfUsername = this.client.username || 'Вы';
-            selfElement.innerHTML = `
-                <div class="member-avatar">${selfUsername.charAt(0).toUpperCase()}</div>
-                <div class="member-name">${selfUsername}</div>
-                <div class="member-status">
-                    <div class="status-indicator online" title="Online"></div>
-                    <div class="mic-indicator ${this.client.isMicActive ? 'active' : ''}" title="${this.client.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
-                </div>
-            `;
-            membersList.appendChild(selfElement);
-        }
-        
-        members.forEach(user => {
-            if (user.userId === this.client.userId) return;
-            
-            const memberElement = document.createElement('div');
-            memberElement.className = 'member-item';
-            memberElement.dataset.userId = user.userId;
-            memberElement.innerHTML = `
-                <div class="member-avatar">${user.username.charAt(0).toUpperCase()}</div>
-                <div class="member-name">${user.username}</div>
-                <div class="member-status">
-                    <div class="status-indicator online" title="Online"></div>
-                    <div class="mic-indicator ${user.isMicActive ? 'active' : ''}" title="${user.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
-                </div>
-            `;
-            membersList.appendChild(memberElement);
-        });
+    // 🔴🔴🔴 ИСПРАВЛЕНИЕ: Находим данные текущего пользователя в списке `members`
+    let selfData = null;
+    if (this.client && this.client.userId) {
+        selfData = members.find(member => member.userId === this.client.userId);
     }
 
-    static updateMemberMicState(userId, isActive) {
-        const memberElement = document.querySelector(`.member-item[data-user-id="${userId}"]`);
-        if (memberElement) {
-            const micIndicator = memberElement.querySelector('.mic-indicator');
-            if (micIndicator) {
+    // Добавляем текущего пользователя в начало списка, если его данные найдены.
+    if (selfData) {
+        const selfElement = document.createElement('div');
+        selfElement.className = 'member-item';
+        const selfUsername = selfData.username || 'Вы';
+        // 🔴🔴🔴 ИСПРАВЛЕНИЕ: Определяем статус онлайн динамически из selfData
+        const isSelfOnline = selfData.isOnline === true;
+        const selfStatusClass = isSelfOnline ? 'online' : 'offline';
+        const selfStatusTitle = isSelfOnline ? 'Online' : 'Offline';
+
+        selfElement.innerHTML = `
+            <div class="member-avatar">${selfUsername.charAt(0).toUpperCase()}</div>
+            <div class="member-name">${selfUsername}</div>
+            <div class="member-status">
+                <div class="status-indicator ${selfStatusClass}" title="${selfStatusTitle}"></div>
+                <div class="mic-indicator ${selfData.isMicActive ? 'active' : ''}" title="${selfData.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
+            </div>
+        `;
+        membersList.appendChild(selfElement);
+    }
+
+    // Отображаем всех остальных пользователей.
+    members.forEach(user => {
+        // Проверяем наличие обязательного поля userId.
+        if (!user || !user.userId) {
+            console.warn('[UIManager] Пропускаем некорректного участника (отсутствует userId):', user);
+            return;
+        }
+        // 🔴🔴🔴 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Пропускаем текущего пользователя, если он встречается в списке.
+        if (this.client && user.userId === this.client.userId) {
+            return;
+        }
+        const memberElement = document.createElement('div');
+        memberElement.className = 'member-item';
+        memberElement.dataset.userId = user.userId;
+        // Определяем CSS-класс для индикатора статуса: 'online' если пользователь онлайн, иначе 'offline'.
+        // Если поле isOnline отсутствует, считаем пользователя оффлайн.
+        const isOnline = user.isOnline === true;
+        const statusClass = isOnline ? 'online' : 'offline';
+        const statusTitle = isOnline ? 'Online' : 'Offline';
+        memberElement.innerHTML = `
+            <div class="member-avatar">${user.username.charAt(0).toUpperCase()}</div>
+            <div class="member-name">${user.username}</div>
+            <div class="member-status">
+                <div class="status-indicator ${statusClass}" title="${statusTitle}"></div>
+                <div class="mic-indicator ${isOnline && user.isMicActive ? 'active' : ''}" title="${user.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
+            </div>
+        `;
+        membersList.appendChild(memberElement);
+    });
+}
+
+static updateMemberMicState(userId, isActive) {
+    const memberElement = document.querySelector(`.member-item[data-user-id="${userId}"]`);
+    if (memberElement) {
+        const micIndicator = memberElement.querySelector('.mic-indicator');
+        if (micIndicator) {
+            // Получаем объект пользователя, чтобы проверить, онлайн ли он.
+            const member = MembersManager.getMember(userId);
+            if (member && member.isOnline) {
+                // Обновляем индикатор микрофона ТОЛЬКО если пользователь онлайн.
                 micIndicator.className = isActive ? 'mic-indicator active' : 'mic-indicator';
                 micIndicator.title = isActive ? 'Microphone active' : 'Microphone muted';
+            } else {
+                // Если пользователь оффлайн, сбрасываем индикатор микрофона.
+                micIndicator.className = 'mic-indicator';
+                micIndicator.title = 'Microphone muted';
             }
         }
     }
-
+}
     static openModal(title, content, onSubmit) {
         const modalOverlay = document.querySelector('.modal-overlay');
         const modalContent = document.querySelector('.modal-content');
@@ -418,17 +451,28 @@ class UIManager {
         this.closeModal();
     }
 
-    static updateRoomUI(client) {
-        const messagesContainer = document.querySelector('.messages-container');
-        if (messagesContainer) {
-            messagesContainer.innerHTML = '';
-        }
-        
-        this.updateRoomTitle(client.currentRoom ? `Комната: ${client.currentRoom}` : 'Выберите комнату');
-        
-        this.updateMicButton(client.isConnected ? (client.isMicActive ? 'active' : 'connected') : 'disconnected');
+static updateRoomUI(client) {
+    const messagesContainer = document.querySelector('.messages-container');
+    if (messagesContainer) {
+        messagesContainer.innerHTML = '';
     }
 
+    // ИСПРАВЛЕНО: Получаем название комнаты вместо ID
+    let roomTitle = 'Выберите комнату';
+    if (client.currentRoom) {
+        // Ищем комнату по ID в списке загруженных комнат
+        const currentRoomData = client.rooms.find(room => room.id === client.currentRoom);
+        if (currentRoomData) {
+            roomTitle = `Комната: ${currentRoomData.name}`;
+        } else {
+            // На случай, если комната не найдена (например, при переподключении), используем ID как fallback
+            roomTitle = `Комната: ${client.currentRoom}`;
+        }
+    }
+    this.updateRoomTitle(roomTitle);
+
+    this.updateMicButton(client.isConnected ? (client.isMicActive ? 'active' : 'connected') : 'disconnected');
+}
     static clearMessages() {
         const messagesContainer = document.querySelector('.messages-container');
         if (messagesContainer) {

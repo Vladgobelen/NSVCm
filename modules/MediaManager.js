@@ -229,7 +229,7 @@ static async disableMicrophone(client) {
                     echoCancellation: true,
                     noiseSuppression: true,
                     sampleRate: 48000,
-                    channelCount: 2
+                    channelCount: 1
                 }
             });
             
@@ -237,11 +237,11 @@ static async disableMicrophone(client) {
             client.audioProducer = await client.sendTransport.produce({
                 track,
                 encodings: [{ 
-                    maxBitrate: 64000,
+                    maxBitrate: 24000,
                     dtx: true
                 }],
                 codecOptions: {
-                    opusStereo: true,
+                    opusStereo: false,
                     opusDtx: true,
                     opusFec: true
                 },

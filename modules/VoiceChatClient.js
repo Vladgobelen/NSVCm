@@ -62,9 +62,8 @@ constructor() {
         await this.initAutoConnect();
     }
 
-    initElements() {
+initElements() {
         console.log('Initializing UI elements...');
-        
         this.elements.micButton = document.querySelector('.mic-button');
         this.elements.micToggleBtn = document.querySelector('.mic-toggle-btn');
         this.elements.messageInput = document.querySelector('.message-input');
@@ -88,8 +87,10 @@ constructor() {
         this.elements.sidebar = document.querySelector('.sidebar');
         this.elements.membersPanel = document.querySelector('.members-panel');
         this.elements.serverSearchInput = document.querySelector('#serverSearch');
-        this.elements.clearSearchBtn = document.querySelector('#clearSearchBtn');    
-        
+        this.elements.clearSearchBtn = document.querySelector('#clearSearchBtn');
+        this.elements.backBtn = document.querySelector('.back-btn');
+        this.elements.pttSetupBtn = document.querySelector('.ptt-setup-btn'); // <-- ДОБАВЛЕНО
+
         if (this.elements.clearSearchBtn) {
             this.elements.clearSearchBtn.addEventListener('click', () => {
                 ServerManager.clearSearchAndShowAllServers(this);
@@ -99,101 +100,118 @@ constructor() {
         }
     }
 
-    initEventListeners() {
-        console.log('Setting up event listeners...');
-        
-        if (this.elements.micButton) {
-            this.elements.micButton.addEventListener('click', () => this.toggleMicrophone());
-        }
-        
-        if (this.elements.micToggleBtn) {
-            this.elements.micToggleBtn.addEventListener('click', () => this.toggleMicrophone());
-        }
-        
-        if (this.elements.messageInput) {
-            this.elements.messageInput.addEventListener('keypress', e => {
-                if (e.key === 'Enter') {
-                    this.sendMessage(this.elements.messageInput.value);
-                    this.elements.messageInput.value = '';
-                }
-            });
-        }
-        
-        if (this.elements.sendButton) {
-            this.elements.sendButton.addEventListener('click', () => {
+initEventListeners() {
+    console.log('Setting up event listeners...');
+    if (this.elements.micButton) {
+        this.elements.micButton.addEventListener('click', () => this.toggleMicrophone());
+    }
+    if (this.elements.micToggleBtn) {
+        this.elements.micToggleBtn.addEventListener('click', () => this.toggleMicrophone());
+    }
+    if (this.elements.messageInput) {
+        this.elements.messageInput.addEventListener('keypress', e => {
+            if (e.key === 'Enter') {
                 this.sendMessage(this.elements.messageInput.value);
                 this.elements.messageInput.value = '';
-            });
-        }
-        
-        if (this.elements.toggleSidebarBtn) {
-            this.elements.toggleSidebarBtn.addEventListener('click', () => {
-                this.elements.sidebar.classList.toggle('open');
-            });
-        }
-        
-        if (this.elements.toggleMembersBtn) {
-            this.elements.toggleMembersBtn.addEventListener('click', () => {
-                this.elements.membersPanel.classList.toggle('open');
-            });
-        }
-        
-        if (this.elements.closePanelBtn) {
-            this.elements.closePanelBtn.addEventListener('click', () => {
-                this.elements.membersPanel.classList.remove('open');
-            });
-        }
-        
-        if (this.elements.closeSidebarBtn) {
-            this.elements.closeSidebarBtn.addEventListener('click', () => {
-                this.elements.sidebar.classList.remove('open');
-            });
-        }
-        
-        if (this.elements.settingsBtn) {
-            this.elements.settingsBtn.addEventListener('click', () => {
-                UIManager.openSettings(this);
-            });
-        }
-        
-        if (this.elements.createServerBtn) {
-            this.elements.createServerBtn.addEventListener('click', () => {
-                ServerManager.createServer(this);
-            });
-        }
-
-        if (this.elements.createRoomBtn) {
-            this.elements.createRoomBtn.addEventListener('click', () => {
-                if (!this.currentServerId) {
-                    alert('Сначала выберите сервер');
-                    return;
-                }
-                
-                UIManager.openCreateRoomModal(this, (name) => {
-                    RoomManager.createRoom(this, this.currentServerId, name);
-                });
-            });
-        }
-
-        if (this.elements.serversToggleBtn) {
-            this.elements.serversToggleBtn.addEventListener('click', () => {
-                ServerManager.clearSearchAndShowAllServers(this);
-                this.showPanel('servers');
-            });
-        }
-        
-        if (this.elements.roomsToggleBtn) {
-            this.elements.roomsToggleBtn.addEventListener('click', () => {
-                this.showPanel('rooms');
-            });
-        }
-        
-        if (this.elements.serverSearchInput) {
-            this.elements.serverSearchInput.addEventListener('input', (e) => {
-                this.searchServers(e.target.value);
-            });
-        }
+            }
+        });
     }
+    if (this.elements.sendButton) {
+        this.elements.sendButton.addEventListener('click', () => {
+            this.sendMessage(this.elements.messageInput.value);
+            this.elements.messageInput.value = '';
+        });
+    }
+
+if (this.elements.toggleSidebarBtn) {
+    this.elements.toggleSidebarBtn.addEventListener('click', () => {
+        this.elements.sidebar.classList.toggle('open');
+        // Закрываем правую панель при открытии левой
+        if (this.elements.sidebar.classList.contains('open')) {
+            this.elements.membersPanel.classList.remove('open');
+        }
+    });
+}
+
+if (this.elements.toggleMembersBtn) {
+    this.elements.toggleMembersBtn.addEventListener('click', () => {
+        this.elements.membersPanel.classList.toggle('open');
+        // Закрываем левую панель при открытии правой
+        if (this.elements.membersPanel.classList.contains('open')) {
+            this.elements.sidebar.classList.remove('open');
+        }
+    });
+}
+
+    if (this.elements.closePanelBtn) {
+        this.elements.closePanelBtn.addEventListener('click', () => {
+            this.elements.membersPanel.classList.remove('open');
+        });
+    }
+    if (this.elements.closeSidebarBtn) {
+        this.elements.closeSidebarBtn.addEventListener('click', () => {
+            this.elements.sidebar.classList.remove('open');
+        });
+    }
+    if (this.elements.settingsBtn) {
+        this.elements.settingsBtn.addEventListener('click', () => {
+            UIManager.openSettings(this);
+        });
+    }
+    if (this.elements.createServerBtn) {
+        this.elements.createServerBtn.addEventListener('click', () => {
+            ServerManager.createServer(this);
+        });
+    }
+    if (this.elements.createRoomBtn) {
+        this.elements.createRoomBtn.addEventListener('click', () => {
+            if (!this.currentServerId) {
+                alert('Сначала выберите сервер');
+                return;
+            }
+            UIManager.openCreateRoomModal(this, (name) => {
+                RoomManager.createRoom(this, this.currentServerId, name);
+            });
+        });
+    }
+    if (this.elements.serversToggleBtn) {
+        this.elements.serversToggleBtn.addEventListener('click', () => {
+            ServerManager.clearSearchAndShowAllServers(this);
+            this.showPanel('servers');
+        });
+    }
+    if (this.elements.roomsToggleBtn) {
+        this.elements.roomsToggleBtn.addEventListener('click', () => {
+            this.showPanel('rooms');
+        });
+    }
+    if (this.elements.serverSearchInput) {
+        this.elements.serverSearchInput.addEventListener('input', (e) => {
+            this.searchServers(e.target.value);
+        });
+    }
+
+    // ✅ ИСПРАВЛЕННЫЙ обработчик клика на центральный фрейм для закрытия панелей
+    const mainContent = document.querySelector('.main-content');
+    if (mainContent) {
+        mainContent.addEventListener('click', (e) => {
+            // Проверяем, что клик был не по интерактивному элементу внутри фрейма
+            if (!e.target.closest('.message') && 
+                !e.target.closest('.message-input') && 
+                !e.target.closest('.send-btn') && 
+                !e.target.closest('.mic-toggle-btn') && 
+                !e.target.closest('.settings-btn') && 
+                !e.target.closest('.toggle-members-btn') &&
+                !e.target.closest('.current-room-title') &&
+                !e.target.closest('.toggle-sidebar-btn')) { // <-- ДОБАВЛЕНО: исключаем клик по кнопке открытия панели
+                
+                this.elements.sidebar.classList.remove('open');
+                this.elements.membersPanel.classList.remove('open');
+            }
+        });
+    }
+}
+
 
     showPanel(panelName) {
         console.log('Showing panel:', panelName);
@@ -305,19 +323,33 @@ async ensureConsumer(producerId, producerData = {}) {
                 console.log('Auto-login successful, loading servers...');
                 await ServerManager.loadServers(this);
                 
-                if (this.pendingInviteCode) {
-                    console.log('Applying pending invite:', this.pendingInviteCode);
-                    const inviteApplied = await InviteManager.applyPendingInvite();
-                    
-                    if (inviteApplied) {
-                        console.log('Invite applied successfully');
-                        this.clearPendingInvite();
-                        this.startSyncInterval();
-                        return;
-                    } else {
-                        console.log('Failed to apply invite, continuing with normal flow');
-                    }
-                }
+
+if (this.pendingInviteCode) {
+    console.log('Applying pending invite:', this.pendingInviteCode);
+    const inviteApplied = await InviteManager.applyPendingInvite();
+    if (inviteApplied) {
+        console.log('Invite applied successfully');
+        this.clearPendingInvite();
+        
+        // НОВОЕ: Явно проверяем и присоединяемся к комнате, если инвайт был на комнату
+        if (this.currentRoom && this.currentServerId) {
+            console.log('Invite was for a room. Attempting to join room:', this.currentRoom);
+            try {
+                await this.joinRoom(this.currentRoom);
+                console.log('Successfully joined room after invite application');
+            } catch (error) {
+                console.error('Failed to join room after invite application:', error);
+                UIManager.showError('Не удалось присоединиться к комнате после применения инвайта');
+            }
+        }
+        
+        //this.startSyncInterval();
+        return;
+    } else {
+        console.log('Failed to apply invite, continuing with normal flow');
+    }
+}
+
                 
                 const lastServerId = localStorage.getItem('lastServerId');
                 const lastRoomId = localStorage.getItem('lastRoomId');
@@ -338,7 +370,7 @@ async ensureConsumer(producerId, producerData = {}) {
                             if (roomExists) {
                                 this.currentRoom = lastRoomId;
                                 await this.reconnectToRoom(lastRoomId);
-                                this.startSyncInterval();
+                                //this.startSyncInterval();
                                 return;
                             }
                         }
@@ -375,7 +407,7 @@ async ensureConsumer(producerId, producerData = {}) {
                     if (this.currentRoom) {
                         await this.reconnectToRoom(this.currentRoom);
                     }
-                    this.startSyncInterval();
+                    //this.startSyncInterval();
                 } else {
                     console.log('No target server found, showing auto-connect UI');
                     this.autoConnect();
@@ -447,105 +479,75 @@ async ensureConsumer(producerId, producerData = {}) {
         }
     }
 
-    async joinRoom(roomId) {
-        console.log('Joining room:', roomId);
-    
 
-if (this.currentRoom === roomId && this.isConnected) {
-        console.log('Already connected to this room, updating state');
-        await this.startConsuming();
+async joinRoom(roomId) {
+    console.log('Joining room:', roomId);
+    // Проверка: если это та же комната и сокет активен, просто обновляем потребителей
+    if (this.currentRoom === roomId && this.isConnected && this.socket && this.socket.connected) {
+        console.log('Already connected to this room, updating consumers');
+        await this.startConsuming(); // Или ensureConsumer для всех актуальных продюсеров
         return true;
     }
 
-    
-        try {
-            UIManager.addMessage('System', 'Подключение к комнате...');
-            
-            this.disconnectFromRoom();
-            
-            this.setupSocketConnection();
-            
-            const res = await fetch(this.CHAT_API_URL, {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json', 
-                    'Authorization': `Bearer ${this.token}` 
-                },
-                body: JSON.stringify({ 
-                    roomId, 
-                    userId: this.userId, 
-                    token: this.token, 
-                    clientId: this.clientID 
-                })
-            });
-            
-            if (!res.ok) {
-                const errorData = await res.json().catch(() => ({}));
-                throw new Error(errorData.error || `Ошибка входа: ${res.status}`);
-            }
-            
-            const data = await res.json();
-            if (!data.success) throw new Error(data.error);
-            
-            // Добавляем проверку mediaData
-            if (!data.mediaData) {
-                throw new Error('No media data received from server');
-            }
-            
-            this.clientID = data.clientId;
-            this.mediaData = data.mediaData;
-            this.currentRoom = roomId;
-            this.roomType = 'voice';
-            
-            localStorage.setItem('lastServerId', this.currentServerId);
-            localStorage.setItem('lastRoomId', this.currentRoom);
-            this.audioProducer = null;
-            await MediaManager.connect(this, roomId, data.mediaData);
-            this.updateMicButtonState();
-            
-            if (this.socket) {
-                this.socket.emit('subscribe-to-producers', { roomId });
-                this.socket.emit('get-current-producers', { roomId });
-            }
-            
-            UIManager.updateRoomUI(this);
-            TextChatManager.joinTextRoom(this, roomId);
-            await TextChatManager.loadMessages(this, roomId);
-            
-            try {
-                await new Promise(resolve => setTimeout(resolve, 500));
-                
-                const participantsResponse = await fetch(`${this.API_SERVER_URL}/api/media/rooms/${roomId}/participants`, {
-                    headers: {
-                        'Authorization': `Bearer ${this.token}`,
-                        'Content-Type': 'application/json'
-                    }
-                });
-                
-                if (participantsResponse.ok) {
-                    const participantsData = await participantsResponse.json();
-                    if (participantsData.participants && Array.isArray(participantsData.participants)) {
-                        console.log('[CLIENT] Инициализируем список участников с', participantsData.participants.length, 'участниками');
-                        MembersManager.initializeRoomMembers(this, participantsData.participants);
-                    } else {
-                        console.log('[CLIENT] Пустой или некорректный список участников от сервера');
-                    }
-                } else {
-                    console.error('[CLIENT] Ошибка при получении списка участников:', participantsResponse.status);
-                }
-            } catch (error) {
-                console.error('[CLIENT] Ошибка запроса списка участников:', error);
-            }
-            
-            UIManager.addMessage('System', `✅ Вы присоединились к комнате`);
-            return true;
-        } catch (e) {
-            console.error('Error joining room:', e);
-            UIManager.updateStatus('Ошибка: ' + e.message, 'disconnected');
-            UIManager.showError('Не удалось присоединиться к комнате: ' + e.message);
-            throw e;
+    try {
+        UIManager.addMessage('System', 'Подключение к комнате...');
+        this.disconnectFromRoom(); // Этот метод уже вызывает destroySocket()
+        // this.setupSocketConnection(); // <-- Этот вызов будет внутри connect или после него
+
+        const res = await fetch(this.CHAT_API_URL, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json', 
+                'Authorization': `Bearer ${this.token}` 
+            },
+            body: JSON.stringify({ 
+                roomId, 
+                userId: this.userId, 
+                token: this.token, 
+                clientId: this.clientID 
+            })
+        });
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            throw new Error(errorData.error || `Ошибка входа: ${res.status}`);
         }
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error);
+        if (!data.mediaData) {
+            throw new Error('No media data received from server');
+        }
+
+        this.clientID = data.clientId;
+        this.mediaData = data.mediaData;
+        this.currentRoom = roomId;
+        this.roomType = 'voice';
+        localStorage.setItem('lastServerId', this.currentServerId);
+        localStorage.setItem('lastRoomId', this.currentRoom);
+        this.audioProducer = null;
+
+        await MediaManager.connect(this, roomId, data.mediaData);
+        // setupSocketConnection теперь вызывается внутри MediaManager.connect или сразу после
+        // Важно: setupSocketConnection НЕ должен вызывать destroySocket, если сокет уже для этой комнаты
+        this.setupSocketConnection(); // <-- Перенесено сюда, ПОСЛЕ установки this.currentRoom
+
+        this.updateMicButtonState();
+        if (this.socket) {
+            this.socket.emit('subscribe-to-producers', { roomId });
+            this.socket.emit('get-current-producers', { roomId });
+        }
+        UIManager.updateRoomUI(this);
+        TextChatManager.joinTextRoom(this, roomId);
+        await TextChatManager.loadMessages(this, roomId);
+
+        UIManager.addMessage('System', `✅ Вы присоединились к комнате`);
+        return true;
+    } catch (e) {
+        console.error('Error joining room:', e);
+        UIManager.updateStatus('Ошибка: ' + e.message, 'disconnected');
+        UIManager.showError('Не удалось присоединиться к комнате: ' + e.message);
+        throw e;
     }
+}
 
     setupSocketConnection() {
         console.log('Setting up socket connection...');
@@ -623,22 +625,55 @@ socket.on('current-producers', async (data) => {
     }
 });
 
-            socket.on('room-participants', (participants) => {
-                console.log('Room participants received:', participants);
-                MembersManager.updateAllMembers(participants);
-            });
+socket.on('room-participants', (participants) => {
+    // 🔴🔴🔴 АГРЕССИВНЫЙ ДЕБАГ: Логируем сырые данные от сервера
+    console.group('🔴🔴🔴 [DEBUG] SOCKET EVENT: room-participants');
+    console.log('🎯 [DEBUG] RAW PARTICIPANTS DATA FROM SERVER:', JSON.stringify(participants, null, 2));
+    console.groupEnd();
+    console.log('Room participants received:', participants);
 
-            socket.on('user-joined', (user) => {
-                console.log('User joined:', user);
-                MembersManager.addMember(user);
-                UIManager.addMessage('System', `Пользователь ${user.username} присоединился к комнате`);
-            });
+    // 🔴🔴🔴 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ:
+    // Явно устанавливаем isOnline: true для текущего пользователя, если он есть в списке.
+    const processedParticipants = participants.map(p => {
+        if (p.userId === this.userId) {
+            return { ...p, isOnline: true };
+        }
+        return p;
+    });
 
-            socket.on('user-left', (data) => {
-                console.log('User left:', data);
-                MembersManager.removeMember(data.userId);
-                UIManager.addMessage('System', `Пользователь покинул комнату`);
-            });
+    MembersManager.updateAllMembers(processedParticipants);
+});
+socket.on('user-joined', (user) => {
+    console.log('User joined:', user);
+    // Проверяем, существует ли пользователь
+    if (MembersManager.getMember(user.userId)) {
+        // Если существует, обновляем его данные и статус онлайн
+        MembersManager.updateMember(user.userId, { 
+            ...user,
+            isOnline: true 
+        });
+    } else {
+        // Если не существует, добавляем нового пользователя
+        MembersManager.addMember({
+            ...user,
+            isOnline: true // Явно устанавливаем статус онлайн для нового пользователя
+        });
+    }
+    UIManager.addMessage('System', `Пользователь ${user.username} присоединился к комнате`);
+});
+
+socket.on('user-left', (data) => {
+    console.log('User left:', data);
+    // Обновляем существующего пользователя, устанавливая isOnline: false
+    MembersManager.updateMember(data.userId, { isOnline: false });
+    // Получаем имя пользователя из списка, чтобы отобразить в сообщении
+    const member = MembersManager.getMember(data.userId);
+    if (member) {
+        UIManager.addMessage('System', `Пользователь ${member.username} покинул комнату`);
+    } else {
+        UIManager.addMessage('System', `Пользователь покинул комнату`);
+    }
+});
 
             socket.on('user-mic-state', (data) => {
                 console.log('User mic state changed:', data);
@@ -812,30 +847,30 @@ async toggleMicrophone() {
         }
     }
 
-    startSyncInterval() {
-        console.log('Starting sync interval...');
+    //startSyncInterval() {
+      //  console.log('Starting sync interval...');
 
-        window.debugStartConsuming = () => this.startConsuming();
-        window.debugStartSyncInterval = () => this.startSyncInterval();
-        window.debugVoiceClient = this;
+//        window.debugStartConsuming = () => this.startConsuming();
+  //      window.debugStartSyncInterval = () => this.startSyncInterval();
+    //    window.debugVoiceClient = this;
            
-        if (this.syncInterval) clearInterval(this.syncInterval);
+      //  if (this.syncInterval) clearInterval(this.syncInterval);
 
-        this.syncInterval = setInterval(async () => {
-            try {
-                await ServerManager.loadServers(this);
-                if (this.currentServerId) {
-                    await RoomManager.loadRoomsForServer(this, this.currentServerId);
-                }
+//        this.syncInterval = setInterval(async () => {
+  //          try {
+    //            await ServerManager.loadServers(this);
+      //          if (this.currentServerId) {
+        //            await RoomManager.loadRoomsForServer(this, this.currentServerId);
+          //      }
                  
-                if (this.currentRoom && this.isConnected) {
-                    await this.startConsuming();
-                } 
-            } catch (error) {
-                console.error('Sync error:', error);
-            }
-        }, 5000); // Увеличен интервал до 5 секунд для снижения нагрузки
-    }
+            //    if (this.currentRoom && this.isConnected) {
+              //      await this.startConsuming();
+                //} 
+            //} catch (error) {
+              //  console.error('Sync error:', error);
+            //}
+        //}, 5000); // Увеличен интервал до 5 секунд для снижения нагрузки
+    //}
 
 async startConsuming() {
     console.log('🔄 Starting media consumption...');
