@@ -77,100 +77,99 @@ static addMember(memberData) {
     }
 
 // modules/MembersManager.js
+
 static updateAllMembers(members) {
-    // Создаем Set из ID новых участников для быстрого поиска
-    const newMemberIds = new Set(members.map(m => m.userId));
-    // Удаляем пользователей, которых больше нет в списке
-    for (const userId of this.members.keys()) {
-        if (!newMemberIds.has(userId)) {
-            this.members.delete(userId);
-        }
-    }
-    // Обновляем или добавляем пользователей из нового списка
+    console.log('🎯 [MEMBERS MANAGER] updateAllMembers called. Replacing entire members list.');
+    console.log('🎯 [MEMBERS MANAGER] New members list (in order):', members.map(m => `${m.username} (${m.isOnline ? 'ONLINE' : 'OFFLINE'})`));
+    
+    // ✅ 1. Полностью очищаем внутреннюю карту
+    this.members.clear();
+    
+    // ✅ 2. Заполняем карту в ТОЧНОМ порядке, в котором пришли данные от сервера
     members.forEach(member => {
-        if (this.members.has(member.userId)) {
-            // Обновляем существующего пользователя
-            const existingMember = this.members.get(member.userId);
-            this.members.set(member.userId, {
-                ...existingMember,
-                ...member, // Обновляем все поля, которые пришли
-                // 🔴🔴🔴 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Сохраняем isOnline, если он не пришел в новом событии
-                isOnline: member.isOnline !== undefined ? member.isOnline : existingMember.isOnline
-            });
-        } else {
-            // Добавляем нового пользователя
-            this.addMember(member);
-        }
+        this.members.set(member.userId, member);
     });
-    // Обновляем UI
-    UIManager.updateMembersList(Array.from(this.members.values()));
+    
+    // ✅ 3. ГЛАВНОЕ ИЗМЕНЕНИЕ: Передаем в UI исходный массив `members`, а не Array.from(this.members.values())
+    // Это гарантирует, что порядок в UI будет ТОЧНО таким же, как на сервере.
+    UIManager.updateMembersList(members); // <-- Передаем `members`, а не `Array.from(this.members.values())`
+    
+    console.log('✅ [MEMBERS MANAGER] Members list fully replaced and rendered in correct order.');
 }
 
 static setupSocketHandlers(client) {
     if (!client.socket) return;
+
     client.socket.on('room-participants', (participants) => {
         this.updateAllMembers(participants);
     });
 
-    // --- ИЗМЕНЕННЫЙ ОБРАБОТЧИК ---
-    // Было: client.socket.on('user-joined', (user) => { this.addMember(user); });
-    // Стало:
-// modules/MembersManager.js
-// --- ИЗМЕНЕННЫЙ ОБРАБОТЧИК ---
-client.socket.on('user-joined', async (user) => { // <-- Добавили async
-    console.log('User joined (ONLINE):', user);
-    // Проверяем, существует ли пользователь
-    if (this.members.has(user.userId)) {
-        // Если существует, обновляем его данные и статус онлайн
-        this.updateMember(user.userId, { 
-            ...user,
-            isOnline: true 
-        });
-    } else {
-        // Если не существует, добавляем нового пользователя
-        this.addMember({
-            ...user,
-            isOnline: true
-        });
-    }
-    UIManager.addMessage('System', `Пользователь ${user.username} присоединился к комнате`);
-
-    // 🔴🔴🔴 НОВОЕ: Запрашиваем полный список участников с сервера для гарантии синхронизации
-    try {
-        const response = await fetch(`${client.API_SERVER_URL}/api/rooms/${client.currentRoom}/participants`, {
-            headers: {
-                'Authorization': `Bearer ${client.token}`,
-                'Content-Type': 'application/json'
-            }
-        });
-        if (response.ok) {
-            const data = await response.json();
-            if (data.participants && Array.isArray(data.participants)) {
-                this.updateAllMembers(data.participants);
-            }
+    // --- ИЗМЕНЕННЫЙ ОБРАБОТЧИК user-joined ---
+    client.socket.on('user-joined', async (user) => {
+        console.log('User joined (ONLINE):', user);
+        // Проверяем, существует ли пользователь
+        if (this.members.has(user.userId)) {
+            // Если существует, обновляем его данные и статус онлайн
+            this.updateMember(user.userId, { 
+                ...user,
+                isOnline: true 
+            });
+        } else {
+            // Если не существует, добавляем нового пользователя
+            this.addMember({
+                ...user,
+                isOnline: true
+            });
         }
-    } catch (error) {
-        console.error('Failed to sync full participants list after user joined:', error);
-    }
-    // 🔴🔴🔴 КОНЕЦ НОВОГО КОДА
-});
-// --- КОНЕЦ ИЗМЕНЕНИЙ ---
+        UIManager.addMessage('System', `Пользователь ${user.username} присоединился к комнате`);
+        // 🔴🔴🔴 НОВОЕ: Запрашиваем полный список участников с сервера для гарантии синхронизации
+        try {
+            const response = await fetch(`${client.API_SERVER_URL}/api/rooms/${client.currentRoom}/participants`, {
+                headers: {
+                    'Authorization': `Bearer ${client.token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.participants && Array.isArray(data.participants)) {
+                    this.updateAllMembers(data.participants);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to sync full participants list after user joined:', error);
+        }
+    });
 
-
-    // --- КОНЕЦ ИЗМЕНЕНИЙ ---
-
-client.socket.on('user-left', (data) => {
-    console.log('User left (OFFLINE):', data);
-    // Обновляем существующего пользователя, устанавливая isOnline: false
-    this.updateMember(data.userId, { isOnline: false });
-    // Получаем имя пользователя из списка, чтобы отобразить в сообщении
-    const member = this.getMember(data.userId);
-    if (member) {
-        UIManager.addMessage('System', `Пользователь ${member.username} покинул комнату`);
-    } else {
-        UIManager.addMessage('System', `Пользователь покинул комнату`);
-    }
-});
+    // --- ИСПРАВЛЕННЫЙ ОБРАБОТЧИК user-left ---
+    client.socket.on('user-left', async (data) => {
+        console.log('User left:', data);
+        // Получаем имя пользователя из списка, чтобы отобразить в сообщении
+        const member = MembersManager.getMember(data.userId);
+        if (member) {
+            UIManager.addMessage('System', `Пользователь ${member.username} покинул комнату`);
+        } else {
+            UIManager.addMessage('System', `Пользователь покинул комнату`);
+        }
+        // 🔴🔴🔴 ГЛАВНОЕ ИСПРАВЛЕНИЕ: Запрашиваем полный список участников с сервера
+        // Используем `client` вместо `this` для доступа к API_SERVER_URL, currentRoom и token.
+        try {
+            const response = await fetch(`${client.API_SERVER_URL}/api/rooms/${client.currentRoom}/participants`, {
+                headers: {
+                    'Authorization': `Bearer ${client.token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            if (response.ok) {
+                const responseData = await response.json();
+                if (responseData.participants && Array.isArray(responseData.participants)) {
+                    MembersManager.updateAllMembers(responseData.participants);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to sync full participants list after user left:', error);
+        }
+    });
 
     client.socket.on('user-mic-state', (data) => {
         if (data.userId) {
@@ -185,6 +184,8 @@ client.socket.on('user-left', (data) => {
         }
     });
 }
+
+
     static setupSSEHandlers() {
         console.log('SSE handlers for members are setup in TextChatManager');
     }

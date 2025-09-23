@@ -626,13 +626,8 @@ socket.on('current-producers', async (data) => {
 });
 
 socket.on('room-participants', (participants) => {
-    // 🔴🔴🔴 АГРЕССИВНЫЙ ДЕБАГ: Логируем сырые данные от сервера
-    console.group('🔴🔴🔴 [DEBUG] SOCKET EVENT: room-participants');
-    console.log('🎯 [DEBUG] RAW PARTICIPANTS DATA FROM SERVER:', JSON.stringify(participants, null, 2));
-    console.groupEnd();
-    console.log('Room participants received:', participants);
-
-    // 🔴🔴🔴 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ:
+    console.log('🎯 [CLIENT] Received room-participants event. Replacing entire members list.');
+    // 🔴🔴🔴 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Полностью заменяем весь список участников
     // Явно устанавливаем isOnline: true для текущего пользователя, если он есть в списке.
     const processedParticipants = participants.map(p => {
         if (p.userId === this.userId) {
@@ -640,38 +635,65 @@ socket.on('room-participants', (participants) => {
         }
         return p;
     });
-
+    // ✅ ВАЖНО: Вызываем метод, который ЗАМЕНЯЕТ весь список, а не обновляет по одному
     MembersManager.updateAllMembers(processedParticipants);
+    console.log('✅ [CLIENT] Members list fully replaced.');
 });
+
 socket.on('user-joined', (user) => {
     console.log('User joined:', user);
-    // Проверяем, существует ли пользователь
-    if (MembersManager.getMember(user.userId)) {
-        // Если существует, обновляем его данные и статус онлайн
-        MembersManager.updateMember(user.userId, { 
-            ...user,
-            isOnline: true 
-        });
-    } else {
-        // Если не существует, добавляем нового пользователя
-        MembersManager.addMember({
-            ...user,
-            isOnline: true // Явно устанавливаем статус онлайн для нового пользователя
-        });
-    }
+    // ✅ НОВАЯ ЛОГИКА: Не добавляем пользователя вручную.
+    // Сервер СРАЗУ ЖЕ отправит событие 'room-participants' со всеми пользователями, где новый будет на первом месте.
+    // Мы просто показываем уведомление.
     UIManager.addMessage('System', `Пользователь ${user.username} присоединился к комнате`);
+    // 🔥 Опционально: можно добавить небольшую задержку и принудительно запросить обновление списка, если сервер по какой-то причине не отправил room-participants
+    // setTimeout(() => {
+    //     if (this.socket && this.currentRoom) {
+    //         this.socket.emit('get-room-participants', { roomId: this.currentRoom });
+    //     }
+    // }, 100);
 });
 
-socket.on('user-left', (data) => {
+socket.on('user-left', async (data) => {
+    console.group('🔴🔴🔴 [DEBUG] SOCKET EVENT: user-left');
+    console.log('🎯 [DEBUG] EVENT DATA RECEIVED:', JSON.stringify(data, null, 2));
+    console.log('🎯 [DEBUG] CLIENT STATE - currentRoom:', this.currentRoom);
+    console.log('🎯 [DEBUG] CLIENT STATE - token:', this.token ? 'TOKEN_PRESENT' : 'TOKEN_MISSING');
+    console.log('🎯 [DEBUG] CLIENT STATE - API_SERVER_URL:', this.API_SERVER_URL);
+    console.groupEnd();
+
     console.log('User left:', data);
-    // Обновляем существующего пользователя, устанавливая isOnline: false
-    MembersManager.updateMember(data.userId, { isOnline: false });
     // Получаем имя пользователя из списка, чтобы отобразить в сообщении
     const member = MembersManager.getMember(data.userId);
     if (member) {
         UIManager.addMessage('System', `Пользователь ${member.username} покинул комнату`);
     } else {
         UIManager.addMessage('System', `Пользователь покинул комнату`);
+    }
+
+    // 🔴🔴🔴 ГЛАВНОЕ ИСПРАВЛЕНИЕ: Запрашиваем полный список участников с сервера
+    try {
+        console.log('📡 [DEBUG] Attempting to fetch updated participants list...');
+        const response = await fetch(`${this.API_SERVER_URL}/api/rooms/${this.currentRoom}/participants`, {
+            headers: {
+                'Authorization': `Bearer ${this.token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        console.log('📡 [DEBUG] Fetch response status:', response.status);
+        if (response.ok) {
+            const responseData = await response.json();
+            console.log('📡 [DEBUG] Received participants data:', JSON.stringify(responseData, null, 2));
+            if (responseData.participants && Array.isArray(responseData.participants)) {
+                MembersManager.updateAllMembers(responseData.participants);
+            } else {
+                console.error('🔴 [DEBUG] Invalid participants data format received:', responseData);
+            }
+        } else {
+            console.error('🔴 [DEBUG] Failed to fetch participants list. HTTP Status:', response.status);
+        }
+    } catch (error) {
+        console.error('🔴🔴🔴 Failed to sync full participants list after user left:', error);
     }
 });
 
