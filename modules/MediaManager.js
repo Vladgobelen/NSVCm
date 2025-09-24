@@ -215,65 +215,74 @@ static async disableMicrophone(client) {
         });
     }
 
-    static async startMicrophone(client) {
-        console.log('Starting microphone for client:', client.clientID);
-        
-        try {
-            if (!client.sendTransport) {
-                console.error('Send transport is not initialized');
-                throw new Error('Send transport не инициализирован');
-            }
-            
-            client.stream = await navigator.mediaDevices.getUserMedia({ 
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    sampleRate: 48000,
-                    channelCount: 1
-                }
-            });
-            
-            const track = client.stream.getAudioTracks()[0];
-            client.audioProducer = await client.sendTransport.produce({
-                track,
-                encodings: [{ 
-                    maxBitrate: 24000,
-                    dtx: true
-                }],
-                codecOptions: {
-                    opusStereo: false,
-                    opusDtx: true,
-                    opusFec: true
-                },
-                appData: { 
-                    clientID: client.clientID, 
-                    roomId: client.currentRoom 
-                }
-            });
-            
-            client.isMicActive = true;
-            console.log('Microphone started successfully');
-            
-            if (client.socket && client.audioProducer) {
-                client.socket.emit('new-producer-notification', {
-                    roomId: client.currentRoom,
-                    producerId: client.audioProducer.id,
-                    clientID: client.clientID,
-                    kind: 'audio'
-                });
-            }
-            
-        } catch (error) {
-            console.error('Microphone start failed:', error);
-            
-            if (client.stream) {
-                client.stream.getTracks().forEach(track => track.stop());
-                client.stream = null;
-            }
-            
-            throw error;
-        }
+
+static async startMicrophone(client) {
+  console.log('Starting microphone for client:', client.clientID);
+
+  try {
+    if (!client.sendTransport) {
+      console.error('Send transport is not initialized');
+      throw new Error('Send transport не инициализирован');
     }
+
+    // Запрашиваем ТОЛЬКО моно, 48 кГц
+    const constraints = {
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        //sampleRate: 48000,
+        channelCount: 1,      // ← строго моно
+        latency: 0.1,         // низкая задержка
+        sampleSize: 16
+      }
+    };
+
+    client.stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+    const track = client.stream.getAudioTracks()[0];
+
+    client.audioProducer = await client.sendTransport.produce({
+      track,
+      encodings: [
+        {
+          maxBitrate: 24000,  // максимум 24 кбит/с
+          dtx: true           // включить DTX на уровне WebRTC
+        }
+      ],
+      // codecOptions применяются ТОЛЬКО если вы переопределяете кодек
+      // Но лучше не трогать — пусть mediasoup сам выберет из mediaCodecs
+      // codecOptions здесь не нужны, если вы используете единый codec на сервере
+      appData: {
+        clientID: client.clientID,
+        roomId: client.currentRoom
+      }
+    });
+
+    client.isMicActive = true;
+    console.log('Microphone started successfully');
+
+    if (client.socket && client.audioProducer) {
+      client.socket.emit('new-producer-notification', {
+        roomId: client.currentRoom,
+        producerId: client.audioProducer.id,
+        clientID: client.clientID,
+        kind: 'audio'
+      });
+    }
+
+  } catch (error) {
+    console.error('Microphone start failed:', error);
+
+    if (client.stream) {
+      client.stream.getTracks().forEach(track => track.stop());
+      client.stream = null;
+    }
+
+    throw error;
+  }
+}
+
 
 static async stopMicrophone(client, closeTransport = true) {
     console.log('Stopping microphone for client:', client.clientID);

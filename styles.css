@@ -21,13 +21,67 @@ body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     background: var(--bg-primary);
     color: var(--text-normal);
-    height: 100vh;
+    height: 100dvh;
     overflow: hidden;
+}
+
+/* styles.css */
+
+.room-settings-modal .modal-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--bg-tertiary);
+    margin-bottom: 16px;
+}
+
+.room-settings-modal .tab-btn {
+    padding: 10px 16px;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+}
+
+.room-settings-modal .tab-btn.active {
+    color: var(--accent);
+    border-bottom: 2px solid var(--accent);
+}
+
+.room-settings-modal .tab-content {
+    min-height: 200px;
+}
+
+.room-settings-modal .tab-pane {
+    display: none;
+    padding: 16px 0;
+}
+
+.room-settings-modal .tab-pane.active {
+    display: block;
+}
+
+.room-settings-modal .setting-item {
+    margin-bottom: 16px;
+}
+
+.room-settings-modal .setting-item label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+}
+
+.room-settings-modal .setting-item input[type="text"] {
+    width: 100%;
+    padding: 8px;
+    background: var(--bg-modifier);
+    border: 1px solid var(--bg-tertiary);
+    border-radius: 4px;
+    color: var(--text-normal);
 }
 
 .app {
     display: flex;
-    height: 100vh;
+    height: 100dvh;
     position: relative;
 }
 
