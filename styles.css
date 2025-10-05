@@ -24,6 +24,63 @@ body {
     height: 100dvh;
     overflow: hidden;
 }
+/* начало новых элементов для упрвления звуком */
+.global-mute-header {
+    padding: 10px 15px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+}
+
+.global-mute-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.global-mute-label input[type="checkbox"] {
+    margin: 0;
+}
+
+.member-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.member-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.member-volume-slider {
+    width: 80px;
+    height: 4px;
+    background: var(--border-color);
+    border-radius: 2px;
+    outline: none;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+.member-volume-slider:hover {
+    opacity: 1;
+}
+
+.member-volume-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+}
+/* конец новых элементов для управления звуком */
+
 
 /* styles.css */
 

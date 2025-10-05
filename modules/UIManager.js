@@ -233,42 +233,265 @@ class UIManager {
         });
     }
 
-static updateMembersList(members) {
+
+
+static syncVolumeSliders() {
+    console.group('🎚️ UIManager.syncVolumeSliders - START');
     const membersList = document.querySelector('.members-list');
-    if (!membersList) return;
+    if (!membersList) {
+        console.error('❌ Members list not found');
+        console.groupEnd();
+        return;
+    }
+    const memberItems = membersList.querySelectorAll('.member-item');
+    const producerUserMap = window.producerUserMap || new Map();
+    const producerClientMap = window.producerClientMap || new Map();
 
-    // ✅ Полная очистка контейнера — это основа правильного порядка и актуального статуса
+    // Скрываем все слайдеры
+    memberItems.forEach(item => {
+        const slider = item.querySelector('.member-volume-slider');
+        if (slider) {
+            slider.style.display = 'none';
+            slider.dataset.producerId = '';
+        }
+    });
+
+    // 1. Сначала обрабатываем привязку по userId (приоритет)
+    for (const [producerId, userId] of producerUserMap.entries()) {
+        const memberItem = membersList.querySelector(`.member-item[data-user-id="${userId}"]`);
+        if (memberItem) {
+            const slider = memberItem.querySelector('.member-volume-slider');
+            if (slider) {
+                slider.dataset.producerId = producerId;
+                slider.style.display = 'block';
+                console.log('✅ Slider shown by userId:', userId, 'producer:', producerId);
+            }
+        }
+    }
+
+    // 2. Затем — fallback по clientId (для продюсеров без userId, например из /producers)
+    for (const [producerId, clientId] of producerClientMap.entries()) {
+        // Пропускаем, если уже обработан через userId
+        if (producerUserMap.has(producerId)) continue;
+
+        const memberItem = membersList.querySelector(`.member-item[data-client-id="${clientId}"]`);
+        if (memberItem) {
+            const slider = memberItem.querySelector('.member-volume-slider');
+            if (slider) {
+                slider.dataset.producerId = producerId;
+                slider.style.display = 'block';
+                console.log('✅ Slider shown by clientId:', clientId, 'producer:', producerId);
+
+                // 🔥 Дополнительно: если у участника есть userId — сохраняем в producerUserMap
+                const userId = memberItem.dataset.userId;
+                if (userId && !producerUserMap.has(producerId)) {
+                    if (!window.producerUserMap) window.producerUserMap = new Map();
+                    window.producerUserMap.set(producerId, userId);
+                    console.log('🔁 Mapped producer', producerId, 'to userId', userId, 'via clientId', clientId);
+                }
+            }
+        }
+    }
+
+    console.groupEnd();
+}
+
+
+
+
+static updateMembersList(members) {
+    console.group('👥 UIManager.updateMembersList - START');
+    console.log('🔹 Members received:', members.length);
+    console.log('🔹 Members data:', members.map(m => ({ username: m.username, clientId: m.clientId, isOnline: m.isOnline })));
+    const membersList = document.querySelector('.members-list');
+    if (!membersList) {
+        console.error('❌ Members list element not found');
+        console.groupEnd();
+        return;
+    }
+    // Полная очистка контейнера
     membersList.innerHTML = '';
-
-    // ✅ Перебираем массив в ТОЧНОМ порядке, в котором он пришел от сервера
+    // Добавляем чекбокс общего мута
+    const globalMuteHeader = document.createElement('div');
+    globalMuteHeader.className = 'global-mute-header';
+    globalMuteHeader.innerHTML = `
+        <label class="global-mute-label">
+            <input type="checkbox" id="globalMuteCheckbox">
+            <span>Общий мут</span>
+        </label>
+    `;
+    membersList.appendChild(globalMuteHeader);
+    // Обработчик общего мута
+    const globalMuteCheckbox = globalMuteHeader.querySelector('#globalMuteCheckbox');
+    globalMuteCheckbox.addEventListener('change', (e) => {
+        const isMuted = e.target.checked;
+        const sliders = membersList.querySelectorAll('.member-volume-slider');
+        console.log('🔹 Global mute changed:', isMuted);
+        sliders.forEach(slider => {
+            slider.value = isMuted ? 0 : 100;
+            const producerId = slider.dataset.producerId;
+            const audioElement = window.audioElements?.get(producerId);
+            if (audioElement) {
+                audioElement.volume = isMuted ? 0 : slider.value / 100;
+                console.log('🔹 Volume set for producer:', producerId, 'volume:', audioElement.volume);
+            }
+            slider.title = `Громкость: ${slider.value}%`;
+        });
+    });
+    // Создаем элементы участников
     members.forEach(user => {
-        // Проверяем наличие обязательного поля userId.
         if (!user || !user.userId) {
-            console.warn('[UIManager] Пропускаем некорректного участника (отсутствует userId):', user);
+            console.warn('⚠️ Skipping invalid member:', user);
             return;
         }
-
         const memberElement = document.createElement('div');
         memberElement.className = 'member-item';
         memberElement.dataset.userId = user.userId;
-
-        // Определяем CSS-класс для индикатора статуса: 'online' если пользователь онлайн, иначе 'offline'.
+        memberElement.dataset.clientId = user.clientId || '';
         const isOnline = user.isOnline === true;
         const statusClass = isOnline ? 'online' : 'offline';
         const statusTitle = isOnline ? 'Online' : 'Offline';
-
         memberElement.innerHTML = `
             <div class="member-avatar">${user.username.charAt(0).toUpperCase()}</div>
-            <div class="member-name">${user.username}</div>
-            <div class="member-status">
-                <div class="status-indicator ${statusClass}" title="${statusTitle}"></div>
-                <div class="mic-indicator ${isOnline && user.isMicActive ? 'active' : ''}" title="${user.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
+            <div class="member-info">
+                <div class="member-name">${user.username}</div>
+                <div class="member-controls">
+                    <div class="member-status">
+                        <div class="status-indicator ${statusClass}" title="${statusTitle}"></div>
+                        <div class="mic-indicator ${isOnline && user.isMicActive ? 'active' : ''}" 
+                             title="${user.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
+                    </div>
+                    <input type="range" class="member-volume-slider" min="0" max="100" value="100" 
+                           title="Громкость: 100%" data-producer-id="" style="display: none;">
+                </div>
             </div>
         `;
-
         membersList.appendChild(memberElement);
+        // Настраиваем обработчик слайдера (делаем это один раз)
+        const slider = memberElement.querySelector('.member-volume-slider');
+        if (slider && !slider._hasVolumeHandler) {
+            slider.addEventListener('input', (e) => {
+                const value = e.target.value;
+                const producerId = e.target.dataset.producerId;
+                e.target.title = `Громкость: ${value}%`;
+                const audioElement = window.audioElements?.get(producerId);
+                if (audioElement) {
+                    audioElement.volume = value / 100;
+                    console.log('🔊 Volume changed for producer:', producerId, 'volume:', audioElement.volume);
+                }
+            });
+            slider._hasVolumeHandler = true;
+        }
     });
+    console.log('✅ Members list updated. Now syncing sliders...');
+    // 🔥 КЛЮЧЕВОЙ ВЫЗОВ: Синхронизируем слайдеры с актуальной картой
+    this.syncVolumeSliders();
+    console.groupEnd();
 }
+
+
+static showVolumeSlider(producerId, clientId) {
+    console.group('🎚️ UIManager.showVolumeSlider - START');
+    console.log('🔹 producerId:', producerId);
+    console.log('🔹 clientId:', clientId);
+    
+    const membersList = document.querySelector('.members-list');
+    if (!membersList) {
+        console.error('❌ Members list element not found');
+        console.groupEnd();
+        return;
+    }
+
+    // Ищем участника по clientId
+    const memberItems = membersList.querySelectorAll('.member-item');
+    let found = false;
+    
+    for (const memberItem of memberItems) {
+        const memberClientId = memberItem.dataset.clientId;
+        console.log('🔹 Checking member item with clientId:', memberClientId);
+        
+        if (memberClientId === clientId) {
+            const slider = memberItem.querySelector('.member-volume-slider');
+            if (slider) {
+                slider.dataset.producerId = producerId;
+                slider.style.display = 'block';
+                console.log('✅ Volume slider shown for client:', clientId, 'producer:', producerId);
+                found = true;
+                
+                // Добавляем обработчик если его нет
+                if (!slider._hasVolumeHandler) {
+                    slider.addEventListener('input', (e) => {
+                        const value = e.target.value;
+                        const producerId = e.target.dataset.producerId;
+                        e.target.title = `Громкость: ${value}%`;
+                        
+                        const audioElement = window.audioElements?.get(producerId);
+                        if (audioElement) {
+                            audioElement.volume = value / 100;
+                            console.log('🔊 Volume changed:', producerId, 'volume:', audioElement.volume);
+                        }
+                    });
+                    slider._hasVolumeHandler = true;
+                }
+                break;
+            }
+        }
+    }
+    
+    if (!found) {
+        console.warn('❌ Member item not found for clientId:', clientId);
+        console.log('🔹 Available member items:', Array.from(memberItems).map(item => ({
+            clientId: item.dataset.clientId,
+            userId: item.dataset.userId
+        })));
+    }
+    
+    console.groupEnd();
+}
+
+static showVolumeSliderByUserId(producerId, userId) {
+    console.group('🎚️ UIManager.showVolumeSliderByUserId - START');
+    console.log('🔹 producerId:', producerId);
+    console.log('🔹 userId:', userId);
+    const membersList = document.querySelector('.members-list');
+    if (!membersList) {
+        console.error('❌ Members list element not found');
+        console.groupEnd();
+        return;
+    }
+    const memberItem = membersList.querySelector(`.member-item[data-user-id="${userId}"]`);
+    if (memberItem) {
+        const slider = memberItem.querySelector('.member-volume-slider');
+        if (slider) {
+            slider.dataset.producerId = producerId;
+            slider.style.display = 'block';
+            console.log('✅ Volume slider shown for user:', userId, 'producer:', producerId);
+            if (!slider._hasVolumeHandler) {
+                slider.addEventListener('input', (e) => {
+                    const value = e.target.value;
+                    const pid = e.target.dataset.producerId;
+                    e.target.title = `Громкость: ${value}%`;
+                    const audioEl = window.audioElements?.get(pid);
+                    if (audioEl) {
+                        audioEl.volume = value / 100;
+                    }
+                });
+                slider._hasVolumeHandler = true;
+            }
+        } else {
+            console.warn('⚠️ Slider element not found for user:', userId);
+        }
+    } else {
+        console.warn('❌ Member item not found for userId:', userId);
+        const allItems = Array.from(membersList.querySelectorAll('.member-item')).map(el => ({
+            userId: el.dataset.userId,
+            clientId: el.dataset.clientId
+        }));
+        console.log('🔹 Available members:', allItems);
+    }
+    console.groupEnd();
+}
+
 
 static updateMemberMicState(userId, isActive) {
     const memberElement = document.querySelector(`.member-item[data-user-id="${userId}"]`);

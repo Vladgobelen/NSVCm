@@ -122,23 +122,6 @@ static setupSocketHandlers(client) {
             });
         }
         UIManager.addMessage('System', `Пользователь ${user.username} присоединился к комнате`);
-        // 🔴🔴🔴 НОВОЕ: Запрашиваем полный список участников с сервера для гарантии синхронизации
-        try {
-            const response = await fetch(`${client.API_SERVER_URL}/api/rooms/${client.currentRoom}/participants`, {
-                headers: {
-                    'Authorization': `Bearer ${client.token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-            if (response.ok) {
-                const data = await response.json();
-                if (data.participants && Array.isArray(data.participants)) {
-                    this.updateAllMembers(data.participants);
-                }
-            }
-        } catch (error) {
-            console.error('Failed to sync full participants list after user joined:', error);
-        }
     });
 
     // --- ИСПРАВЛЕННЫЙ ОБРАБОТЧИК user-left ---
@@ -150,24 +133,6 @@ static setupSocketHandlers(client) {
             UIManager.addMessage('System', `Пользователь ${member.username} покинул комнату`);
         } else {
             UIManager.addMessage('System', `Пользователь покинул комнату`);
-        }
-        // 🔴🔴🔴 ГЛАВНОЕ ИСПРАВЛЕНИЕ: Запрашиваем полный список участников с сервера
-        // Используем `client` вместо `this` для доступа к API_SERVER_URL, currentRoom и token.
-        try {
-            const response = await fetch(`${client.API_SERVER_URL}/api/rooms/${client.currentRoom}/participants`, {
-                headers: {
-                    'Authorization': `Bearer ${client.token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-            if (response.ok) {
-                const responseData = await response.json();
-                if (responseData.participants && Array.isArray(responseData.participants)) {
-                    MembersManager.updateAllMembers(responseData.participants);
-                }
-            }
-        } catch (error) {
-            console.error('Failed to sync full participants list after user left:', error);
         }
     });
 
