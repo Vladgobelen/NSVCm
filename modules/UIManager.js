@@ -76,45 +76,128 @@ class UIManager {
         }
     }
 
-    static addMessage(user, text, timestamp = null) {
-        const messagesContainer = document.querySelector('.messages-container');
-        if (!messagesContainer) return;
+static addMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = []) {
+    const messagesContainer = document.querySelector('.messages-container');
+    if (!messagesContainer) return;
 
-        const safeUser = user || 'Unknown';
+    const safeUser = user || 'Unknown';
+    const messageElement = document.createElement('div');
+    messageElement.className = 'message';
+
+    // Генерируем уникальный ID, если не передан
+    const msgId = messageId || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    messageElement.dataset.messageId = msgId;
+    messageElement.dataset.readBy = JSON.stringify(readBy || []);
+
+    const time = timestamp
+        ? new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+        : new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+    // Определяем, своё ли сообщение
+    const isOwn = this.client?.userId && user === this.client.username;
+
+    if (type === 'text') {
         const safeText = text || '';
-
-        const messageElement = document.createElement('div');
-        messageElement.className = 'message';
-        
-        const time = timestamp ? 
-            new Date(timestamp).toLocaleTimeString('ru-RU', {
-                hour: '2-digit',
-                minute: '2-digit'
-            }) : 
-            new Date().toLocaleTimeString('ru-RU', {
-                hour: '2-digit',
-                minute: '2-digit'
-            });
-        
-        messageElement.innerHTML = `
-            <div class="message-avatar">${safeUser.charAt(0).toUpperCase()}</div>
-            <div class="message-content">
-                <div class="message-header">
-                    <span class="message-username">${this.escapeHtml(safeUser)}</span>
-                    <span class="message-time">${time}</span>
+        if (isOwn) {
+            messageElement.innerHTML = `
+                <div class="message-content own">
+                    <div class="message-header">
+                        <span class="message-time">${time}</span>
+                        <span class="message-username">${this.escapeHtml(safeUser)}</span>
+                    </div>
+                    <div class="message-text">${this.escapeHtml(safeText)}</div>
                 </div>
-                <div class="message-text">${this.escapeHtml(safeText)}</div>
-            </div>
-        `;
-        
-        messagesContainer.appendChild(messageElement);
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-        
-        setTimeout(() => {
-            messageElement.classList.add('appeared');
-        }, 10);
+            `;
+        } else {
+            messageElement.innerHTML = `
+                <div class="message-avatar">${safeUser.charAt(0).toUpperCase()}</div>
+                <div class="message-content">
+                    <div class="message-header">
+                        <span class="message-username">${this.escapeHtml(safeUser)}</span>
+                        <span class="message-time">${time}</span>
+                    </div>
+                    <div class="message-text">${this.escapeHtml(safeText)}</div>
+                </div>
+            `;
+        }
+    } else if (type === 'image') {
+        const fullImageUrl = imageUrl?.startsWith('http')
+            ? imageUrl
+            : `${window.location.origin}${imageUrl}`;
+        if (isOwn) {
+            messageElement.innerHTML = `
+                <div class="message-content own">
+                    <div class="message-header">
+                        <span class="message-time">${time}</span>
+                        <span class="message-username">${this.escapeHtml(safeUser)}</span>
+                    </div>
+                    <div class="message-image">
+                        <img src="${this.escapeHtml(fullImageUrl)}" alt="Изображение" loading="lazy"
+                             style="max-width: 300px; max-height: 300px; border-radius: 4px;"
+                             onerror="this.parentElement.innerHTML='<em>Изображение недоступно</em>';">
+                    </div>
+                </div>
+            `;
+        } else {
+            messageElement.innerHTML = `
+                <div class="message-avatar">${safeUser.charAt(0).toUpperCase()}</div>
+                <div class="message-content">
+                    <div class="message-header">
+                        <span class="message-username">${this.escapeHtml(safeUser)}</span>
+                        <span class="message-time">${time}</span>
+                    </div>
+                    <div class="message-image">
+                        <img src="${this.escapeHtml(fullImageUrl)}" alt="Изображение" loading="lazy"
+                             style="max-width: 300px; max-height: 300px; border-radius: 4px;"
+                             onerror="this.parentElement.innerHTML='<em>Изображение недоступно</em>';">
+                    </div>
+                </div>
+            `;
+        }
+    } else {
+        return;
     }
 
+    messagesContainer.appendChild(messageElement);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+    // Анимация появления
+    setTimeout(() => {
+        messageElement.classList.add('appeared');
+    }, 10);
+
+    // 🔥 ОБЯЗАТЕЛЬНО: подключаем сообщение к IntersectionObserver
+    if (window.voiceClient?.messageObserver) {
+        window.voiceClient.messageObserver.observe(messageElement);
+    }
+}
+
+static updateMessageReadStatus(messageId, readerId, readerName) {
+  const msgEl = document.querySelector(`.message[data-message-id="${messageId}"]`);
+  if (!msgEl) return;
+
+  const readBy = JSON.parse(msgEl.dataset.readBy || '[]');
+  if (!readBy.includes(readerId)) {
+    readBy.push(readerId);
+    msgEl.dataset.readBy = JSON.stringify(readBy);
+  }
+
+  // Обновить иконку статуса (например, в .message-time)
+  const timeEl = msgEl.querySelector('.message-time');
+  if (timeEl) {
+    const ownMsg = msgEl.querySelector('.message-content.own');
+    if (ownMsg) {
+      const readers = readBy.length;
+      if (readers === 0) {
+        timeEl.textContent = timeEl.textContent.replace(/✓✓?$/, '') + ' ✓'; // delivered
+      } else if (readers === 1) {
+        timeEl.textContent = timeEl.textContent.replace(/✓✓?$/, '') + ' ✓✓'; // read by someone
+      } else {
+        timeEl.textContent = timeEl.textContent.replace(/✓✓?$/, '') + ' ✓✓✓'; // read by all
+      }
+    }
+  }
+}
     static updateMicButton(status) {
         const micButton = document.querySelector('.mic-button');
         const micToggleBtn = document.querySelector('.mic-toggle-btn');
@@ -351,37 +434,62 @@ static updateMembersList(members) {
         const isOnline = user.isOnline === true;
         const statusClass = isOnline ? 'online' : 'offline';
         const statusTitle = isOnline ? 'Online' : 'Offline';
-        memberElement.innerHTML = `
-            <div class="member-avatar">${user.username.charAt(0).toUpperCase()}</div>
-            <div class="member-info">
-                <div class="member-name">${user.username}</div>
-                <div class="member-controls">
-                    <div class="member-status">
-                        <div class="status-indicator ${statusClass}" title="${statusTitle}"></div>
-                        <div class="mic-indicator ${isOnline && user.isMicActive ? 'active' : ''}" 
-                             title="${user.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
-                    </div>
-                    <input type="range" class="member-volume-slider" min="0" max="100" value="100" 
-                           title="Громкость: 100%" data-producer-id="" style="display: none;">
-                </div>
+
+memberElement.innerHTML = `
+    <div class="member-avatar">${user.username.charAt(0).toUpperCase()}</div>
+    <div class="member-info">
+        <div class="member-name">${user.username}</div>
+        <div class="member-controls">
+            <div class="member-status">
+                <div class="status-indicator ${statusClass}" title="${statusTitle}"></div>
+                <div class="mic-indicator ${isOnline && user.isMicActive ? 'active' : ''}" 
+                     title="${user.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
             </div>
-        `;
+            <input type="range" class="member-volume-slider" min="0" max="100" value="100" 
+                   title="Громкость: 100%" data-producer-id="" style="display: none;">
+        </div>
+    </div>
+`;
+
         membersList.appendChild(memberElement);
-        // Настраиваем обработчик слайдера (делаем это один раз)
-        const slider = memberElement.querySelector('.member-volume-slider');
-        if (slider && !slider._hasVolumeHandler) {
-            slider.addEventListener('input', (e) => {
-                const value = e.target.value;
-                const producerId = e.target.dataset.producerId;
-                e.target.title = `Громкость: ${value}%`;
-                const audioElement = window.audioElements?.get(producerId);
-                if (audioElement) {
-                    audioElement.volume = value / 100;
-                    console.log('🔊 Volume changed for producer:', producerId, 'volume:', audioElement.volume);
-                }
-            });
-            slider._hasVolumeHandler = true;
+
+// Настраиваем обработчик слайдера (один раз)
+const slider = memberElement.querySelector('.member-volume-slider');
+if (slider && !slider._hasVolumeHandler) {
+    slider.addEventListener('input', (e) => {
+        const value = e.target.value;
+        const producerId = e.target.dataset.producerId;
+        e.target.title = `Громкость: ${value}%`;
+        const audioElement = window.audioElements?.get(producerId);
+        if (audioElement) {
+            audioElement.volume = value / 100;
+            console.log('🔊 Volume changed:', producerId, 'volume:', audioElement.volume);
         }
+    });
+    slider._hasVolumeHandler = true;
+}
+
+// Добавляем показ/скрытие бегунка при наведении на ник
+memberElement.addEventListener('mouseenter', () => {
+    if (slider.dataset.producerId) {
+        slider.style.display = 'block';
+    }
+});
+
+memberElement.addEventListener('mouseleave', () => {
+    // Задержка, чтобы можно было перейти на сам слайдер
+    setTimeout(() => {
+        if (!slider.matches(':hover')) {
+            slider.style.display = 'none';
+        }
+    }, 100);
+});
+
+// Если мышь уходит со слайдера — тоже скрываем
+slider.addEventListener('mouseleave', () => {
+    slider.style.display = 'none';
+});
+
     });
     console.log('✅ Members list updated. Now syncing sliders...');
     // 🔥 КЛЮЧЕВОЙ ВЫЗОВ: Синхронизируем слайдеры с актуальной картой
@@ -494,27 +602,27 @@ static showVolumeSliderByUserId(producerId, userId) {
 
 
 static updateMemberMicState(userId, isActive) {
-    const memberElement = document.querySelector(`.member-item[data-user-id="${userId}"]`);
-    if (memberElement) {
-        const micIndicator = memberElement.querySelector('.mic-indicator');
-        if (micIndicator) {
-            // Получаем объект пользователя, чтобы проверить, онлайн ли он.
-            const member = MembersManager.getMember(userId);
-            if (member) {
-                // Обновляем индикатор микрофона ТОЛЬКО если пользователь онлайн.
-                if (member.isOnline) {
-                    micIndicator.className = isActive ? 'mic-indicator active' : 'mic-indicator';
-                    micIndicator.title = isActive ? 'Microphone active' : 'Microphone muted';
-                } else {
-                    // 🔴🔴🔴 КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Если пользователь оффлайн, ВСЕГДА сбрасываем индикатор микрофона.
-                    micIndicator.className = 'mic-indicator';
-                    micIndicator.title = 'Microphone muted';
-                }
-            }
-        }
+  const memberElement = document.querySelector(`.member-item[data-user-id="${userId}"]`);
+  if (memberElement) {
+    const micIndicator = memberElement.querySelector('.mic-indicator');
+    const statusIndicator = memberElement.querySelector('.status-indicator');
+    
+    if (micIndicator) {
+      // Проверяем, онлайн ли пользователь (по классу status-indicator)
+      const isOnline = statusIndicator && statusIndicator.classList.contains('online');
+      
+      if (isOnline) {
+        // Только онлайн-пользователи могут иметь активный микрофон
+        micIndicator.className = isActive ? 'mic-indicator active' : 'mic-indicator';
+        micIndicator.title = isActive ? 'Microphone active' : 'Microphone muted';
+      } else {
+        // Оффлайн → микрофон всегда выключен
+        micIndicator.className = 'mic-indicator';
+        micIndicator.title = 'Microphone muted';
+      }
     }
+  }
 }
-
 
     static openModal(title, content, onSubmit) {
         const modalOverlay = document.querySelector('.modal-overlay');

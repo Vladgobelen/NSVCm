@@ -56,10 +56,12 @@ constructor() {
         this.initElements();
         this.initEventListeners();
         
+        UIManager.setClient(this);
         UserPresenceManager.init(this);
         InviteManager.init(this);
         
         await this.initAutoConnect();
+        this.initMessageReadObserver();
     }
 
 initElements() {
@@ -102,6 +104,7 @@ initElements() {
 
 initEventListeners() {
     console.log('Setting up event listeners...');
+
     if (this.elements.micButton) {
         this.elements.micButton.addEventListener('click', () => this.toggleMicrophone());
     }
@@ -123,25 +126,22 @@ initEventListeners() {
         });
     }
 
-if (this.elements.toggleSidebarBtn) {
-    this.elements.toggleSidebarBtn.addEventListener('click', () => {
-        this.elements.sidebar.classList.toggle('open');
-        // Закрываем правую панель при открытии левой
-        if (this.elements.sidebar.classList.contains('open')) {
-            this.elements.membersPanel.classList.remove('open');
-        }
-    });
-}
-
-if (this.elements.toggleMembersBtn) {
-    this.elements.toggleMembersBtn.addEventListener('click', () => {
-        this.elements.membersPanel.classList.toggle('open');
-        // Закрываем левую панель при открытии правой
-        if (this.elements.membersPanel.classList.contains('open')) {
-            this.elements.sidebar.classList.remove('open');
-        }
-    });
-}
+    if (this.elements.toggleSidebarBtn) {
+        this.elements.toggleSidebarBtn.addEventListener('click', () => {
+            this.elements.sidebar.classList.toggle('open');
+            if (this.elements.sidebar.classList.contains('open')) {
+                this.elements.membersPanel.classList.remove('open');
+            }
+        });
+    }
+    if (this.elements.toggleMembersBtn) {
+        this.elements.toggleMembersBtn.addEventListener('click', () => {
+            this.elements.membersPanel.classList.toggle('open');
+            if (this.elements.membersPanel.classList.contains('open')) {
+                this.elements.sidebar.classList.remove('open');
+            }
+        });
+    }
 
     if (this.elements.closePanelBtn) {
         this.elements.closePanelBtn.addEventListener('click', () => {
@@ -153,16 +153,19 @@ if (this.elements.toggleMembersBtn) {
             this.elements.sidebar.classList.remove('open');
         });
     }
+
     if (this.elements.settingsBtn) {
         this.elements.settingsBtn.addEventListener('click', () => {
             UIManager.openSettings(this);
         });
     }
+
     if (this.elements.createServerBtn) {
         this.elements.createServerBtn.addEventListener('click', () => {
             ServerManager.createServer(this);
         });
     }
+
     if (this.elements.createRoomBtn) {
         this.elements.createRoomBtn.addEventListener('click', () => {
             if (!this.currentServerId) {
@@ -174,44 +177,188 @@ if (this.elements.toggleMembersBtn) {
             });
         });
     }
+
     if (this.elements.serversToggleBtn) {
         this.elements.serversToggleBtn.addEventListener('click', () => {
             ServerManager.clearSearchAndShowAllServers(this);
             this.showPanel('servers');
         });
     }
+
     if (this.elements.roomsToggleBtn) {
         this.elements.roomsToggleBtn.addEventListener('click', () => {
             this.showPanel('rooms');
         });
     }
+
     if (this.elements.serverSearchInput) {
         this.elements.serverSearchInput.addEventListener('input', (e) => {
             this.searchServers(e.target.value);
         });
     }
 
-    // ✅ ИСПРАВЛЕННЫЙ обработчик клика на центральный фрейм для закрытия панелей
+    // ✅ Обработчик клика по центральному фрейму для закрытия панелей
     const mainContent = document.querySelector('.main-content');
     if (mainContent) {
         mainContent.addEventListener('click', (e) => {
-            // Проверяем, что клик был не по интерактивному элементу внутри фрейма
-            if (!e.target.closest('.message') && 
-                !e.target.closest('.message-input') && 
-                !e.target.closest('.send-btn') && 
-                !e.target.closest('.mic-toggle-btn') && 
-                !e.target.closest('.settings-btn') && 
+            if (!e.target.closest('.message') &&
+                !e.target.closest('.message-input') &&
+                !e.target.closest('.send-btn') &&
+                !e.target.closest('.mic-toggle-btn') &&
+                !e.target.closest('.settings-btn') &&
                 !e.target.closest('.toggle-members-btn') &&
                 !e.target.closest('.current-room-title') &&
-                !e.target.closest('.toggle-sidebar-btn')) { // <-- ДОБАВЛЕНО: исключаем клик по кнопке открытия панели
-                
+                !e.target.closest('.toggle-sidebar-btn')) {
                 this.elements.sidebar.classList.remove('open');
                 this.elements.membersPanel.classList.remove('open');
             }
         });
     }
+
+    // 🔒 Явная разблокировка аудио для iOS
+    const unlockBtn = document.getElementById('audio-unlock-btn');
+    if (unlockBtn) {
+        unlockBtn.addEventListener('click', () => {
+            const audio = new Audio();
+            audio.muted = true;
+            audio.playsInline = true;
+            audio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAA=';
+            audio.play()
+                .then(() => {
+                    console.log('✅ Аудио разблокировано!');
+                    unlockBtn.style.display = 'none';
+                })
+                .catch(err => {
+                    console.warn('Не удалось разблокировать аудио:', err);
+                });
+        });
+    }
+
+    // 🖼️ Поддержка drag-and-drop изображений в чат
+    if (mainContent) {
+        mainContent.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            mainContent.classList.add('drag-over');
+        });
+
+        mainContent.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            mainContent.classList.remove('drag-over');
+        });
+
+        mainContent.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            mainContent.classList.remove('drag-over');
+
+            if (!this.currentRoom) {
+                this.showError('Сначала войдите в комнату');
+                return;
+            }
+
+            const files = e.dataTransfer.files;
+            if (files.length === 0) return;
+
+            const file = files[0];
+            if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+                this.showError('Поддерживаются только изображения: JPEG, PNG, WebP');
+                return;
+            }
+
+            if (file.size > 5 * 1024 * 1024) {
+                this.showError('Файл слишком большой (макс. 5 МБ)');
+                return;
+            }
+
+            try {
+const imageUrl = await TextChatManager.uploadImage(this, this.currentRoom, file);
+await TextChatManager.sendMessage(this, imageUrl, 'image');
+            } catch (error) {
+                console.error('Ошибка отправки изображения:', error);
+                this.showError('Не удалось отправить изображение: ' + error.message);
+            }
+        });
+    }
+
+    // 📎 Файл-инпут для отправки изображений (для мобильных и кнопки "прикрепить")
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'image/jpeg,image/png,image/webp';
+    fileInput.style.display = 'none';
+    fileInput.id = 'image-upload-input';
+    document.body.appendChild(fileInput);
+
+    fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (!this.currentRoom) {
+            this.showError('Сначала войдите в комнату');
+            return;
+        }
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+            this.showError('Поддерживаются только изображения: JPEG, PNG, WebP');
+            return;
+        }
+        if (file.size > 5 * 1024 * 1024) {
+            this.showError('Файл слишком большой (макс. 5 МБ)');
+            return;
+        }
+        try {
+            const imageUrl = await TextChatManager.uploadImage(this, this.currentRoom, file);
+            await TextChatManager.sendImageMessage(this, imageUrl);
+        } catch (error) {
+            console.error('Ошибка отправки изображения:', error);
+            this.showError('Не удалось отправить изображение: ' + error.message);
+        }
+        fileInput.value = '';
+    });
+
+    // 📎 Кнопка прикрепления (если есть в UI)
+    const attachBtn = document.querySelector('.attach-btn');
+    if (attachBtn) {
+        attachBtn.addEventListener('click', () => {
+            fileInput.click();
+        });
+    }
 }
 
+initMessageReadObserver() {
+    this.unreadMessageIds = new Set();
+
+    this.messageObserver = new IntersectionObserver((entries) => {
+        const toMark = [];
+        entries.forEach(entry => {
+            const msgId = entry.target.dataset.messageId;
+            if (!msgId) return;
+
+            const readBy = JSON.parse(entry.target.dataset.readBy || '[]');
+            const isOwn = entry.target.querySelector('.message-content.own');
+
+            // Отслеживаем ТОЛЬКО чужие сообщения
+            if (isOwn) return;
+
+            if (entry.isIntersecting && !readBy.includes(this.userId)) {
+                toMark.push(msgId);
+                this.unreadMessageIds.delete(msgId);
+            } else if (!entry.isIntersecting) {
+                this.unreadMessageIds.add(msgId);
+            }
+        });
+
+        if (toMark.length > 0) {
+            TextChatManager.markMessagesAsRead(this, toMark);
+        }
+    }, { threshold: 0.5 });
+
+    // Сохраняем в глобальную область для UIManager
+    window.voiceClient = this;
+}
+
+async sendImageMessage(imageUrl) {
+    await TextChatManager.sendImageMessage(this, imageUrl);
+}
 
     showPanel(panelName) {
         console.log('Showing panel:', panelName);
@@ -256,6 +403,7 @@ if (this.elements.toggleMembersBtn) {
         
         console.log('URL params processed - server:', this.currentServerId, 'room:', this.currentRoom, 'invite:', this.inviteServerId);
     }
+
 
 // В VoiceChatClient.js - исправленный метод ensureConsumer
 async ensureConsumer(producerId, producerData = {}) {
@@ -475,6 +623,7 @@ if (this.pendingInviteCode) {
     }
 
 
+
 async joinRoom(roomId) {
     console.log('Joining room:', roomId);
     // Проверка: если это та же комната и сокет активен, просто обновляем потребителей
@@ -535,7 +684,14 @@ async joinRoom(roomId) {
         await TextChatManager.loadMessages(this, roomId);
 
         UIManager.addMessage('System', `✅ Вы присоединились к комнате`);
-        return true;
+        
+// Показываем кнопку разблокировки на iOS
+if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+    const btn = document.getElementById('ios-audio-unlock');
+    if (btn) btn.style.display = 'block';
+}
+
+return true;
     } catch (e) {
         console.error('Error joining room:', e);
         UIManager.updateStatus('Ошибка: ' + e.message, 'disconnected');
@@ -670,24 +826,48 @@ socket.on('user-joined', (user) => {
 });
 
 socket.on('user-left', async (data) => {
-    console.group('🔴🔴🔴 [DEBUG] SOCKET EVENT: user-left');
-    console.log('🎯 [DEBUG] EVENT DATA RECEIVED:', JSON.stringify(data, null, 2));
-    console.log('🎯 [DEBUG] CLIENT STATE - currentRoom:', this.currentRoom);
-    console.log('🎯 [DEBUG] CLIENT STATE - token:', this.token ? 'TOKEN_PRESENT' : 'TOKEN_MISSING');
-    console.log('🎯 [DEBUG] CLIENT STATE - API_SERVER_URL:', this.API_SERVER_URL);
-    console.groupEnd();
+  console.group('🔴🔴🔴 [DEBUG] SOCKET EVENT: user-left');
+  console.log('🎯 [DEBUG] EVENT DATA RECEIVED:', JSON.stringify(data, null, 2));
+  console.groupEnd();
 
-    console.log('User left:', data);
-    // Получаем имя пользователя из списка, чтобы отобразить в сообщении
-    const member = MembersManager.getMember(data.userId);
-    if (member) {
-        UIManager.addMessage('System', `Пользователь ${member.username} покинул комнату`);
-    } else {
-        UIManager.addMessage('System', `Пользователь покинул комнату`);
+  console.log('User left:', data.userId);
+
+  // 🔑 Получаем участника
+  const member = MembersManager.getMember(data.userId);
+
+  // 🔴 Находим элемент участника в DOM
+  const memberElement = document.querySelector(`.member-item[data-user-id="${data.userId}"]`);
+  if (memberElement) {
+    // 🎯 Скрываем бегунок громкости
+    const slider = memberElement.querySelector('.member-volume-slider');
+    if (slider) {
+      slider.style.display = 'none';
+      slider.dataset.producerId = ''; // очищаем привязку
+      console.log('🔇 Volume slider hidden for user:', data.userId);
     }
 
-});
+    // 🟡 Обновляем статус-индикаторы
+    const statusIndicator = memberElement.querySelector('.status-indicator');
+    if (statusIndicator) {
+      statusIndicator.className = 'status-indicator offline';
+      statusIndicator.title = 'Offline';
+    }
 
+    const micIndicator = memberElement.querySelector('.mic-indicator');
+    if (micIndicator) {
+      micIndicator.className = 'mic-indicator';
+      micIndicator.title = 'Microphone muted';
+    }
+  }
+
+  // 🔵 Обновляем состояние участника
+  if (member) {
+    member.isOnline = false;
+    UIManager.addMessage('System', `Пользователь ${member.username} покинул комнату`);
+  } else {
+    UIManager.addMessage('System', `Пользователь покинул комнату`);
+  }
+});
             socket.on('user-mic-state', (data) => {
                 console.log('User mic state changed:', data);
                 if (data.userId) {
@@ -701,12 +881,18 @@ socket.on('user-left', async (data) => {
                 }
             });
 
-            socket.on('new-message', (message) => {
-                console.log('New message received:', message);
-                if (message.roomId === this.currentRoom) {
-                    UIManager.addMessage(message.username, message.text, message.timestamp);
-                }
-            });
+socket.on('new-message', (message) => {
+    console.log('New message received:', message);
+    if (message.roomId === this.currentRoom) {
+        UIManager.addMessage(
+            message.username,
+            message.text,
+            message.timestamp,
+            message.type || 'text',
+            message.imageUrl
+        );
+    }
+});
 
             socket.on('message-history', (data) => {
                 console.log('Message history received:', data);
@@ -767,6 +953,7 @@ socket.on('user-left', async (data) => {
         UIManager.updateMicButton(status);
     }
 
+
 async toggleMicrophone() {
     console.log('Toggling microphone, current state:', this.isMicActive);
     
@@ -777,13 +964,14 @@ async toggleMicrophone() {
         }
         
         if (this.isMicActive) {
-            // Пытаемся отключить микрофон через отключение трека
+            // Отключаем микрофон
             const disabled = await MediaManager.disableMicrophone(this);
-            
             if (!disabled) {
-                // Если не удалось отключить трек, полностью останавливаем микрофон
-                await MediaManager.stopMicrophone(this, false); // false = не закрывать transport
+                await MediaManager.stopMicrophone(this, false);
             }
+            
+            // Обновляем свой индикатор СРАЗУ
+            UIManager.updateMemberMicState(this.userId, false);
             
             if (this.socket) {
                 this.socket.emit('mic-state-change', {
@@ -795,17 +983,18 @@ async toggleMicrophone() {
             }
         } else {
             try {
-                // Пытаемся включить микрофон через включение трека
+                // Включаем микрофон
                 const enabled = await MediaManager.enableMicrophone(this);
-                
                 if (!enabled) {
-                    // Если не удалось включить трек, запускаем микрофон полностью
                     if (!this.sendTransport && this.mediaData) {
                         await MediaManager.connect(this, this.currentRoom, this.mediaData);
                     }
                     await MediaManager.startMicrophone(this);
                 }
-                
+
+                // Обновляем свой индикатор СРАЗУ
+                UIManager.updateMemberMicState(this.userId, true);
+
                 if (this.socket) {
                     this.socket.emit('mic-state-change', {
                         roomId: this.currentRoom,
@@ -813,18 +1002,16 @@ async toggleMicrophone() {
                         clientID: this.clientID,
                         userId: this.userId
                     });
-                    
 
-if (this.audioProducer) {
-    this.socket.emit('new-producer-notification', {
-        roomId: this.currentRoom,
-        producerId: this.audioProducer.id,
-        clientID: this.clientID,
-        userId: this.userId,   // ← ДОБАВЛЕНО
-        kind: 'audio'
-    });
-}
-
+                    if (this.audioProducer) {
+                        this.socket.emit('new-producer-notification', {
+                            roomId: this.currentRoom,
+                            producerId: this.audioProducer.id,
+                            clientID: this.clientID,
+                            userId: this.userId,
+                            kind: 'audio'
+                        });
+                    }
                 }
             } catch (error) {
                 if (error.message.includes('permission') || error.message.includes('разрешение')) {
@@ -841,6 +1028,7 @@ if (this.audioProducer) {
         this.updateMicButtonState();
     }
 }
+
     sendMessage(text) {
         console.log('Sending message:', text);
         
@@ -994,42 +1182,49 @@ async startConsuming() {
         }
     }
 
-    async leaveRoom() {
-        console.log('Leaving room:', this.currentRoom);
-        
-        if (!this.currentRoom) return;
-        
-        try {
-            if (this.socket) {
-                this.socket.emit('leave-room', { roomId: this.currentRoom });
-            }
-            
-            if (this.isConnected) {
-                MediaManager.disconnect(this);
-            }
-            
-            await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.currentRoom}/leave`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this.token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-            
-            MembersManager.clearMembers();
-            
-            this.currentRoom = null;
-            this.roomType = null;
-            
-            UIManager.updateRoomUI(this);
-            UIManager.addMessage('System', `✅ Вы покинули комнату`);
-            return true;
-        } catch (error) {
-            console.error('Error leaving room:', error);
-            UIManager.showError('Ошибка при покидании комната: ' + error.message);
-            return false;
+async leaveRoom() {
+    console.log('Leaving room:', this.currentRoom);
+
+    if (!this.currentRoom) return;
+
+    try {
+        if (this.socket) {
+            this.socket.emit('leave-room', { roomId: this.currentRoom });
         }
+
+        if (this.isConnected) {
+            MediaManager.disconnect(this);
+        }
+
+        await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.currentRoom}/leave`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${this.token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        // 🔴 НОВОЕ: Скрываем ВСЕ бегунки громкости и очищаем их привязки
+        document.querySelectorAll('.member-volume-slider').forEach(slider => {
+            slider.style.display = 'none';
+            slider.dataset.producerId = '';
+            console.log('🔇 Volume slider cleared on room leave:', slider);
+        });
+
+        MembersManager.clearMembers();
+
+        this.currentRoom = null;
+        this.roomType = null;
+
+        UIManager.updateRoomUI(this);
+        UIManager.addMessage('System', `✅ Вы покинули комнату`);
+        return true;
+    } catch (error) {
+        console.error('Error leaving room:', error);
+        UIManager.showError('Ошибка при покидании комнаты: ' + error.message);
+        return false;
     }
+}
 
     autoConnect() {
         console.log('Showing auto-connect UI');
