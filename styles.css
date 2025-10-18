@@ -26,24 +26,62 @@ body {
     overflow: hidden;
 }
 
+.image-placeholder {
+    display: inline-block;
+    padding: 8px 12px;
+    background: #f0f0f0;
+    border-radius: 6px;
+    color: #555;
+    font-size: 0.9em;
+    cursor: pointer;
+    user-select: none;
+    border: 1px solid #ddd;
+}
+.image-placeholder:hover {
+    background: #e8e8e8;
+}
+
+
 .drag-over {
     background-color: rgba(0, 0, 0, 0.05);
     outline: 2px dashed #627dea;
 }
 
 /* === ЧАТ === */
-.message-image img {
+img.message-image {
     display: block;
     margin-top: 4px;
-    max-width: 300px;
+    max-width: 100%;
     max-height: 300px;
     border-radius: 4px;
+    object-fit: cover;
 }
 
 .messages-container {
     flex: 1;
     overflow-y: auto;
     padding: 16px;
+}
+
+/* Кнопка прикрепления изображения */
+.attach-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 18px;
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+.attach-btn:hover {
+    background: var(--bg-modifier);
+    color: var(--text-normal);
 }
 
 .message {
@@ -72,14 +110,30 @@ body {
     flex-shrink: 0;
 }
 
+/* Общий стиль для всех сообщений */
 .message-content {
-    flex: 1;
+    /* Убираем flex: 1 — это главное */
+    /* flex: 1; ← УДАЛИТЬ ЭТУ СТРОКУ */
+
     display: flex;
     flex-direction: column;
     background: var(--bg-tertiary);
     padding: 8px 12px;
     border-radius: 12px;
-    max-width: calc(100% - 52px);
+    max-width: calc(100% - 52px); /* ограничение по ширине, можно оставить */
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+/* Свои сообщения - правый край */
+.message-content.own {
+    background: var(--bg-secondary);
+    margin-left: auto;
+    margin-right: 0;
+}
+
+.message:has(.message-avatar) {
+    justify-content: flex-start;
 }
 
 .message-header {
@@ -101,18 +155,48 @@ body {
 }
 
 .message-text {
-    line-height: 1.4;
-    word-break: break-word;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
-/* === СОБСТВЕННЫЕ СООБЩЕНИЯ (СПРАВА) === */
-.message-content.own {
-    background: var(--bg-secondary); /* чуть светлее чужих */
+.back-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 18px;
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.back-btn:hover {
+    background: var(--bg-modifier);
     color: var(--text-normal);
-    margin-left: auto;
-    align-items: flex-end;
-    max-width: calc(100% - 52px);
-    border-radius: 12px;
+}
+
+.ptt-setup-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 18px;
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.ptt-setup-btn:hover {
+    background: var(--bg-modifier);
+    color: var(--text-normal);
+}
+.ptt-setup-btn.active {
+    color: var(--success);
+    background: rgba(59, 165, 93, 0.2);
 }
 
 .message-content.own .message-header {
@@ -993,4 +1077,9 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
+}
+
+/* Сообщения без аватарки (свои) выравниваем по правому краю */
+.message:not(:has(.message-avatar)) {
+    justify-content: flex-end;
 }

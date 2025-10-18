@@ -1,4 +1,5 @@
 // MediaManager.js
+import VolumeBoostManager from './VolumeBoostManager.js';
 import UIManager from './UIManager.js';
 import MembersManager from './MembersManager.js';
 
@@ -417,6 +418,20 @@ class MediaManager {
                 const stream = new MediaStream([consumer.track.clone()]);
                 audioElement.srcObject = stream;
 
+//тут усиление
+
+// 🔴 МИНИМАЛЬНОЕ ДОБАВЛЕНИЕ ДЛЯ ТЕСТА:
+if (producerData.userId) {
+    if (VolumeBoostManager.isChromeOrEdge()) {
+        console.log('🎵 Chrome/Edge detected, using cautious VolumeBoost attachment');
+        setTimeout(async () => {
+            await VolumeBoostManager.attachToAudioElement(audioElement, producerData.userId, 1.0);
+        }, 500);
+    } else {
+        await VolumeBoostManager.attachToAudioElement(audioElement, producerData.userId, 1.0);
+    }
+}
+
 // 🔹 Сохраняем маппинги для последующей синхронизации в syncVolumeSliders
 if (producerData.userId) {
     if (!window.producerUserMap) window.producerUserMap = new Map();
@@ -494,15 +509,26 @@ if (producerData.userId) {
         });
         client.consumers.clear();
         if (window.audioElements) {
-            window.audioElements.forEach(audio => {
-                try {
-                    audio.pause();
-                    audio.srcObject = null;
-                    audio.remove();
-                } catch (error) {
-                    console.warn('Error cleaning up audio element:', error);
-                }
-            });
+
+window.audioElements.forEach(audio => {
+    try {
+        audio.pause();
+        audio.srcObject = null;
+        audio.remove();
+        
+        // 🔴 МИНИМАЛЬНОЕ ДОБАВЛЕНИЕ ДЛЯ ТЕСТА:
+        const producerId = audio.id.replace('audio-', '');
+        const userId = window.producerUserMap?.get(producerId);
+        if (userId) {
+            VolumeBoostManager.detach(userId);
+        }
+    } catch (error) {
+        console.warn('Error cleaning up audio element:', error);
+    }
+});
+
+
+
             window.audioElements.clear();
         }
         client.device = null;

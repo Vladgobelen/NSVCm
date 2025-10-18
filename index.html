@@ -15,7 +15,6 @@
                 <button id="serversToggle" class="panel-toggle-btn active">Серверы</button>
                 <button id="roomsToggle" class="panel-toggle-btn">Комнаты</button>
             </div>
-            
             <div class="panel-content active" id="servers-panel">
                 <div class="panel-header">
                     <h3>Серверы</h3>
@@ -27,7 +26,6 @@
                 </div>
                 <div class="servers-list"></div>
             </div>
-            
             <div class="panel-content" id="rooms-panel">
                 <div class="panel-header">
                     <h3>Комнаты</h3>
@@ -36,14 +34,8 @@
                 <div class="rooms-list"></div>
             </div>
         </div>
-        
-
         <div class="main-content">
             <!-- 🔑 Кнопка разблокировки аудио для iOS -->
-            <button id="audio-unlock-btn" style="display:none; margin:20px auto; padding:12px 20px; font-size:16px; background:#4a90e2; color:white; border:none; border-radius:8px; cursor:pointer; max-width:300px;">
-                Именем Стива Джобса, разрешаю проигрывать звук
-            </button>
-
             <div class="chat-header">
                 <button class="toggle-sidebar-btn">☰</button>
                 <div class="current-room-title">Выберите комнату</div>
@@ -53,27 +45,25 @@
                     <button class="toggle-members-btn">👥</button>
                 </div>
             </div>
-            
             <div class="chat-area">
                 <div class="messages-container"></div>
                 <div class="input-area">
+                    <button class="attach-btn">📎</button>
                     <input type="text" class="message-input" placeholder="Введите сообщение...">
                     <button class="send-btn">Отправить</button>
                 </div>
             </div>
         </div>
-
-        
         <div class="members-panel">
             <div class="panel-header">
-                <h3>Щебетало-11</h3>
+                <h3>Щебетало-12</h3>
             </div>
             <div class="members-list"></div>
         </div>
-        
         <button class="mic-button connected">🎤</button>
     </div>
     <script src="logger.js"></script>
+    <script src="patch_browser_compat.js"></script>
     <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -115,33 +115,80 @@ class TextChatManager {
         }
     }
 
-    static async uploadImage(client, roomId, file) {
-        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-            throw new Error('Поддерживаются только JPEG, PNG и WebP');
-        }
-        if (file.size > 5 * 1024 * 1024) {
-            throw new Error('Файл слишком большой (макс. 5 МБ)');
-        }
+static async uploadImage(client, roomId, file) {
+    console.group('📤 [DEBUG] TextChatManager.uploadImage START');
+    console.log('🎯 Room ID:', roomId);
+    console.log('🎯 File object:', file);
+    console.log('🎯 File name:', file.name);
+    console.log('🎯 File type:', file.type);
+    console.log('🎯 File size:', file.size, 'bytes');
+    console.log('🎯 Client token (first 10 chars):', client.token?.substring(0, 10) + '...');
 
-        const formData = new FormData();
-        formData.append('image', file);
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+        const error = new Error('Поддерживаются только JPEG, PNG и WebP');
+        console.error('❌ MIME type not supported:', file.type);
+        console.groupEnd();
+        throw error;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+        const error = new Error('Файл слишком большой (макс. 5 МБ)');
+        console.error('❌ File too large');
+        console.groupEnd();
+        throw error;
+    }
 
-        const response = await fetch(`${client.API_SERVER_URL}/api/messages/upload-image/${roomId}`, {
+    const formData = new FormData();
+    formData.append('image', file);
+
+    // 🔍 Проверим, что файл действительно в FormData
+    for (let [key, value] of formData.entries()) {
+        console.log('📦 FormData entry:', key, '=>', value);
+    }
+
+    const url = `${client.API_SERVER_URL}/api/messages/upload-image/${roomId}`;
+    console.log('📡 Fetch URL:', url);
+
+    try {
+        const response = await fetch(url, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${client.token}`
+                // ⚠️ НЕ указываем Content-Type — браузер сам поставит boundary
             },
             body: formData
         });
 
+        console.log('📨 Response status:', response.status);
+        console.log('📨 Response headers:', Object.fromEntries(response.headers.entries()));
+
         if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error || 'Ошибка загрузки изображения');
+            let errorData;
+            try {
+                errorData = await response.json();
+                console.log('💥 Server error response body:', errorData);
+            } catch (e) {
+                console.warn('⚠️ Could not parse error response as JSON');
+                const text = await response.text();
+                console.log('💥 Raw error response body:', text);
+                errorData = { error: 'Неизвестная ошибка сервера' };
+            }
+            const error = new Error(errorData.error || 'Ошибка загрузки изображения');
+            console.error('❌ Upload failed:', error.message);
+            console.groupEnd();
+            throw error;
         }
 
         const result = await response.json();
+        console.log('✅ Upload success. Response:', result);
+        console.groupEnd();
         return result.imageUrl;
+
+    } catch (fetchError) {
+        console.error('🔥 Fetch threw an exception:', fetchError);
+        console.groupEnd();
+        throw fetchError;
     }
+}
 
     static async markMessagesAsRead(client, messageIds) {
         if (!client.currentRoom || !Array.isArray(messageIds) || messageIds.length === 0) return;

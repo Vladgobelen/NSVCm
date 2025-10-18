@@ -1,4 +1,6 @@
+// modules/UIManager.js
 import MembersManager from './MembersManager.js';
+import VolumeBoostManager from './VolumeBoostManager.js';
 
 class UIManager {
     static client = null;
@@ -10,7 +12,6 @@ class UIManager {
     static updateStatus(text, status) {
         const statusText = document.querySelector('.status-text');
         const statusIndicator = document.querySelector('.status-indicator');
-        
         if (statusText) {
             statusText.textContent = text;
         }
@@ -40,17 +41,14 @@ class UIManager {
                 </div>
             </div>
         `;
-        
         document.body.appendChild(modalOverlay);
 
         const handleConfirm = () => {
             const name = document.getElementById('roomNameInput').value.trim();
-            
             if (name.length < 3) {
                 alert('Название комнаты должно быть не менее 3 символов');
                 return;
             }
-            
             modalOverlay.remove();
             onSubmit(name);
         };
@@ -61,14 +59,13 @@ class UIManager {
 
         modalOverlay.querySelector('#confirmCreateRoom').addEventListener('click', handleConfirm);
         modalOverlay.querySelector('#cancelCreateRoom').addEventListener('click', handleCancel);
-        
         modalOverlay.addEventListener('click', (e) => {
             if (e.target === modalOverlay) {
                 handleCancel();
             }
         });
     }
-    
+
     static updateRoomTitle(title) {
         const titleElement = document.querySelector('.current-room-title');
         if (titleElement) {
@@ -76,132 +73,142 @@ class UIManager {
         }
     }
 
-static addMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = []) {
-    const messagesContainer = document.querySelector('.messages-container');
-    if (!messagesContainer) return;
+    // 🔥 НОВЫЙ МЕТОД: безопасное форматирование с поддержкой \n и \\n
+    static escapeHtmlAndFormat(text) {
+        if (!text) return '';
 
-    const safeUser = user || 'Unknown';
-    const messageElement = document.createElement('div');
-    messageElement.className = 'message';
+        // 1. Заменяем \\n → \n (чтобы \n, введённый как текст, работал как перенос)
+        let processed = text.replace(/\\n/g, '\n');
 
-    // Генерируем уникальный ID, если не передан
-    const msgId = messageId || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
-    messageElement.dataset.messageId = msgId;
-    messageElement.dataset.readBy = JSON.stringify(readBy || []);
+        // 2. Ручное экранирование HTML
+        processed = processed
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '<')
+            .replace(/>/g, '>')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
 
-    const time = timestamp
-        ? new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-        : new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+        // 3. Цвет: {#RRGGBB}текст{}
+        processed = processed.replace(/\{#([0-9A-Fa-f]{6})\}([^{}]*)\{\}/g, (match, color, content) => {
+            if (!/^#[0-9A-Fa-f]{6}$/.test('#' + color)) return match;
+            return `<span style="color:#${color}">${content}</span>`;
+        });
 
-    // Определяем, своё ли сообщение
-    const isOwn = this.client?.userId && user === this.client.username;
+        // 4. Жирный: **текст** → <b>текст</b>
+        processed = processed.replace(/\*\*([^*]+?)\*\*/g, '<b>$1</b>');
 
-    if (type === 'text') {
+        // 5. Подчёркнутый: __текст__ → <u>текст</u>
+        processed = processed.replace(/__([^_]+?)__/g, '<u>$1</u>');
+
+        // 6. Зачёркнутый: ~~текст~~ → <s>текст</s>
+        processed = processed.replace(/~~([^~]+?)~~/g, '<s>$1</s>');
+
+        // 7. Курсив: *текст* → <i>текст</i>
+        processed = processed.replace(/\*([^*]+?)\*/g, '<i>$1</i>');
+
+        // 8. Переносы строк → <br>
+        processed = processed.replace(/\n/g, '<br>');
+
+        return processed;
+    }
+
+    // 🔥 СТАРЫЙ escapeHtml — ОСТАВЛЕН ДЛЯ USERNAME И URL
+    static escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    static addMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = [], userId = null) {
+        const messagesContainer = document.querySelector('.messages-container');
+        if (!messagesContainer) return;
+        const safeUser = user || 'Unknown';
         const safeText = text || '';
-        if (isOwn) {
-            messageElement.innerHTML = `
-                <div class="message-content own">
-                    <div class="message-header">
-                        <span class="message-time">${time}</span>
-                        <span class="message-username">${this.escapeHtml(safeUser)}</span>
-                    </div>
-                    <div class="message-text">${this.escapeHtml(safeText)}</div>
-                </div>
-            `;
-        } else {
-            messageElement.innerHTML = `
-                <div class="message-avatar">${safeUser.charAt(0).toUpperCase()}</div>
-                <div class="message-content">
-                    <div class="message-header">
-                        <span class="message-username">${this.escapeHtml(safeUser)}</span>
-                        <span class="message-time">${time}</span>
-                    </div>
-                    <div class="message-text">${this.escapeHtml(safeText)}</div>
-                </div>
-            `;
+        const client = this.client || window.voiceClient;
+        const isOwn = client && client.username && safeUser === client.username;
+
+        const messageElement = document.createElement('div');
+        messageElement.className = 'message';
+        if (messageId) messageElement.dataset.messageId = messageId;
+        if (readBy?.length) messageElement.dataset.readBy = JSON.stringify(readBy);
+
+        const time = timestamp
+            ? new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+            : new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+        let finalImageUrl = imageUrl;
+        if (type === 'image' && imageUrl?.startsWith('/')) {
+            if (client?.API_SERVER_URL) {
+                finalImageUrl = client.API_SERVER_URL + imageUrl;
+            }
         }
-    } else if (type === 'image') {
-        const fullImageUrl = imageUrl?.startsWith('http')
-            ? imageUrl
-            : `${window.location.origin}${imageUrl}`;
-        if (isOwn) {
+
+        const avatarHtml = isOwn ? '' : `<div class="message-avatar">${safeUser.charAt(0).toUpperCase()}</div>`;
+
+        if (type === 'image') {
             messageElement.innerHTML = `
-                <div class="message-content own">
+                ${avatarHtml}
+                <div class="message-content${isOwn ? ' own' : ''}">
                     <div class="message-header">
-                        <span class="message-time">${time}</span>
                         <span class="message-username">${this.escapeHtml(safeUser)}</span>
+                        <span class="message-time">${time}</span>
                     </div>
-                    <div class="message-image">
-                        <img src="${this.escapeHtml(fullImageUrl)}" alt="Изображение" loading="lazy"
-                             style="max-width: 300px; max-height: 300px; border-radius: 4px;"
-                             onerror="this.parentElement.innerHTML='<em>Изображение недоступно</em>';">
+                    <div class="message-text">
+                        <div class="image-placeholder" data-src="${this.escapeHtml(finalImageUrl)}">
+                            📷 Изображение
+                        </div>
                     </div>
                 </div>
             `;
         } else {
+            // 🔥 ИСПОЛЬЗУЕМ ФОРМАТИРОВАННЫЙ ТЕКСТ
+            const formattedText = this.escapeHtmlAndFormat(safeText);
+
             messageElement.innerHTML = `
-                <div class="message-avatar">${safeUser.charAt(0).toUpperCase()}</div>
-                <div class="message-content">
+                ${avatarHtml}
+                <div class="message-content${isOwn ? ' own' : ''}">
                     <div class="message-header">
                         <span class="message-username">${this.escapeHtml(safeUser)}</span>
                         <span class="message-time">${time}</span>
                     </div>
-                    <div class="message-image">
-                        <img src="${this.escapeHtml(fullImageUrl)}" alt="Изображение" loading="lazy"
-                             style="max-width: 300px; max-height: 300px; border-radius: 4px;"
-                             onerror="this.parentElement.innerHTML='<em>Изображение недоступно</em>';">
-                    </div>
+                    <div class="message-text">${formattedText}</div>
                 </div>
             `;
         }
-    } else {
-        return;
+
+        messagesContainer.appendChild(messageElement);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        setTimeout(() => messageElement.classList.add('appeared'), 10);
     }
 
-    messagesContainer.appendChild(messageElement);
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-
-    // Анимация появления
-    setTimeout(() => {
-        messageElement.classList.add('appeared');
-    }, 10);
-
-    // 🔥 ОБЯЗАТЕЛЬНО: подключаем сообщение к IntersectionObserver
-    if (window.voiceClient?.messageObserver) {
-        window.voiceClient.messageObserver.observe(messageElement);
+    static updateMessageReadStatus(messageId, readerId, readerName) {
+        const msgEl = document.querySelector(`.message[data-message-id="${messageId}"]`);
+        if (!msgEl) return;
+        const readBy = JSON.parse(msgEl.dataset.readBy || '[]');
+        if (!readBy.includes(readerId)) {
+            readBy.push(readerId);
+            msgEl.dataset.readBy = JSON.stringify(readBy);
+        }
+        const timeEl = msgEl.querySelector('.message-time');
+        if (timeEl) {
+            const ownMsg = msgEl.querySelector('.message-content.own');
+            if (ownMsg) {
+                const readers = readBy.length;
+                if (readers === 0) {
+                    timeEl.textContent = timeEl.textContent.replace(/✓✓?$/, '') + ' ✓';
+                } else if (readers === 1) {
+                    timeEl.textContent = timeEl.textContent.replace(/✓✓?$/, '') + ' ✓✓';
+                } else {
+                    timeEl.textContent = timeEl.textContent.replace(/✓✓?$/, '') + ' ✓✓✓';
+                }
+            }
+        }
     }
-}
 
-static updateMessageReadStatus(messageId, readerId, readerName) {
-  const msgEl = document.querySelector(`.message[data-message-id="${messageId}"]`);
-  if (!msgEl) return;
-
-  const readBy = JSON.parse(msgEl.dataset.readBy || '[]');
-  if (!readBy.includes(readerId)) {
-    readBy.push(readerId);
-    msgEl.dataset.readBy = JSON.stringify(readBy);
-  }
-
-  // Обновить иконку статуса (например, в .message-time)
-  const timeEl = msgEl.querySelector('.message-time');
-  if (timeEl) {
-    const ownMsg = msgEl.querySelector('.message-content.own');
-    if (ownMsg) {
-      const readers = readBy.length;
-      if (readers === 0) {
-        timeEl.textContent = timeEl.textContent.replace(/✓✓?$/, '') + ' ✓'; // delivered
-      } else if (readers === 1) {
-        timeEl.textContent = timeEl.textContent.replace(/✓✓?$/, '') + ' ✓✓'; // read by someone
-      } else {
-        timeEl.textContent = timeEl.textContent.replace(/✓✓?$/, '') + ' ✓✓✓'; // read by all
-      }
-    }
-  }
-}
     static updateMicButton(status) {
         const micButton = document.querySelector('.mic-button');
         const micToggleBtn = document.querySelector('.mic-toggle-btn');
-        
         const states = {
             'disconnected': {class: 'disconnected', text: '🎤', title: 'Не подключен к голосовому каналу'},
             'connecting': {class: 'connecting', text: '🎤', title: 'Подключение...'},
@@ -209,15 +216,12 @@ static updateMessageReadStatus(messageId, readerId, readerName) {
             'active': {class: 'active', text: '🔴', title: 'Микрофон включен (нажмите чтобы выключить)'},
             'error': {class: 'error', text: '🎤', title: 'Ошибка доступа к микрофону'}
         };
-        
         const state = states[status] || states.disconnected;
-        
         if (micButton) {
             micButton.className = 'mic-button ' + state.class;
             micButton.textContent = state.text;
             micButton.title = state.title;
         }
-        
         if (micToggleBtn) {
             micToggleBtn.className = 'mic-toggle-btn ' + state.class;
             micToggleBtn.textContent = state.text;
@@ -228,7 +232,6 @@ static updateMessageReadStatus(messageId, readerId, readerName) {
     static updateAudioStatus(activeConsumers) {
         const statusElement = document.querySelector('.audio-status');
         if (!statusElement) return;
-        
         if (activeConsumers > 0) {
             statusElement.textContent = `Активных аудиопотоков: ${activeConsumers}`;
             statusElement.style.color = 'var(--success)';
@@ -241,17 +244,13 @@ static updateMessageReadStatus(messageId, readerId, readerName) {
     static renderServers(client) {
         const serversList = document.querySelector('.servers-list');
         if (!serversList) return;
-
         serversList.innerHTML = '';
-        
         client.servers.forEach(server => {
             const serverElement = document.createElement('div');
             serverElement.className = 'server-item';
             serverElement.dataset.server = server.id;
-            
             const isOwner = server.ownerId === client.userId;
             serverElement.innerHTML = `🏠 ${server.name} ${isOwner ? '<span class="owner-badge">(Вы)</span>' : ''}`;
-            
             serverElement.addEventListener('click', () => {
                 client.currentServerId = server.id;
                 client.currentServer = server;
@@ -260,7 +259,6 @@ static updateMessageReadStatus(messageId, readerId, readerName) {
                 });
                 client.showPanel('rooms');
             });
-            
             if (isOwner) {
                 const shareBtn = document.createElement('button');
                 shareBtn.className = 'server-action-btn';
@@ -273,7 +271,6 @@ static updateMessageReadStatus(messageId, readerId, readerName) {
                         .then(() => alert(`Ссылка скопирована: ${inviteLink}`))
                         .catch(() => {});
                 });
-                
                 const deleteBtn = document.createElement('button');
                 deleteBtn.className = 'server-action-btn';
                 deleteBtn.innerHTML = '✕';
@@ -284,11 +281,9 @@ static updateMessageReadStatus(messageId, readerId, readerName) {
                         module.default.deleteServer(client, server.id);
                     });
                 });
-                
                 serverElement.appendChild(shareBtn);
                 serverElement.appendChild(deleteBtn);
             }
-            
             serversList.appendChild(serverElement);
         });
     }
@@ -296,348 +291,315 @@ static updateMessageReadStatus(messageId, readerId, readerName) {
     static renderRooms(client, rooms) {
         const roomsList = document.querySelector('.rooms-list');
         if (!roomsList) return;
-
         roomsList.innerHTML = '';
-        
         rooms.forEach(room => {
             const roomElement = document.createElement('div');
             roomElement.className = 'room-item';
             roomElement.dataset.room = room.id;
-            
             const isOwner = room.ownerId === client.userId;
             roomElement.innerHTML = `🔊 ${room.name} ${isOwner ? '<span class="owner-badge">(Вы)</span>' : ''}`;
-            
             roomElement.addEventListener('click', () => {
                 client.currentRoom = room.id;
                 client.joinRoom(room.id);
             });
-            
             roomsList.appendChild(roomElement);
         });
     }
 
-
-
-static syncVolumeSliders() {
-    console.group('🎚️ UIManager.syncVolumeSliders - START');
-    const membersList = document.querySelector('.members-list');
-    if (!membersList) {
-        console.error('❌ Members list not found');
-        console.groupEnd();
-        return;
-    }
-    const memberItems = membersList.querySelectorAll('.member-item');
-    const producerUserMap = window.producerUserMap || new Map();
-    const producerClientMap = window.producerClientMap || new Map();
-
-    // Скрываем все слайдеры
-    memberItems.forEach(item => {
-        const slider = item.querySelector('.member-volume-slider');
-        if (slider) {
-            slider.style.display = 'none';
-            slider.dataset.producerId = '';
+    static syncVolumeSliders() {
+        console.group('🎚️ UIManager.syncVolumeSliders - START');
+        const membersList = document.querySelector('.members-list');
+        if (!membersList) {
+            console.error('❌ Members list not found');
+            console.groupEnd();
+            return;
         }
-    });
+        const memberItems = membersList.querySelectorAll('.member-item');
+        const producerUserMap = window.producerUserMap || new Map();
+        const producerClientMap = window.producerClientMap || new Map();
 
-    // 1. Сначала обрабатываем привязку по userId (приоритет)
-    for (const [producerId, userId] of producerUserMap.entries()) {
+        memberItems.forEach(item => {
+            const slider = item.querySelector('.member-volume-slider');
+            if (slider) {
+                slider.style.display = 'none';
+                slider.dataset.producerId = '';
+            }
+        });
+
+        for (const [producerId, userId] of producerUserMap.entries()) {
+            const memberItem = membersList.querySelector(`.member-item[data-user-id="${userId}"]`);
+            if (memberItem) {
+                const slider = memberItem.querySelector('.member-volume-slider');
+                if (slider) {
+                    slider.dataset.producerId = producerId;
+                    slider.style.display = 'block';
+                    console.log('✅ Slider shown by userId:', userId, 'producer:', producerId);
+                }
+            }
+        }
+
+        for (const [producerId, clientId] of producerClientMap.entries()) {
+            if (producerUserMap.has(producerId)) continue;
+            const memberItem = membersList.querySelector(`.member-item[data-client-id="${clientId}"]`);
+            if (memberItem) {
+                const slider = memberItem.querySelector('.member-volume-slider');
+                if (slider) {
+                    slider.dataset.producerId = producerId;
+                    slider.style.display = 'block';
+                    console.log('✅ Slider shown by clientId:', clientId, 'producer:', producerId);
+                    const userId = memberItem.dataset.userId;
+                    if (userId && !producerUserMap.has(producerId)) {
+                        if (!window.producerUserMap) window.producerUserMap = new Map();
+                        window.producerUserMap.set(producerId, userId);
+                        console.log('🔁 Mapped producer', producerId, 'to userId', userId, 'via clientId', clientId);
+                    }
+                }
+            }
+        }
+        console.groupEnd();
+    }
+
+    static updateMembersList(members) {
+        console.group('👥 UIManager.updateMembersList - START');
+        console.log('🔹 Members received:', members.length);
+        console.log('🔹 Members ', members.map(m => ({ username: m.username, clientId: m.clientId, isOnline: m.isOnline })));
+        const membersList = document.querySelector('.members-list');
+        if (!membersList) {
+            console.error('❌ Members list element not found');
+            console.groupEnd();
+            return;
+        }
+
+        const savedSliderValues = new Map();
+        membersList.querySelectorAll('.member-item').forEach(item => {
+            const userId = item.dataset.userId;
+            const slider = item.querySelector('.member-volume-slider');
+            if (userId && slider) {
+                let value = VolumeBoostManager.getGain(userId);
+                if (value !== null) {
+                    savedSliderValues.set(userId, Math.round(value * 100));
+                } else {
+                    savedSliderValues.set(userId, slider.value);
+                }
+            }
+        });
+
+        membersList.innerHTML = '';
+
+        const globalMuteHeader = document.createElement('div');
+        globalMuteHeader.className = 'global-mute-header';
+        globalMuteHeader.innerHTML = `
+            <label class="global-mute-label">
+                <input type="checkbox" id="globalMuteCheckbox">
+                <span>Общий мут</span>
+            </label>
+        `;
+        membersList.appendChild(globalMuteHeader);
+
+        const globalMuteCheckbox = globalMuteHeader.querySelector('#globalMuteCheckbox');
+        globalMuteCheckbox.addEventListener('change', (e) => {
+            const isMuted = e.target.checked;
+            const sliders = membersList.querySelectorAll('.member-volume-slider');
+            console.log('🔹 Global mute changed:', isMuted);
+            sliders.forEach(slider => {
+                const value = isMuted ? 0 : 100;
+                slider.value = value;
+                const producerId = slider.dataset.producerId;
+                const userId = window.producerUserMap?.get(producerId) || window.producerClientMap?.get(producerId);
+                if (userId) {
+                    VolumeBoostManager.setGain(userId, value / 100);
+                }
+                slider.title = `Громкость: ${value}%`;
+            });
+        });
+
+        members.forEach(user => {
+            if (!user || !user.userId) {
+                console.warn('⚠️ Skipping invalid member:', user);
+                return;
+            }
+            const memberElement = document.createElement('div');
+            memberElement.className = 'member-item';
+            memberElement.dataset.userId = user.userId;
+            memberElement.dataset.clientId = user.clientId || '';
+            const isOnline = user.isOnline === true;
+            const statusClass = isOnline ? 'online' : 'offline';
+            const statusTitle = isOnline ? 'Online' : 'Offline';
+            const savedValue = savedSliderValues.get(user.userId) || 100;
+
+            memberElement.innerHTML = `
+                <div class="member-avatar">${user.username.charAt(0).toUpperCase()}</div>
+                <div class="member-info">
+                    <div class="member-name">${user.username}</div>
+                    <div class="member-controls">
+                        <div class="member-status">
+                            <div class="status-indicator ${statusClass}" title="${statusTitle}"></div>
+                            <div class="mic-indicator ${isOnline && user.isMicActive ? 'active' : ''}" 
+                                 title="${user.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
+                        </div>
+                        <input type="range" class="member-volume-slider" min="0" max="200" value="${savedValue}" 
+                               title="Громкость: ${savedValue}%" data-producer-id="" style="display: none;">
+                    </div>
+                </div>
+            `;
+            membersList.appendChild(memberElement);
+
+            const slider = memberElement.querySelector('.member-volume-slider');
+            if (slider && !slider._hasVolumeHandler) {
+                slider.addEventListener('input', (e) => {
+                    const value = e.target.value;
+                    const producerId = e.target.dataset.producerId;
+                    e.target.title = `Громкость: ${value}%`;
+                    const userId = window.producerUserMap?.get(producerId) || window.producerClientMap?.get(producerId);
+                    if (userId) {
+                        VolumeBoostManager.setGain(userId, value / 100);
+                    }
+                });
+                slider._hasVolumeHandler = true;
+            }
+
+            memberElement.addEventListener('mouseenter', () => {
+                if (slider.dataset.producerId) {
+                    slider.style.display = 'block';
+                }
+            });
+            memberElement.addEventListener('mouseleave', () => {
+                setTimeout(() => {
+                    if (!slider.matches(':hover')) {
+                        slider.style.display = 'none';
+                    }
+                }, 100);
+            });
+            slider.addEventListener('mouseleave', () => {
+                slider.style.display = 'none';
+            });
+        });
+
+        console.log('✅ Members list updated. Now syncing sliders...');
+        this.syncVolumeSliders();
+        console.groupEnd();
+    }
+
+    static showVolumeSlider(producerId, clientId) {
+        console.group('🎚️ UIManager.showVolumeSlider - START');
+        console.log('🔹 producerId:', producerId);
+        console.log('🔹 clientId:', clientId);
+        const membersList = document.querySelector('.members-list');
+        if (!membersList) {
+            console.error('❌ Members list element not found');
+            console.groupEnd();
+            return;
+        }
+
+        const memberItems = membersList.querySelectorAll('.member-item');
+        let found = false;
+        for (const memberItem of memberItems) {
+            const memberClientId = memberItem.dataset.clientId;
+            console.log('🔹 Checking member item with clientId:', memberClientId);
+            if (memberClientId === clientId) {
+                const slider = memberItem.querySelector('.member-volume-slider');
+                if (slider) {
+                    slider.dataset.producerId = producerId;
+                    slider.style.display = 'block';
+                    console.log('✅ Volume slider shown for client:', clientId, 'producer:', producerId);
+                    found = true;
+                    if (!slider._hasVolumeHandler) {
+                        slider.addEventListener('input', (e) => {
+                            const value = e.target.value;
+                            const producerId = e.target.dataset.producerId;
+                            e.target.title = `Громкость: ${value}%`;
+                            const userId = window.producerUserMap?.get(producerId) || window.producerClientMap?.get(producerId);
+                            if (userId) {
+                                VolumeBoostManager.setGain(userId, value / 100);
+                            }
+                        });
+                        slider._hasVolumeHandler = true;
+                    }
+                    break;
+                }
+            }
+        }
+        if (!found) {
+            console.warn('❌ Member item not found for clientId:', clientId);
+            console.log('🔹 Available member items:', Array.from(memberItems).map(item => ({
+                clientId: item.dataset.clientId,
+                userId: item.dataset.userId
+            })));
+        }
+        console.groupEnd();
+    }
+
+    static showVolumeSliderByUserId(producerId, userId) {
+        console.group('🎚️ UIManager.showVolumeSliderByUserId - START');
+        console.log('🔹 producerId:', producerId);
+        console.log('🔹 userId:', userId);
+        const membersList = document.querySelector('.members-list');
+        if (!membersList) {
+            console.error('❌ Members list element not found');
+            console.groupEnd();
+            return;
+        }
         const memberItem = membersList.querySelector(`.member-item[data-user-id="${userId}"]`);
         if (memberItem) {
             const slider = memberItem.querySelector('.member-volume-slider');
             if (slider) {
                 slider.dataset.producerId = producerId;
                 slider.style.display = 'block';
-                console.log('✅ Slider shown by userId:', userId, 'producer:', producerId);
-            }
-        }
-    }
-
-    // 2. Затем — fallback по clientId (для продюсеров без userId, например из /producers)
-    for (const [producerId, clientId] of producerClientMap.entries()) {
-        // Пропускаем, если уже обработан через userId
-        if (producerUserMap.has(producerId)) continue;
-
-        const memberItem = membersList.querySelector(`.member-item[data-client-id="${clientId}"]`);
-        if (memberItem) {
-            const slider = memberItem.querySelector('.member-volume-slider');
-            if (slider) {
-                slider.dataset.producerId = producerId;
-                slider.style.display = 'block';
-                console.log('✅ Slider shown by clientId:', clientId, 'producer:', producerId);
-
-                // 🔥 Дополнительно: если у участника есть userId — сохраняем в producerUserMap
-                const userId = memberItem.dataset.userId;
-                if (userId && !producerUserMap.has(producerId)) {
-                    if (!window.producerUserMap) window.producerUserMap = new Map();
-                    window.producerUserMap.set(producerId, userId);
-                    console.log('🔁 Mapped producer', producerId, 'to userId', userId, 'via clientId', clientId);
-                }
-            }
-        }
-    }
-
-    console.groupEnd();
-}
-
-
-
-
-static updateMembersList(members) {
-    console.group('👥 UIManager.updateMembersList - START');
-    console.log('🔹 Members received:', members.length);
-    console.log('🔹 Members data:', members.map(m => ({ username: m.username, clientId: m.clientId, isOnline: m.isOnline })));
-    const membersList = document.querySelector('.members-list');
-    if (!membersList) {
-        console.error('❌ Members list element not found');
-        console.groupEnd();
-        return;
-    }
-    // Полная очистка контейнера
-    membersList.innerHTML = '';
-    // Добавляем чекбокс общего мута
-    const globalMuteHeader = document.createElement('div');
-    globalMuteHeader.className = 'global-mute-header';
-    globalMuteHeader.innerHTML = `
-        <label class="global-mute-label">
-            <input type="checkbox" id="globalMuteCheckbox">
-            <span>Общий мут</span>
-        </label>
-    `;
-    membersList.appendChild(globalMuteHeader);
-    // Обработчик общего мута
-    const globalMuteCheckbox = globalMuteHeader.querySelector('#globalMuteCheckbox');
-    globalMuteCheckbox.addEventListener('change', (e) => {
-        const isMuted = e.target.checked;
-        const sliders = membersList.querySelectorAll('.member-volume-slider');
-        console.log('🔹 Global mute changed:', isMuted);
-        sliders.forEach(slider => {
-            slider.value = isMuted ? 0 : 100;
-            const producerId = slider.dataset.producerId;
-            const audioElement = window.audioElements?.get(producerId);
-            if (audioElement) {
-                audioElement.volume = isMuted ? 0 : slider.value / 100;
-                console.log('🔹 Volume set for producer:', producerId, 'volume:', audioElement.volume);
-            }
-            slider.title = `Громкость: ${slider.value}%`;
-        });
-    });
-    // Создаем элементы участников
-    members.forEach(user => {
-        if (!user || !user.userId) {
-            console.warn('⚠️ Skipping invalid member:', user);
-            return;
-        }
-        const memberElement = document.createElement('div');
-        memberElement.className = 'member-item';
-        memberElement.dataset.userId = user.userId;
-        memberElement.dataset.clientId = user.clientId || '';
-        const isOnline = user.isOnline === true;
-        const statusClass = isOnline ? 'online' : 'offline';
-        const statusTitle = isOnline ? 'Online' : 'Offline';
-
-memberElement.innerHTML = `
-    <div class="member-avatar">${user.username.charAt(0).toUpperCase()}</div>
-    <div class="member-info">
-        <div class="member-name">${user.username}</div>
-        <div class="member-controls">
-            <div class="member-status">
-                <div class="status-indicator ${statusClass}" title="${statusTitle}"></div>
-                <div class="mic-indicator ${isOnline && user.isMicActive ? 'active' : ''}" 
-                     title="${user.isMicActive ? 'Microphone active' : 'Microphone muted'}"></div>
-            </div>
-            <input type="range" class="member-volume-slider" min="0" max="100" value="100" 
-                   title="Громкость: 100%" data-producer-id="" style="display: none;">
-        </div>
-    </div>
-`;
-
-        membersList.appendChild(memberElement);
-
-// Настраиваем обработчик слайдера (один раз)
-const slider = memberElement.querySelector('.member-volume-slider');
-if (slider && !slider._hasVolumeHandler) {
-    slider.addEventListener('input', (e) => {
-        const value = e.target.value;
-        const producerId = e.target.dataset.producerId;
-        e.target.title = `Громкость: ${value}%`;
-        const audioElement = window.audioElements?.get(producerId);
-        if (audioElement) {
-            audioElement.volume = value / 100;
-            console.log('🔊 Volume changed:', producerId, 'volume:', audioElement.volume);
-        }
-    });
-    slider._hasVolumeHandler = true;
-}
-
-// Добавляем показ/скрытие бегунка при наведении на ник
-memberElement.addEventListener('mouseenter', () => {
-    if (slider.dataset.producerId) {
-        slider.style.display = 'block';
-    }
-});
-
-memberElement.addEventListener('mouseleave', () => {
-    // Задержка, чтобы можно было перейти на сам слайдер
-    setTimeout(() => {
-        if (!slider.matches(':hover')) {
-            slider.style.display = 'none';
-        }
-    }, 100);
-});
-
-// Если мышь уходит со слайдера — тоже скрываем
-slider.addEventListener('mouseleave', () => {
-    slider.style.display = 'none';
-});
-
-    });
-    console.log('✅ Members list updated. Now syncing sliders...');
-    // 🔥 КЛЮЧЕВОЙ ВЫЗОВ: Синхронизируем слайдеры с актуальной картой
-    this.syncVolumeSliders();
-    console.groupEnd();
-}
-
-
-static showVolumeSlider(producerId, clientId) {
-    console.group('🎚️ UIManager.showVolumeSlider - START');
-    console.log('🔹 producerId:', producerId);
-    console.log('🔹 clientId:', clientId);
-    
-    const membersList = document.querySelector('.members-list');
-    if (!membersList) {
-        console.error('❌ Members list element not found');
-        console.groupEnd();
-        return;
-    }
-
-    // Ищем участника по clientId
-    const memberItems = membersList.querySelectorAll('.member-item');
-    let found = false;
-    
-    for (const memberItem of memberItems) {
-        const memberClientId = memberItem.dataset.clientId;
-        console.log('🔹 Checking member item with clientId:', memberClientId);
-        
-        if (memberClientId === clientId) {
-            const slider = memberItem.querySelector('.member-volume-slider');
-            if (slider) {
-                slider.dataset.producerId = producerId;
-                slider.style.display = 'block';
-                console.log('✅ Volume slider shown for client:', clientId, 'producer:', producerId);
-                found = true;
-                
-                // Добавляем обработчик если его нет
+                console.log('✅ Volume slider shown for user:', userId, 'producer:', producerId);
                 if (!slider._hasVolumeHandler) {
                     slider.addEventListener('input', (e) => {
                         const value = e.target.value;
-                        const producerId = e.target.dataset.producerId;
+                        const pid = e.target.dataset.producerId;
                         e.target.title = `Громкость: ${value}%`;
-                        
-                        const audioElement = window.audioElements?.get(producerId);
-                        if (audioElement) {
-                            audioElement.volume = value / 100;
-                            console.log('🔊 Volume changed:', producerId, 'volume:', audioElement.volume);
+                        const userId = window.producerUserMap?.get(pid) || window.producerClientMap?.get(pid);
+                        if (userId) {
+                            VolumeBoostManager.setGain(userId, value / 100);
                         }
                     });
                     slider._hasVolumeHandler = true;
                 }
-                break;
-            }
-        }
-    }
-    
-    if (!found) {
-        console.warn('❌ Member item not found for clientId:', clientId);
-        console.log('🔹 Available member items:', Array.from(memberItems).map(item => ({
-            clientId: item.dataset.clientId,
-            userId: item.dataset.userId
-        })));
-    }
-    
-    console.groupEnd();
-}
-
-static showVolumeSliderByUserId(producerId, userId) {
-    console.group('🎚️ UIManager.showVolumeSliderByUserId - START');
-    console.log('🔹 producerId:', producerId);
-    console.log('🔹 userId:', userId);
-    const membersList = document.querySelector('.members-list');
-    if (!membersList) {
-        console.error('❌ Members list element not found');
-        console.groupEnd();
-        return;
-    }
-    const memberItem = membersList.querySelector(`.member-item[data-user-id="${userId}"]`);
-    if (memberItem) {
-        const slider = memberItem.querySelector('.member-volume-slider');
-        if (slider) {
-            slider.dataset.producerId = producerId;
-            slider.style.display = 'block';
-            console.log('✅ Volume slider shown for user:', userId, 'producer:', producerId);
-            if (!slider._hasVolumeHandler) {
-                slider.addEventListener('input', (e) => {
-                    const value = e.target.value;
-                    const pid = e.target.dataset.producerId;
-                    e.target.title = `Громкость: ${value}%`;
-                    const audioEl = window.audioElements?.get(pid);
-                    if (audioEl) {
-                        audioEl.volume = value / 100;
-                    }
-                });
-                slider._hasVolumeHandler = true;
+            } else {
+                console.warn('⚠️ Slider element not found for user:', userId);
             }
         } else {
-            console.warn('⚠️ Slider element not found for user:', userId);
+            console.warn('❌ Member item not found for userId:', userId);
+            const allItems = Array.from(membersList.querySelectorAll('.member-item')).map(el => ({
+                userId: el.dataset.userId,
+                clientId: el.dataset.clientId
+            }));
+            console.log('🔹 Available members:', allItems);
         }
-    } else {
-        console.warn('❌ Member item not found for userId:', userId);
-        const allItems = Array.from(membersList.querySelectorAll('.member-item')).map(el => ({
-            userId: el.dataset.userId,
-            clientId: el.dataset.clientId
-        }));
-        console.log('🔹 Available members:', allItems);
+        console.groupEnd();
     }
-    console.groupEnd();
-}
 
-
-static updateMemberMicState(userId, isActive) {
-  const memberElement = document.querySelector(`.member-item[data-user-id="${userId}"]`);
-  if (memberElement) {
-    const micIndicator = memberElement.querySelector('.mic-indicator');
-    const statusIndicator = memberElement.querySelector('.status-indicator');
-    
-    if (micIndicator) {
-      // Проверяем, онлайн ли пользователь (по классу status-indicator)
-      const isOnline = statusIndicator && statusIndicator.classList.contains('online');
-      
-      if (isOnline) {
-        // Только онлайн-пользователи могут иметь активный микрофон
-        micIndicator.className = isActive ? 'mic-indicator active' : 'mic-indicator';
-        micIndicator.title = isActive ? 'Microphone active' : 'Microphone muted';
-      } else {
-        // Оффлайн → микрофон всегда выключен
-        micIndicator.className = 'mic-indicator';
-        micIndicator.title = 'Microphone muted';
-      }
+    static updateMemberMicState(userId, isActive) {
+        const memberElement = document.querySelector(`.member-item[data-user-id="${userId}"]`);
+        if (memberElement) {
+            const micIndicator = memberElement.querySelector('.mic-indicator');
+            const statusIndicator = memberElement.querySelector('.status-indicator');
+            if (micIndicator) {
+                const isOnline = statusIndicator && statusIndicator.classList.contains('online');
+                if (isOnline) {
+                    micIndicator.className = isActive ? 'mic-indicator active' : 'mic-indicator';
+                    micIndicator.title = isActive ? 'Microphone active' : 'Microphone muted';
+                } else {
+                    micIndicator.className = 'mic-indicator';
+                    micIndicator.title = 'Microphone muted';
+                }
+            }
+        }
     }
-  }
-}
 
     static openModal(title, content, onSubmit) {
         const modalOverlay = document.querySelector('.modal-overlay');
         const modalContent = document.querySelector('.modal-content');
-        
         if (!modalOverlay || !modalContent) return;
-        
         modalContent.innerHTML = `
             <h2>${title}</h2>
             ${content}
             <button class="modal-submit">OK</button>
         `;
-        
         modalOverlay.classList.remove('hidden');
-        
         const submitButton = modalContent.querySelector('.modal-submit');
         if (submitButton && onSubmit) {
             submitButton.addEventListener('click', onSubmit);
@@ -664,20 +626,12 @@ static updateMemberMicState(userId, isActive) {
             z-index: 1000;
             max-width: 300px;
         `;
-        
         document.body.appendChild(errorElement);
-        
         setTimeout(() => {
             if (document.body.contains(errorElement)) {
                 document.body.removeChild(errorElement);
             }
         }, 5000);
-    }
-
-    static escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
     }
 
     static openSettings(client) {
@@ -701,17 +655,14 @@ static updateMemberMicState(userId, isActive) {
             </div>
             <button class="apply-settings-btn">Применить</button>
         `;
-        
         this.openModal('Настройки', modalContent, () => {
             client.bitrate = document.getElementById('bitrateSlider').value * 1000;
             client.dtxEnabled = document.getElementById('dtxCheckbox').checked;
             client.fecEnabled = document.getElementById('fecCheckbox').checked;
             this.closeModal();
         });
-        
         const bitrateSlider = document.getElementById('bitrateSlider');
         const bitrateValue = document.getElementById('bitrateValue');
-        
         if (bitrateSlider && bitrateValue) {
             bitrateSlider.addEventListener('input', () => {
                 bitrateValue.textContent = bitrateSlider.value;
@@ -759,28 +710,24 @@ static updateMemberMicState(userId, isActive) {
         this.closeModal();
     }
 
-static updateRoomUI(client) {
-    const messagesContainer = document.querySelector('.messages-container');
-    if (messagesContainer) {
-        messagesContainer.innerHTML = '';
-    }
-
-    // ИСПРАВЛЕНО: Получаем название комнаты вместо ID
-    let roomTitle = 'Выберите комнату';
-    if (client.currentRoom) {
-        // Ищем комнату по ID в списке загруженных комнат
-        const currentRoomData = client.rooms.find(room => room.id === client.currentRoom);
-        if (currentRoomData) {
-            roomTitle = `Комната: ${currentRoomData.name}`;
-        } else {
-            // На случай, если комната не найдена (например, при переподключении), используем ID как fallback
-            roomTitle = `Комната: ${client.currentRoom}`;
+    static updateRoomUI(client) {
+        const messagesContainer = document.querySelector('.messages-container');
+        if (messagesContainer) {
+            messagesContainer.innerHTML = '';
         }
+        let roomTitle = 'Выберите комнату';
+        if (client.currentRoom) {
+            const currentRoomData = client.rooms.find(room => room.id === client.currentRoom);
+            if (currentRoomData) {
+                roomTitle = `Комната: ${currentRoomData.name}`;
+            } else {
+                roomTitle = `Комната: ${client.currentRoom}`;
+            }
+        }
+        this.updateRoomTitle(roomTitle);
+        this.updateMicButton(client.isConnected ? (client.isMicActive ? 'active' : 'connected') : 'disconnected');
     }
-    this.updateRoomTitle(roomTitle);
 
-    this.updateMicButton(client.isConnected ? (client.isMicActive ? 'active' : 'connected') : 'disconnected');
-}
     static clearMessages() {
         const messagesContainer = document.querySelector('.messages-container');
         if (messagesContainer) {
