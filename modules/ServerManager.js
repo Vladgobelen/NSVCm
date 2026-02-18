@@ -72,96 +72,98 @@ class ServerManager {
         }
     }
 
-    static renderServers(client) {
-        const serversList = document.querySelector('.servers-list');
-        if (!serversList) return;
+static renderServers(client) {
+  const serversList = document.querySelector('.servers-list');
+  if (!serversList) return;
+  serversList.innerHTML = '';
+  if (client.servers.length === 0) {
+    serversList.innerHTML = '<div class="no-results">Нет серверов</div>';
+    return;
+  }
+  client.servers.forEach(server => {
+    const serverElement = document.createElement('div');
+    serverElement.className = 'server-item';
+    serverElement.dataset.server = server.id;
 
-        serversList.innerHTML = '';
-        
-        if (client.servers.length === 0) {
-            serversList.innerHTML = '<div class="no-results">Нет серверов</div>';
-            return;
+    // Определяем, является ли это прямой комнатой
+    const isDirect = server.id.startsWith('direct_');
+    const displayName = isDirect ? server.name : `🏠 ${server.name}`;
+    const isOwner = server.ownerId === client.userId;
+
+    serverElement.innerHTML = `${displayName} ${isOwner ? '<span class="owner-badge">(Вы)</span>' : ''}`;
+
+    serverElement.addEventListener('click', () => {
+      client.currentServerId = server.id;
+      client.currentServer = server;
+      localStorage.setItem('lastServerId', server.id);
+      if (client.serverSearchInput) {
+        client.serverSearchInput.value = '';
+      }
+      setTimeout(() => {
+        RoomManager.loadRoomsForServer(client, server.id);
+        client.showPanel('rooms');
+      }, 100);
+    });
+
+    // Кнопки действий (для прямых комнат — только копирование ссылки)
+    const actionButtons = document.createElement('div');
+    actionButtons.className = 'server-actions';
+
+    if (isDirect) {
+      // Кнопка копирования ссылки для прямого чата
+      const shareBtn = document.createElement('button');
+      shareBtn.className = 'server-action-btn';
+      shareBtn.innerHTML = '📋';
+      shareBtn.title = 'Скопировать ссылку на чат';
+      shareBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          const inviteLink = `https://ns.fiber-gate.ru/${server.inviteCode}`;
+          await navigator.clipboard.writeText(inviteLink);
+          UIManager.showError('Ссылка скопирована!');
+        } catch (err) {
+          UIManager.showError('Не удалось скопировать ссылку');
         }
-        
-        client.servers.forEach(server => {
-            const serverElement = document.createElement('div');
-            serverElement.className = 'server-item';
-            serverElement.dataset.server = server.id;
-            
-            const isOwner = server.ownerId === client.userId;
-            const isMember = server.members && server.members.includes(client.userId);
-            
-            serverElement.innerHTML = `🏠 ${server.name} ${isOwner ? '<span class="owner-badge">(Вы)</span>' : ''}`;
-            
-            serverElement.addEventListener('click', () => {
-                client.currentServerId = server.id;
-                client.currentServer = server;
-                
-                // Сохраняем выбор сервера
-                localStorage.setItem('lastServerId', server.id);
-                
-                if (client.serverSearchInput) {
-                    client.serverSearchInput.value = '';
-                }
-                
-                setTimeout(() => {
-                    RoomManager.loadRoomsForServer(client, server.id);
-                    client.showPanel('rooms');
-                }, 100);
-            });
-            
-            const actionButtons = document.createElement('div');
-            actionButtons.className = 'server-actions';
-            
-            if (isOwner) {
-                // Кнопка для создания инвайта
-                const inviteBtn = document.createElement('button');
-                inviteBtn.className = 'server-action-btn';
-                //inviteBtn.innerHTML = '🔗';
-                inviteBtn.title = 'Создать приглашение';
-                inviteBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.createServerInvite(client, server.id);
-                });
-                
-                const shareBtn = document.createElement('button');
-                shareBtn.className = 'server-action-btn';
-                shareBtn.innerHTML = '📋';
-                shareBtn.title = 'Скопировать ссылку';
-                shareBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.copyServerInviteLink(client, server.id);
-                });
-                
-                const deleteBtn = document.createElement('button');
-                deleteBtn.className = 'server-action-btn';
-                deleteBtn.innerHTML = '✕';
-                deleteBtn.title = 'Удалить';
-                deleteBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.deleteServer(client, server.id);
-                });
-                
-                actionButtons.appendChild(inviteBtn);
-                actionButtons.appendChild(shareBtn);
-                actionButtons.appendChild(deleteBtn);
-            } else if (isMember) {
-                const leaveBtn = document.createElement('button');
-                leaveBtn.className = 'server-action-btn leave-btn';
-                leaveBtn.innerHTML = '🚪';
-                leaveBtn.title = 'Покинуть сервер';
-                leaveBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.leaveServer(client, server.id);
-                });
-                
-                actionButtons.appendChild(leaveBtn);
-            }
-            
-            serverElement.appendChild(actionButtons);
-            serversList.appendChild(serverElement);
+      });
+      actionButtons.appendChild(shareBtn);
+    } else {
+      // Обычные серверы — как раньше
+      if (isOwner) {
+        const shareBtn = document.createElement('button');
+        shareBtn.className = 'server-action-btn';
+        shareBtn.innerHTML = '📋';
+        shareBtn.title = 'Скопировать ссылку';
+        shareBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.copyServerInviteLink(client, server.id);
         });
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'server-action-btn';
+        deleteBtn.innerHTML = '✕';
+        deleteBtn.title = 'Удалить';
+        deleteBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.deleteServer(client, server.id);
+        });
+        actionButtons.appendChild(shareBtn);
+        actionButtons.appendChild(deleteBtn);
+      } else if (server.members?.includes(client.userId)) {
+        const leaveBtn = document.createElement('button');
+        leaveBtn.className = 'server-action-btn leave-btn';
+        leaveBtn.innerHTML = '🚪';
+        leaveBtn.title = 'Покинуть сервер';
+        leaveBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.leaveServer(client, server.id);
+        });
+        actionButtons.appendChild(leaveBtn);
+      }
     }
+
+    serverElement.appendChild(actionButtons);
+    serversList.appendChild(serverElement);
+  });
+}
 
     static async createServerInvite(client, serverId) {
         try {
@@ -209,6 +211,57 @@ class ServerManager {
             UIManager.showError('Не удалось скопировать ссылку приглашения');
         }
     }
+
+static async createDirectRoom(client, targetUserId, targetUsername) {
+  try {
+    const res = await fetch(`${client.API_SERVER_URL}/api/rooms/direct`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${client.token}`
+      },
+      body: JSON.stringify({ targetUserId })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Не удалось создать прямой чат');
+    }
+
+    const data = await res.json();
+    const room = data.room;
+
+    // Сохраняем как "сервер"
+    const directStub = {
+      id: room.id,
+      name: `👤 ${targetUsername}`,
+      type: 'direct',
+      ownerId: client.userId,
+      targetUserId,
+      participants: [client.userId, targetUserId],
+      inviteCode: room.inviteCode
+    };
+
+    if (!client.servers.some(s => s.id === room.id)) {
+      client.servers.push(directStub);
+      ServerManager.saveServersToLocalStorage(client);
+    }
+
+    // Копируем ссылку
+    const link = `https://ns.fiber-gate.ru/${room.inviteCode}`;
+    await navigator.clipboard.writeText(link);
+    UIManager.showError(`Прямой чат создан! Ссылка: ${link}`);
+
+    // Переходим в комнату
+    client.currentServerId = room.id;
+    client.currentServer = directStub;
+    localStorage.setItem('lastServerId', room.id);
+    client.showPanel('rooms');
+    await RoomManager.loadRoomsForServer(client, room.id);
+  } catch (error) {
+    UIManager.showError('Ошибка: ' + error.message);
+  }
+}
 
     static async createServer(client) {
         const name = prompt('Введите название сервера:');
@@ -287,116 +340,105 @@ class ServerManager {
         }
     }
 
-    static async searchServers(client, query) {
-        try {
-            if (!query || query.length < 2) {
-                this.renderServers(client);
-                return;
-            }
-
-            const res = await fetch(`${client.API_SERVER_URL}/api/servers/search?q=${encodeURIComponent(query)}`, {
-                headers: { 
-                    'Authorization': `Bearer ${client.token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-            
-            if (!res.ok) {
-                const errorData = await res.json().catch(() => ({}));
-                throw new Error(errorData.error || 'Ошибка поиска');
-            }
-            
-            const data = await res.json();
-            this.renderSearchResults(client, data.servers);
-        } catch (error) {
-            UIManager.showError('Ошибка поиска: ' + error.message);
-        }
+static async searchServers(client, query) {
+  try {
+    if (!query || query.length < 2) {
+      this.renderServers(client);
+      return;
     }
 
-    static renderSearchResults(client, servers) {
-        const serversList = document.querySelector('.servers-list');
-        if (!serversList) return;
+    // Параллельно ищем серверы И пользователей
+    const [serversRes, usersRes] = await Promise.all([
+      fetch(`${client.API_SERVER_URL}/api/servers/search?q=${encodeURIComponent(query)}`, {
+        headers: { 'Authorization': `Bearer ${client.token}` }
+      }),
+      fetch(`${client.API_SERVER_URL}/api/servers/search-users?q=${encodeURIComponent(query)}`, {
+        headers: { 'Authorization': `Bearer ${client.token}` }
+      })
+    ]);
 
-        serversList.innerHTML = '';
-        
-        if (servers.length === 0) {
-            serversList.innerHTML = '<div class="no-results">Серверы не найдены</div>';
-            return;
-        }
-        
-        servers.forEach(server => {
-            const serverElement = document.createElement('div');
-            serverElement.className = 'server-item';
-            serverElement.dataset.server = server.id;
-            
-            const isOwner = server.ownerId === client.userId;
-            const isMember = client.servers.some(s => s.id === server.id);
-            
-            serverElement.innerHTML = `🏠 ${server.name} ${isOwner ? '<span class="owner-badge">(Вы)</span>' : ''} ${!isMember ? '<span class="not-member-badge">(Не участник)</span>' : ''}`;
-            
-            if (isMember) {
-                serverElement.addEventListener('click', () => {
-                    client.currentServerId = server.id;
-                    client.currentServer = server;
-                    
-                    // Сохраняем выбор сервера
-                    localStorage.setItem('lastServerId', server.id);
-                    
-                    if (client.serverSearchInput) {
-                        client.serverSearchInput.value = '';
-                    }
-                    
-                    setTimeout(() => {
-                        RoomManager.loadRoomsForServer(client, server.id);
-                        client.showPanel('rooms');
-                    }, 100);
-                });
-            } else {
-                serverElement.style.opacity = '0.7';
-                serverElement.style.cursor = 'default';
-                
-                const joinBtn = document.createElement('button');
-                joinBtn.className = 'server-action-btn join-btn';
-                joinBtn.innerHTML = '➕';
-                joinBtn.title = 'Присоединиться';
-                joinBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.joinServer(client, server.id);
-                });
-                
-                serverElement.appendChild(joinBtn);
-            }
-            
-            if (isOwner) {
-                const actionButtons = document.createElement('div');
-                actionButtons.className = 'server-actions';
-                
-                const shareBtn = document.createElement('button');
-                shareBtn.className = 'server-action-btn';
-                shareBtn.innerHTML = '🔗';
-                shareBtn.title = 'Пригласить';
-                shareBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.copyServerInviteLink(client, server.id);
-                });
-                
-                const deleteBtn = document.createElement('button');
-                deleteBtn.className = 'server-action-btn';
-                deleteBtn.innerHTML = '✕';
-                deleteBtn.title = 'Удалить';
-                deleteBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.deleteServer(client, server.id);
-                });
-                
-                actionButtons.appendChild(shareBtn);
-                actionButtons.appendChild(deleteBtn);
-                serverElement.appendChild(actionButtons);
-            }
-            
-            serversList.appendChild(serverElement);
-        });
+    const servers = serversRes.ok ? (await serversRes.json()).servers : [];
+    const users = usersRes.ok ? (await usersRes.json()).users : [];
+
+    // Передаём оба списка в рендер
+    this.renderSearchResults(client, { servers, users });
+  } catch (error) {
+    UIManager.showError('Ошибка поиска: ' + error.message);
+  }
+}
+
+static renderSearchResults(client, { servers, users }) {
+  const serversList = document.querySelector('.servers-list');
+  if (!serversList) return;
+  serversList.innerHTML = '';
+
+  // Показываем серверы (как раньше)
+  servers.forEach(server => {
+    const serverElement = document.createElement('div');
+    serverElement.className = 'server-item';
+    serverElement.dataset.server = server.id;
+    const isOwner = server.ownerId === client.userId;
+    const isMember = client.servers.some(s => s.id === server.id);
+    serverElement.innerHTML = `🏠 ${server.name} ${isOwner ? '<span class="owner-badge">(Вы)</span>' : ''} ${!isMember ? '<span class="not-member-badge">(Не участник)</span>' : ''}`;
+    
+    if (isMember) {
+      serverElement.addEventListener('click', () => {
+        client.currentServerId = server.id;
+        client.currentServer = server;
+        localStorage.setItem('lastServerId', server.id);
+        if (client.serverSearchInput) client.serverSearchInput.value = '';
+        setTimeout(() => {
+          RoomManager.loadRoomsForServer(client, server.id);
+          client.showPanel('rooms');
+        }, 100);
+      });
+    } else {
+      serverElement.style.opacity = '0.7';
+      const joinBtn = document.createElement('button');
+      joinBtn.className = 'server-action-btn join-btn';
+      joinBtn.innerHTML = '➕';
+      joinBtn.title = 'Присоединиться';
+      joinBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.joinServer(client, server.id);
+      });
+      serverElement.appendChild(joinBtn);
     }
+    serversList.appendChild(serverElement);
+  });
+
+  // Показываем пользователей (как "прямые чаты")
+  users.forEach(user => {
+    // Не показываем самого себя
+    if (user.userId === client.userId) return;
+
+    // Не показываем, если уже есть прямая комната с ним
+    const hasDirectRoom = client.servers.some(s => 
+      s.id.startsWith('direct_') && 
+      (s.participants?.includes(user.userId) || s.targetUserId === user.userId)
+    );
+    if (hasDirectRoom) return;
+
+    const userElement = document.createElement('div');
+    userElement.className = 'server-item';
+    userElement.innerHTML = `👤 ${user.username}`;
+    
+    const createBtn = document.createElement('button');
+    createBtn.className = 'server-action-btn join-btn';
+    createBtn.innerHTML = '➕';
+    createBtn.title = `Начать прямой чат с ${user.username}`;
+    createBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await this.createDirectRoom(client, user.userId, user.username);
+    });
+    userElement.appendChild(createBtn);
+    serversList.appendChild(userElement);
+  });
+
+  if (servers.length === 0 && users.length === 0) {
+    serversList.innerHTML = '<div class="no-results">Ничего не найдено</div>';
+  }
+}
 
     static async joinServer(client, serverId) {
         try {
