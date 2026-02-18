@@ -6,47 +6,54 @@ import MembersManager from './MembersManager.js';
 import InviteManager from './InviteManager.js';
 
 class RoomManager {
-    static async loadRoomsForServer(client, serverId) {
-        try {
-            // Если это прямая комната — сразу заходим в неё
-            if (serverId.startsWith('direct_')) {
-                client.currentServerId = serverId;
-                client.currentServer = client.servers.find(s => s.id === serverId) || null;
-                UIManager.updateStatus('Подключение к прямому чату...', 'connecting');
-                await this.joinRoom(client, serverId);
-                return;
-            }
-            
-            // Обычный сервер — загружаем комнаты
-            client.currentServerId = serverId;
-            client.currentServer = client.servers.find(s => s.id === serverId) || null;
-            UIManager.updateStatus('Загрузка комнат...', 'connecting');
-            
-            const res = await fetch(`${client.API_SERVER_URL}/api/servers/${serverId}/rooms`, {
-                headers: {
-                    'Authorization': `Bearer ${client.token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-            
-            if (!res.ok) {
-                const errorData = await res.json().catch(() => ({}));
-                throw new Error(`Не удалось загрузить комнаты: ${errorData.error || res.statusText}`);
-            }
-            
-            const data = await res.json();
-            if (!data || !Array.isArray(data.rooms)) {
-                throw new Error('Некорректные данные от сервера');
-            }
-            
-            client.rooms = data.rooms;
-            this.renderRooms(client, data.rooms);
-            UIManager.updateStatus('Комнаты загружены', 'normal');
-        } catch (error) {
-            UIManager.updateStatus('Ошибка загрузки комнат', 'error');
-            UIManager.showError('Не удалось загрузить комнаты: ' + error.message);
-        }
+
+static async loadRoomsForServer(client, serverId) {
+  try {
+    // ✅ ИСПРАВЛЕНО: проверяем тип сервера/комнаты перед запросом
+    const server = client.servers.find(s => s.id === serverId);
+    const isDirectRoom = server?.type === 'direct' || server?.serverId === null || serverId.startsWith('user_') && serverId.includes('_user_');
+    
+    // Если это прямая комната — не запрашиваем список комнат сервера
+    if (isDirectRoom) {
+      client.currentServerId = serverId;
+      client.currentServer = server || null;
+      UIManager.updateStatus('Подключение к прямому чату...', 'connecting');
+      // ✅ Сразу присоединяемся к комнате, не загружая "комнаты сервера"
+      await this.joinRoom(client, serverId);
+      return;
     }
+    
+    // Обычный сервер — загружаем комнаты через правильный эндпоинт
+    client.currentServerId = serverId;
+    client.currentServer = server || null;
+    UIManager.updateStatus('Загрузка комнат...', 'connecting');
+    
+    const res = await fetch(`${client.API_SERVER_URL}/api/servers/${serverId}/rooms`, {
+      headers: {
+        'Authorization': `Bearer ${client.token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(`Не удалось загрузить комнаты: ${errorData.error || res.statusText}`);
+    }
+    
+    const data = await res.json();
+    if (!data || !Array.isArray(data.rooms)) {
+      throw new Error('Некорректные данные от сервера');
+    }
+    
+    client.rooms = data.rooms;
+    this.renderRooms(client, data.rooms);
+    UIManager.updateStatus('Комнаты загружены', 'normal');
+    
+  } catch (error) {
+    UIManager.updateStatus('Ошибка загрузки комнат', 'error');
+    UIManager.showError('Не удалось загрузить комнаты: ' + error.message);
+  }
+}
 
     // ✅ ИСПРАВЛЕНО: Делегируем вызов методу клиента для консистентной логики сокета
     static async joinRoom(client, roomId) {
