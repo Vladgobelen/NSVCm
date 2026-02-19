@@ -364,19 +364,36 @@ class VoiceChatClient {
     }
   }
 
-  processUrlParams() {
-    console.log('Processing URL parameters...');
+// В VoiceChatClient.js, метод processUrlParams()
+processUrlParams() {
+    console.log('🔍 [INVITE] Processing URL parameters...');
     const params = new URLSearchParams(window.location.search);
     this.currentServerId = params.get('server');
     this.currentRoom = params.get('room');
     this.inviteServerId = params.get('invite');
+    
     const inviteCode = params.get('invite');
-    if (inviteCode && /^[a-zA-Z0-9]{4}$/.test(inviteCode)) {
-      this.pendingInviteCode = inviteCode;
-      console.log('Found pending invite code:', inviteCode);
+    
+    // ✅ ИСПРАВЛЕНО: {4,6} вместо {4}
+    if (inviteCode && /^[a-zA-Z0-9]{4,6}$/.test(inviteCode)) {
+        console.log('🔍 [INVITE] New invite code detected in URL:', inviteCode);
+        
+        // ✅ ПРОВЕРКА: если это НОВЫЙ инвайт — очищаем старый из localStorage
+        const storedInvite = localStorage.getItem('pending_invite');
+        if (storedInvite && storedInvite !== inviteCode) {
+            console.log('🔍 [INVITE] Different invite in storage, clearing old:', storedInvite);
+            localStorage.removeItem('pending_invite');
+        }
+        
+        // ✅ Синхронизируем VoiceChatClient и InviteManager
+        this.pendingInviteCode = inviteCode;
+        InviteManager.setPendingInvite(inviteCode);
+        
+        console.log('🔍 [INVITE] Pending invite set:', inviteCode);
     }
-    console.log('URL params processed - server:', this.currentServerId, 'room:', this.currentRoom, 'invite:', this.inviteServerId);
-  }
+    
+    console.log('🔍 [INVITE] URL params processed - server:', this.currentServerId, 'room:', this.currentRoom, 'invite:', this.inviteServerId);
+}
 
   async ensureConsumer(producerId, producerData = {}) {
     console.group('🔄 VoiceChatClient.ensureConsumer - START');
@@ -417,107 +434,87 @@ class VoiceChatClient {
     }
   }
 
-  async initAutoConnect() {
-    console.log('Starting auto-connect process...');
+// В VoiceChatClient.js, метод initAutoConnect()
+async initAutoConnect() {
+    console.log('🔍 [AUTOCONNECT] Starting auto-connect process...');
+    
+    // ✅ 1. Сначала обрабатываем URL параметры (включая инвайт)
     this.processUrlParams();
+    
     try {
-      const autoLoggedIn = await AuthManager.tryAutoLogin(this);
-      if (autoLoggedIn) {
-        console.log('Auto-login successful, loading servers...');
-        await ServerManager.loadServers(this);
-        if (this.pendingInviteCode) {
-          console.log('Applying pending invite:', this.pendingInviteCode);
-          const inviteApplied = await InviteManager.applyPendingInvite();
-          if (inviteApplied) {
-            console.log('Invite applied successfully');
-            this.clearPendingInvite();
-            if (this.currentRoom && this.currentServerId) {
-              console.log('Invite was for a room. Attempting to join room:', this.currentRoom);
-              try {
-                await this.joinRoom(this.currentRoom);
-                console.log('Successfully joined room after invite application');
-              } catch (error) {
-                console.error('Failed to join room after invite application:', error);
-                UIManager.showError('Не удалось присоединиться к комнате после применения инвайта');
-              }
+        // ✅ 2. Пробуем авто-логин
+        const autoLoggedIn = await AuthManager.tryAutoLogin(this);
+        
+        if (autoLoggedIn) {
+            console.log('🔍 [AUTOCONNECT] Auto-login successful, loading servers...');
+            await ServerManager.loadServers(this);
+            
+            // ✅ 3. ПРОВЕРЯЕМ ИНВАЙТ ПЕРЕД lastRoomId!
+            // Инвайт из URL имеет приоритет над последней комнатой
+            if (this.pendingInviteCode || InviteManager.getPendingInvite()) {
+                console.log('🔍 [AUTOCONNECT] Pending invite detected, applying...');
+                const inviteApplied = await InviteManager.applyPendingInvite();
+                
+                if (inviteApplied) {
+                    console.log('✅ [AUTOCONNECT] Invite applied successfully');
+                    this.clearPendingInvite();
+                    return; // ✅ Возвращаемся, не загружаем lastRoom
+                } else {
+                    console.log('⚠️ [AUTOCONNECT] Failed to apply invite, continuing with normal flow');
+                    this.clearPendingInvite();
+                }
             }
+            
+            // ✅ 4. Только если инвайта нет — загружаем последнюю комнату
+            const lastServerId = localStorage.getItem('lastServerId');
+            const lastRoomId = localStorage.getItem('lastRoomId');
+            
+            if (lastServerId) {
+                console.log('🔍 [AUTOCONNECT] Found last server in localStorage:', lastServerId);
+                const serverExists = this.servers.some(s => s.id === lastServerId);
+                if (serverExists) {
+                    this.currentServerId = lastServerId;
+                    this.currentServer = this.servers.find(s => s.id === lastServerId);
+                    await RoomManager.loadRoomsForServer(this, lastServerId);
+                    
+                    if (lastRoomId) {
+                        console.log('🔍 [AUTOCONNECT] Found last room in localStorage:', lastRoomId);
+                        const roomExists = this.rooms.some(room => room.id === lastRoomId);
+                        if (roomExists) {
+                            this.currentRoom = lastRoomId;
+                            await this.reconnectToRoom(lastRoomId);
+                            return;
+                        }
+                    }
+                }
+            }
+            
+            // ... остальной код без изменений ...
             return;
-          } else {
-            console.log('Failed to apply invite, continuing with normal flow');
-          }
         }
-        const lastServerId = localStorage.getItem('lastServerId');
-        const lastRoomId = localStorage.getItem('lastRoomId');
-        if (lastServerId) {
-          console.log('Found last server in localStorage:', lastServerId);
-          const serverExists = this.servers.some(s => s.id === lastServerId);
-          if (serverExists) {
-            this.currentServerId = lastServerId;
-            this.currentServer = this.servers.find(s => s.id === lastServerId);
-            await RoomManager.loadRoomsForServer(this, lastServerId);
-            if (lastRoomId) {
-              console.log('Found last room in localStorage:', lastRoomId);
-              const roomExists = this.rooms.some(room => room.id === lastRoomId);
-              if (roomExists) {
-                this.currentRoom = lastRoomId;
-                await this.reconnectToRoom(lastRoomId);
-                return;
-              }
-            }
-          }
-        }
-        let targetServerId = null;
-        if (this.inviteServerId) {
-          console.log('Processing invite server ID:', this.inviteServerId);
-          const serverExists = this.servers.some(s => s.id === this.inviteServerId);
-          if (serverExists) {
-            targetServerId = this.inviteServerId;
-          } else {
-            const joined = await this.joinServer(this.inviteServerId);
-            if (joined) {
-              targetServerId = this.inviteServerId;
-              await ServerManager.loadServers(this);
-            } else {
-              UIManager.showError('Нет доступа к серверу.');
-            }
-          }
-        } else if (this.currentServerId) {
-          console.log('Processing current server ID:', this.currentServerId);
-          const serverExists = this.servers.some(s => s.id === this.currentServerId);
-          if (serverExists) {
-            targetServerId = this.currentServerId;
-          }
-        }
-        if (targetServerId) {
-          console.log('Setting target server:', targetServerId);
-          this.currentServerId = targetServerId;
-          await RoomManager.loadRoomsForServer(this, targetServerId);
-          if (this.currentRoom) {
-            await this.reconnectToRoom(this.currentRoom);
-          }
-        } else {
-          console.log('No target server found, showing auto-connect UI');
-          this.autoConnect();
-        }
-        return;
-      }
-      console.log('No auto-login found, showing auth modal');
-      AuthManager.showAuthModal(this);
+        
+        console.log('🔍 [AUTOCONNECT] No auto-login found, showing auth modal');
+        AuthManager.showAuthModal(this);
+        
     } catch (err) {
-      console.error('Auto connect error:', err);
-      UIManager.showError('Критическая ошибка: не удалось загрузить систему авторизации');
+        console.error('❌ [AUTOCONNECT] Auto connect error:', err);
+        UIManager.showError('Критическая ошибка: не удалось загрузить систему авторизации');
     }
-  }
+}
 
-  clearPendingInvite() {
-    console.log('Clearing pending invite');
+// В VoiceChatClient.js, метод clearPendingInvite()
+clearPendingInvite() {
+    console.log('🔍 [INVITE] Clearing pending invite');
     this.pendingInviteCode = null;
     localStorage.removeItem('pending_invite');
+    
+    // ✅ Также очищаем URL параметр
     const url = new URL(window.location);
     url.searchParams.delete('invite');
     window.history.replaceState({}, '', url);
-  }
-
+    
+    console.log('🔍 [INVITE] Pending invite cleared');
+}
   async joinServer(serverId) {
     console.log('Joining server:', serverId);
     try {
@@ -555,74 +552,172 @@ class VoiceChatClient {
     }
   }
 
-  async joinRoom(roomId) {
-    console.log('Joining room:', roomId);
+async joinRoom(roomId) {
+    console.log('🔍 [JOIN DEBUG] joinRoom called with roomId:', roomId);
+    console.log('🔍 [JOIN DEBUG] currentRoom:', this.currentRoom);
+    console.log('🔍 [JOIN DEBUG] isConnected:', this.isConnected);
+    console.log('🔍 [JOIN DEBUG] socket connected:', this.socket?.connected);
+    
     if (this.currentRoom === roomId && this.isConnected && this.socket && this.socket.connected) {
-      console.log('Already connected to this room, updating consumers');
-      await this.startConsuming();
-      return true;
+        console.log('ℹ️ [JOIN DEBUG] Already connected to this room, updating consumers');
+        await this.startConsuming();
+        return true;
     }
+    
     try {
-      UIManager.addMessage('System', 'Подключение к комнате...');
-      if (this.currentRoom && this.currentRoom !== roomId) {
-        console.log('Leaving old room before joining new:', this.currentRoom);
-        if (this.socket) {
-          this.socket.emit('leave-room', { roomId: this.currentRoom });
+        UIManager.addMessage('System', 'Подключение к комнате...');
+        
+        if (this.currentRoom && this.currentRoom !== roomId) {
+            console.log('🔍 [JOIN DEBUG] Leaving old room:', this.currentRoom);
+            if (this.socket) {
+                this.socket.emit('leave-room', { roomId: this.currentRoom });
+            }
         }
-      }
-      this.disconnectFromRoom();
-      const res = await fetch(this.CHAT_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.token}`
-        },
-        body: JSON.stringify({
-          roomId,
-          userId: this.userId,
-          token: this.token,
-          clientId: this.clientID
-        })
-      });
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || `Ошибка входа: ${res.status}`);
-      }
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error);
-      if (!data.mediaData) {
-        throw new Error('No media data received from server');
-      }
-      this.clientID = data.clientId;
-      this.mediaData = data.mediaData;
-      this.currentRoom = roomId;
-      this.roomType = 'voice';
-      localStorage.setItem('lastServerId', this.currentServerId);
-      localStorage.setItem('lastRoomId', this.currentRoom);
-      this.audioProducer = null;
-      await MediaManager.connect(this, roomId, data.mediaData);
-      this.setupSocketConnection();
-      this.updateMicButtonState();
-      if (this.socket) {
-        this.socket.emit('subscribe-to-producers', { roomId });
-        this.socket.emit('get-current-producers', { roomId });
-      }
-      UIManager.updateRoomUI(this);
-      TextChatManager.joinTextRoom(this, roomId);
-      await TextChatManager.loadMessages(this, roomId);
-      UIManager.addMessage('System', `✅ Вы присоединились к комнате`);
-      if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
-        const btn = document.getElementById('ios-audio-unlock');
-        if (btn) btn.style.display = 'block';
-      }
-      return true;
+        
+        this.disconnectFromRoom();
+        
+        const res = await fetch(this.CHAT_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${this.token}`
+            },
+            body: JSON.stringify({
+                roomId,
+                userId: this.userId,
+                token: this.token,
+                clientId: this.clientID
+            })
+        });
+        
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            throw new Error(errorData.error || `Ошибка входа: ${res.status}`);
+        }
+        
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error);
+        if (!data.mediaData) {
+            throw new Error('No media data received from server');
+        }
+        
+        this.clientID = data.clientId;
+        this.mediaData = data.mediaData;
+        this.currentRoom = roomId;
+        this.roomType = 'voice';
+        localStorage.setItem('lastServerId', this.currentServerId);
+        localStorage.setItem('lastRoomId', this.currentRoom);
+        this.audioProducer = null;
+        
+        await MediaManager.connect(this, roomId, data.mediaData);
+        this.setupSocketConnection();
+        this.updateMicButtonState();
+        
+        if (this.socket) {
+            this.socket.emit('subscribe-to-producers', { roomId });
+            this.socket.emit('get-current-producers', { roomId });
+        }
+        
+        UIManager.updateRoomUI(this);
+        TextChatManager.joinTextRoom(this, roomId);
+        await TextChatManager.loadMessages(this, roomId);
+        
+        // ✅ ПРОВЕРКА УСПЕШНОГО ПОДКЛЮЧЕНИЯ (через 2 секунды)
+        const connectionValid = await this._validateRoomConnection(roomId);
+        console.log('🔍 [JOIN DEBUG] Connection validation result:', connectionValid);
+        
+        if (!connectionValid) {
+            console.warn('⚠️ [JOIN DEBUG] Room connection validation failed, forcing reconnect...');
+            UIManager.addMessage('System', '⚠️ Комната не загрузилась, переподключение...');
+            // ✅ ПРИНУДИТЕЛЬНОЕ ПЕРЕПОДКЛЮЧЕНИЕ
+            await this.reconnectToRoom(roomId, 3, 1000);
+            // ✅ ПОВТОРНАЯ ПРОВЕРКА ПОСЛЕ RECONNECT
+            const reconnectValid = await this._validateRoomConnection(roomId);
+            if (!reconnectValid) {
+                console.error('❌ [JOIN DEBUG] Reconnect validation failed, throwing error');
+                throw new Error('Не удалось подключиться к комнате после повторной попытки');
+            }
+        }
+        
+        UIManager.addMessage('System', `✅ Вы присоединились к комнате`);
+        
+        if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+            const btn = document.getElementById('ios-audio-unlock');
+            if (btn) btn.style.display = 'block';
+        }
+        
+        console.log('✅ [JOIN DEBUG] joinRoom completed successfully');
+        return true;
     } catch (e) {
-      console.error('Error joining room:', e);
-      UIManager.updateStatus('Ошибка: ' + e.message, 'disconnected');
-      UIManager.showError('Не удалось присоединиться к комнате: ' + e.message);
-      throw e;
+        console.error('❌ [JOIN DEBUG] joinRoom error:', e);
+        UIManager.updateStatus('Ошибка: ' + e.message, 'disconnected');
+        UIManager.showError('Не удалось присоединиться к комнате: ' + e.message);
+        throw e;
     }
-  }
+}
+
+async _validateRoomConnection(roomId) {
+    console.log('🔍 [VALIDATE] Checking room connection for:', roomId);
+    
+    // ✅ Проверка 1: currentRoom установлен
+    if (this.currentRoom !== roomId) {
+        console.warn('⚠️ [VALIDATE] currentRoom mismatch:', this.currentRoom, '!=', roomId);
+        return false;
+    }
+    
+    // ✅ Проверка 2: isConnected = true
+    if (!this.isConnected) {
+        console.warn('⚠️ [VALIDATE] isConnected is false');
+        return false;
+    }
+    
+    // ✅ Проверка 3: сокет подключен
+    if (!this.socket || !this.socket.connected) {
+        console.warn('⚠️ [VALIDATE] Socket not connected');
+        return false;
+    }
+    
+    // ✅ Проверка 4: mediaData получен
+    if (!this.mediaData) {
+        console.warn('⚠️ [VALIDATE] mediaData is null');
+        return false;
+    }
+    
+    // ✅ Проверка 5: transports созданы
+    if (!this.sendTransport || !this.recvTransport) {
+        console.warn('⚠️ [VALIDATE] Transports not created');
+        return false;
+    }
+    
+    // ✅ Проверка 6: ждём 2 секунды и проверяем наличие producers
+    console.log('🔍 [VALIDATE] Waiting 2s for producers to load...');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // ✅ Проверка 7: запрашиваем список producers с сервера
+    try {
+        const response = await fetch(`${this.API_SERVER_URL}/api/media/rooms/${roomId}/producers`, {
+            headers: {
+                'Authorization': `Bearer ${this.token}`,
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-cache'
+            }
+        });
+        
+        if (!response.ok) {
+            console.warn('⚠️ [VALIDATE] Failed to fetch producers:', response.status);
+            return false;
+        }
+        
+        const data = await response.json();
+        console.log('🔍 [VALIDATE] Producers response:', data);
+        
+        // ✅ Комната считается загруженной если ответ успешный (даже если producers = 0)
+        return true;
+    } catch (error) {
+        console.error('❌ [VALIDATE] Error fetching producers:', error);
+        return false;
+    }
+}
 
   setupSocketConnection() {
     console.log('Setting up socket connection...');
@@ -1003,73 +1098,63 @@ class VoiceChatClient {
   }
 
 async reconnectToRoom(roomId, maxRetries = 5, retryDelay = 2000) {
-  console.log('Reconnecting to room:', roomId, `maxRetries: ${maxRetries}`);
-  
-  UIManager.addMessage('System', 'Переподключение к комнате...');
-  this.wasMicActiveBeforeReconnect = this.isMicActive;
-  
-  if (this.isMicActive && this.mediaData) {
-    await MediaManager.stopMicrophone(this);
-  }
-  
-  await this.leaveRoom();
-  this.isReconnecting = true;
-  
-  // ✅ RETRY-ЦИКЛ: пробуем подключиться несколько раз
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      console.log(`🔄 Reconnect attempt ${attempt}/${maxRetries} for room: ${roomId}`);
-      
-      await new Promise(resolve => setTimeout(resolve, attempt === 1 ? 500 : retryDelay));
-      
-      const result = await this.joinRoom(roomId);
-      
-      this.isReconnecting = false;
-      
-      // Восстанавливаем микрофон после успешного подключения
-      if (this.wasMicActiveBeforeReconnect && this.mediaData) {
-        setTimeout(async () => {
-          try {
-            await MediaManager.startMicrophone(this);
-            this.wasMicActiveBeforeReconnect = false;
-            setTimeout(() => this.forceRefreshProducers(), 2000);
-          } catch (error) {
-            console.error('Failed to restart microphone after reconnect:', error);
-          }
-        }, 3000);
-      }
-      
-      console.log('✅ Reconnected successfully on attempt', attempt);
-      return result;
-      
-    } catch (error) {
-      console.warn(`⚠️ Reconnect attempt ${attempt} failed:`, error.message);
-      
-      // ✅ 404 и 5xx — потенциально временные ошибки при рестарте сервера
-      const isTransientError = error.message.includes('404') || 
-                               error.message.includes('502') || 
-                               error.message.includes('503') ||
-                               error.message.includes('504') ||
-                               error.message.includes('Failed to fetch');
-      
-      if (!isTransientError || attempt === maxRetries) {
-        // ✅ Не временная ошибка или последняя попытка — сдаёмся
-        this.isReconnecting = false;
-        UIManager.addMessage('System', '❌ Не удалось подключиться к комнате');
-        UIManager.showError('Ошибка переподключения: ' + error.message);
-        
-        // Очищаем состояние, чтобы пользователь мог попробовать вручную
-        this.currentRoom = null;
-        localStorage.removeItem('lastRoomId');
-        
-        throw error;
-      }
-      
-      // ✅ Продолжаем retry с экспоненциальной задержкой
-      const nextDelay = retryDelay * Math.pow(1.5, attempt - 1);
-      console.log(`⏳ Waiting ${Math.round(nextDelay)}ms before next attempt...`);
+    console.log('🔄 [RECONNECT] Reconnecting to room:', roomId, `maxRetries: ${maxRetries}`);
+    UIManager.addMessage('System', 'Переподключение к комнате...');
+    
+    this.wasMicActiveBeforeReconnect = this.isMicActive;
+    
+    if (this.isMicActive && this.mediaData) {
+        await MediaManager.stopMicrophone(this);
     }
-  }
+    
+    await this.leaveRoom();
+    this.isReconnecting = true;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            console.log(`🔄 [RECONNECT] Attempt ${attempt}/${maxRetries} for room: ${roomId}`);
+            await new Promise(resolve => setTimeout(resolve, attempt === 1 ? 500 : retryDelay));
+            
+            const result = await this.joinRoom(roomId);
+            
+            this.isReconnecting = false;
+            
+            if (this.wasMicActiveBeforeReconnect && this.mediaData) {
+                setTimeout(async () => {
+                    try {
+                        await MediaManager.startMicrophone(this);
+                        this.wasMicActiveBeforeReconnect = false;
+                        setTimeout(() => this.forceRefreshProducers(), 2000);
+                    } catch (error) {
+                        console.error('Failed to restart microphone after reconnect:', error);
+                    }
+                }, 3000);
+            }
+            
+            console.log('✅ [RECONNECT] Reconnected successfully on attempt', attempt);
+            return result;
+        } catch (error) {
+            console.warn(`⚠️ [RECONNECT] Attempt ${attempt} failed:`, error.message);
+            
+            const isTransientError = error.message.includes('404') ||
+                                     error.message.includes('502') ||
+                                     error.message.includes('503') ||
+                                     error.message.includes('504') ||
+                                     error.message.includes('Failed to fetch');
+            
+            if (!isTransientError || attempt === maxRetries) {
+                this.isReconnecting = false;
+                UIManager.addMessage('System', '❌ Не удалось подключиться к комнате');
+                UIManager.showError('Ошибка переподключения: ' + error.message);
+                this.currentRoom = null;
+                localStorage.removeItem('lastRoomId');
+                throw error;
+            }
+            
+            const nextDelay = retryDelay * Math.pow(1.5, attempt - 1);
+            console.log(`⏳ [RECONNECT] Waiting ${Math.round(nextDelay)}ms before next attempt...`);
+        }
+    }
 }
 
   async leaveRoom() {

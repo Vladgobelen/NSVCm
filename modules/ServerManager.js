@@ -195,25 +195,48 @@ static async loadServers(client, forceUpdate = false) {
     }
   }
 
-  static async copyServerInviteLink(client, serverId) {
-    try {
-      const invites = await InviteManager.getServerInvites(serverId);
+static async copyServerInviteLink(client, serverId) {
+  try {
+    // ✅ ОПРЕДЕЛЯЕМ ТИП: сервер или приватная комната
+    const server = client.servers.find(s => s.id === serverId);
+    const isDirectRoom = server?.type === 'direct' || 
+                         server?.serverId === null || 
+                         serverId.startsWith('user_') && serverId.includes('_user_');
+    
+    let invite;
+    
+    if (isDirectRoom) {
+      // ✅ Для приватных комнат — используем эндпоинт /api/rooms/:roomId/invites
+      const invites = await InviteManager.getRoomInvites(serverId);
       if (invites && invites.length > 0) {
-        const activeInvite = invites.find(invite => new Date(invite.expiresAt) > new Date());
+        const activeInvite = invites.find(inv => new Date(inv.expiresAt) > new Date());
         if (activeInvite) {
           InviteManager.copyInviteLink(activeInvite.code);
           return;
         }
       }
-      const invite = await InviteManager.createServerInvite(serverId);
-      if (invite) {
-        InviteManager.copyInviteLink(invite.code);
+      invite = await InviteManager.createRoomInvite(serverId);
+    } else {
+      // ✅ Для обычных серверов — старый эндпоинт /api/servers/:serverId/invites
+      const invites = await InviteManager.getServerInvites(serverId);
+      if (invites && invites.length > 0) {
+        const activeInvite = invites.find(inv => new Date(inv.expiresAt) > new Date());
+        if (activeInvite) {
+          InviteManager.copyInviteLink(activeInvite.code);
+          return;
+        }
       }
-    } catch (error) {
-      console.error('Ошибка копирования ссылки инвайта:', error);
-      UIManager.showError('Не удалось скопировать ссылку приглашения');
+      invite = await InviteManager.createServerInvite(serverId);
     }
+    
+    if (invite) {
+      InviteManager.copyInviteLink(invite.code);
+    }
+  } catch (error) {
+    console.error('Ошибка копирования ссылки инвайта:', error);
+    UIManager.showError('Не удалось скопировать ссылку приглашения');
   }
+}
 
 static async createDirectRoom(client, targetUserId, targetUsername) {
   try {
