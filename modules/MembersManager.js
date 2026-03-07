@@ -1,158 +1,207 @@
+// modules/MembersManager.js
 import UIManager from './UIManager.js';
 
 class MembersManager {
     static members = new Map();
+    static onlineMembers = [];
+    static offlineMembers = [];
+    static collapsedSections = {
+        online: false,
+        offline: false
+    };
 
-static updateMember(userId, updates) {
-    if (this.members.has(userId)) {
-        // 🔴🔴🔴 АГРЕССИВНЫЙ ДЕБАГ: Логируем состояние ПЕРЕД обновлением
-        console.group('🔴🔴🔴 [DEBUG] MEMBERS MANAGER: updateMember CALLED');
-        console.log('🎯 [DEBUG] TARGET userId:', userId);
-        console.log('🎯 [DEBUG] UPDATES received:', JSON.stringify(updates, null, 2));
-        console.log('🎯 [DEBUG] STATE BEFORE update:', JSON.stringify(this.members.get(userId), null, 2));
-        console.groupEnd();
-
-        const member = { ...this.members.get(userId), ...updates };
-        this.members.set(userId, member);
-
-        // 🔴🔴🔴 АГРЕСИВНЫЙ ДЕБАГ: Логируем состояние ПОСЛЕ обновления
-        console.group('🔴🔴🔴 [DEBUG] MEMBERS MANAGER: updateMember FINISHED');
-        console.log('🎯 [DEBUG] STATE AFTER update:', JSON.stringify(this.members.get(userId), null, 2));
-        console.groupEnd();
-
-        UIManager.updateMembersList(Array.from(this.members.values()));
-        // Обновляем UI для конкретного участника
-        UIManager.updateMemberMicState(userId, updates.isMicActive);
-    }
-}
-
-// modules/MembersManager.js
-static addMember(memberData) {
-    if (!memberData.userId) {
-        console.error('Member data must contain userId');
-        return;
-    }
-    console.group('🔴🔴🔴 [DEBUG] MEMBERS MANAGER: addMember CALLED');
-    console.log('🎯 [DEBUG] RAW INPUT memberData:', JSON.stringify(memberData, null, 2));
-    console.groupEnd();
-
-    // 🔴🔴🔴 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ:
-    // Получаем текущего пользователя, если он уже существует.
-    const existingMember = this.members.get(memberData.userId);
-    let isCurrentlyOnline = true; // По умолчанию true для нового пользователя
-
-    if (existingMember) {
-        isCurrentlyOnline = existingMember.isOnline;
-        // 🔴🔴🔴 ДОПОЛНИТЕЛЬНАЯ ЗАЩИТА: Если это текущий пользователь, ВСЕГДА сохраняем его статус как true.
-        if (this.client && memberData.userId === this.client.userId) {
-            isCurrentlyOnline = true;
+    static init() {
+        const saved = localStorage.getItem('membersListCollapsed');
+        if (saved) {
+            try {
+                this.collapsedSections = JSON.parse(saved);
+            } catch (e) {
+                this.collapsedSections = { online: false, offline: false };
+            }
         }
     }
 
-    const processedMemberData = {
-        userId: memberData.userId,
-        username: memberData.username || `User_${memberData.userId.substr(0, 8)}`,
-        isMicActive: memberData.isMicActive || false,
-        isOnline: memberData.isOnline !== undefined ? memberData.isOnline : isCurrentlyOnline,
-        clientId: memberData.clientId || null
-    };
+    static saveCollapsedState() {
+        localStorage.setItem('membersListCollapsed', JSON.stringify(this.collapsedSections));
+    }
 
-    console.group('🔴🔴🔴 [DEBUG] MEMBERS MANAGER: addMember PROCESSED');
-    console.log('🎯 [DEBUG] PROCESSED memberData:', JSON.stringify(processedMemberData, null, 2));
-    console.groupEnd();
+    static toggleSection(section) {
+        if (section === 'online' || section === 'offline') {
+            this.collapsedSections[section] = !this.collapsedSections[section];
+            this.saveCollapsedState();
+            UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+        }
+    }
 
-    this.members.set(processedMemberData.userId, processedMemberData);
-    UIManager.updateMembersList(Array.from(this.members.values()));
-}
+    static isSectionCollapsed(section) {
+        return this.collapsedSections[section] || false;
+    }
+
+    static updateMember(userId, updates) {
+        if (this.members.has(userId)) {
+            const member = { ...this.members.get(userId), ...updates };
+            this.members.set(userId, member);
+            this._updateOnlineOfflineLists();
+            UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+            UIManager.updateMemberMicState(userId, updates.isMicActive);
+        }
+    }
+
+    static addMember(memberData) {
+        if (!memberData.userId) {
+            console.error('Member data must contain userId');
+            return;
+        }
+
+        const existingMember = this.members.get(memberData.userId);
+        let isCurrentlyOnline = true;
+
+        if (existingMember) {
+            isCurrentlyOnline = existingMember.isOnline;
+        }
+
+        const processedMemberData = {
+            userId: memberData.userId,
+            username: memberData.username || `User_${memberData.userId.substr(0, 8)}`,
+            isMicActive: memberData.isMicActive || false,
+            isOnline: memberData.isOnline !== undefined ? memberData.isOnline : isCurrentlyOnline,
+            clientId: memberData.clientId || null
+        };
+
+        this.members.set(processedMemberData.userId, processedMemberData);
+        this._updateOnlineOfflineLists();
+        UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+    }
+
     static removeMember(userId) {
         if (this.members.has(userId)) {
             this.members.delete(userId);
-            UIManager.updateMembersList(Array.from(this.members.values()));
+            this._updateOnlineOfflineLists();
+            UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
         }
     }
 
     static clearMembers() {
         this.members.clear();
-        UIManager.updateMembersList([]);
+        this.onlineMembers = [];
+        this.offlineMembers = [];
+        UIManager.updateMembersListWithStatus([], []);
     }
 
-// modules/MembersManager.js
+    static updateAllMembers(members) {
+        this.members.clear();
+        members.forEach(member => {
+            this.members.set(member.userId, member);
+        });
+        this._updateOnlineOfflineLists();
+        UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+    }
 
-static updateAllMembers(members) {
-    console.log('🎯 [MEMBERS MANAGER] updateAllMembers called. Replacing entire members list.');
-    console.log('🎯 [MEMBERS MANAGER] New members list (in order):', members.map(m => `${m.username} (${m.isOnline ? 'ONLINE' : 'OFFLINE'})`));
-    
-    // ✅ 1. Полностью очищаем внутреннюю карту
-    this.members.clear();
-    
-    // ✅ 2. Заполняем карту в ТОЧНОМ порядке, в котором пришли данные от сервера
-    members.forEach(member => {
-        this.members.set(member.userId, member);
-    });
-    
-    // ✅ 3. ГЛАВНОЕ ИЗМЕНЕНИЕ: Передаем в UI исходный массив `members`, а не Array.from(this.members.values())
-    // Это гарантирует, что порядок в UI будет ТОЧНО таким же, как на сервере.
-    UIManager.updateMembersList(members); // <-- Передаем `members`, а не `Array.from(this.members.values())`
-    
-    console.log('✅ [MEMBERS MANAGER] Members list fully replaced and rendered in correct order.');
-}
+    static updateAllMembersWithStatus(online, offline) {
+        this.members.clear();
+        this.onlineMembers = online || [];
+        this.offlineMembers = offline || [];
 
-static setupSocketHandlers(client) {
-    if (!client.socket) return;
-
-    client.socket.on('room-participants', (participants) => {
-        this.updateAllMembers(participants);
-    });
-
-    // --- ИЗМЕНЕННЫЙ ОБРАБОТЧИК user-joined ---
-    client.socket.on('user-joined', async (user) => {
-        console.log('User joined (ONLINE):', user);
-        // Проверяем, существует ли пользователь
-        if (this.members.has(user.userId)) {
-            // Если существует, обновляем его данные и статус онлайн
-            this.updateMember(user.userId, { 
-                ...user,
-                isOnline: true 
-            });
-        } else {
-            // Если не существует, добавляем нового пользователя
-            this.addMember({
-                ...user,
-                isOnline: true
-            });
-        }
-        UIManager.addMessage('System', `Пользователь ${user.username} присоединился к комнате`);
-    });
-
-    // --- ИСПРАВЛЕННЫЙ ОБРАБОТЧИК user-left ---
-    client.socket.on('user-left', async (data) => {
-        console.log('User left:', data);
-        // Получаем имя пользователя из списка, чтобы отобразить в сообщении
-        const member = MembersManager.getMember(data.userId);
-        if (member) {
-            UIManager.addMessage('System', `Пользователь ${member.username} покинул комнату`);
-        } else {
-            UIManager.addMessage('System', `Пользователь покинул комнату`);
-        }
-    });
-
-    client.socket.on('user-mic-state', (data) => {
-        if (data.userId) {
-            this.updateMember(data.userId, { isMicActive: data.isActive });
-        } else if (data.clientID) {
-            // Находим пользователя по clientID
-            const members = Array.from(this.members.values());
-            const member = members.find(m => m.clientId === data.clientID);
-            if (member) {
-                this.updateMember(member.userId, { isMicActive: data.isActive });
+        [...this.onlineMembers, ...this.offlineMembers].forEach(member => {
+            if (member && member.userId) {
+                this.members.set(member.userId, member);
             }
-        }
-    });
-}
+        });
 
+        console.log(`👥 MembersManager: ${this.onlineMembers.length} онлайн, ${this.offlineMembers.length} оффлайн`);
+        UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+    }
+
+    static _updateOnlineOfflineLists() {
+        this.onlineMembers = [];
+        this.offlineMembers = [];
+
+        this.members.forEach(member => {
+            if (member.isOnline === true) {
+                this.onlineMembers.push(member);
+            } else {
+                this.offlineMembers.push(member);
+            }
+        });
+
+        this.onlineMembers.sort((a, b) => a.username.localeCompare(b.username));
+        this.offlineMembers.sort((a, b) => a.username.localeCompare(b.username));
+    }
+
+    static setupSocketHandlers(client) {
+        if (!client.socket) return;
+
+        client.socket.on('room-participants', (participants) => {
+            console.log('👥 Получен список участников:', participants.length);
+            const processedParticipants = participants.map((p) => {
+                if (p.userId === this.userId) {
+                    return { ...p, isOnline: true };
+                }
+                return p;
+            });
+            MembersManager.updateAllMembers(processedParticipants);
+
+            const me = processedParticipants.find((p) => p.userId === this.userId);
+            if (me) {
+                window.voiceClient.userId = me.userId;
+                const displayName = me.username || me.name || me.userId;
+                if (typeof window.setLoggerDisplayName === 'function') {
+                    window.setLoggerDisplayName(displayName);
+                }
+            }
+        });
+
+        client.socket.on('room-participants-updated', (data) => {
+            console.log('👥 Room participants updated:', data);
+            console.log(`👥 Онлайн: ${data.online?.length || 0}, Офлайн: ${data.offline?.length || 0}`);
+
+            if ((!data.online || data.online.length === 0) && (!data.offline || data.offline.length === 0)) {
+                console.warn('⚠️ Получены пустые данные участников, игнорируем');
+                return;
+            }
+
+            MembersManager.updateAllMembersWithStatus(data.online, data.offline);
+        });
+
+        client.socket.on('user-joined', async (user) => {
+            if (this.members.has(user.userId)) {
+                this.updateMember(user.userId, {
+                    ...user,
+                    isOnline: true
+                });
+            } else {
+                this.addMember({
+                    ...user,
+                    isOnline: true
+                });
+            }
+            UIManager.addMessage('System', `Пользователь ${user.username} присоединился к комнате`);
+        });
+
+        client.socket.on('user-left', async (data) => {
+            const member = MembersManager.getMember(data.userId);
+            if (member) {
+                this.updateMember(data.userId, { isOnline: false });
+                UIManager.addMessage('System', `Пользователь ${member.username} покинул комнату`);
+            } else {
+                UIManager.addMessage('System', `Пользователь покинул комнату`);
+            }
+        });
+
+        client.socket.on('user-mic-state', (data) => {
+            if (data.userId) {
+                this.updateMember(data.userId, { isMicActive: data.isActive });
+            } else if (data.clientID) {
+                const members = Array.from(this.members.values());
+                const member = members.find(m => m.clientId === data.clientID);
+                if (member) {
+                    this.updateMember(member.userId, { isMicActive: data.isActive });
+                }
+            }
+        });
+    }
 
     static setupSSEHandlers() {
-        console.log('SSE handlers for members are setup in TextChatManager');
     }
 
     static getMembers() {
@@ -163,12 +212,19 @@ static setupSocketHandlers(client) {
         return this.members.get(userId);
     }
 
+    static getOnlineMembers() {
+        return this.onlineMembers;
+    }
+
+    static getOfflineMembers() {
+        return this.offlineMembers;
+    }
+
     static isCurrentUser(client, userId) {
         return client.userId === userId;
     }
 
     static initializeRoomMembers(client, participants) {
-        console.log('Initializing room members with:', participants);
         this.clearMembers();
         participants.forEach(participant => this.addMember(participant));
     }

@@ -1,6 +1,11 @@
 import UIManager from './UIManager.js';
 
 class ChatManager {
+    static _renderMessage(message) {
+        const username = message.username || 'Unknown';
+        UIManager.addMessage(username, message.text, message.timestamp);
+    }
+
     static async loadMessages(client, roomId) {
         try {
             const response = await fetch(`${client.API_SERVER_URL}/api/rooms/${roomId}/messages`, {
@@ -13,13 +18,12 @@ class ChatManager {
             if (response.ok) {
                 const data = await response.json();
                 if (data.messages && Array.isArray(data.messages)) {
-                    data.messages.forEach(message => {
-                        const username = message.username || 'Unknown';
-                        UIManager.addMessage(username, message.text, message.timestamp);
-                    });
+                    data.messages.forEach(message => this._renderMessage(message));
                 }
             }
-        } catch (error) {}
+        } catch (error) {
+            UIManager.showError('Не удалось загрузить историю сообщений');
+        }
     }
 
     static async sendMessage(client, text) {
@@ -51,15 +55,11 @@ class ChatManager {
         if (!client.socket) return;
 
         client.socket.on('new-message', (data) => {
-            const username = data.username || 'Unknown';
-            UIManager.addMessage(username, data.text, data.timestamp);
+            this._renderMessage(data);
         });
 
         client.socket.on('message-history', (messages) => {
-            messages.forEach(msg => {
-                const username = msg.username || 'Unknown';
-                UIManager.addMessage(username, msg.text, msg.timestamp);
-            });
+            messages.forEach(msg => this._renderMessage(msg));
         });
     }
 }

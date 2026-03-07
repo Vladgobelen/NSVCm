@@ -32,7 +32,7 @@ class AuthManager {
         const users = this.getAllUsers();
         delete users[username];
         this.saveAllUsers(users);
-        
+
         const lastUser = this.loadLastUser();
         if (lastUser && lastUser.username === username) {
             localStorage.removeItem(this.LAST_USER_KEY);
@@ -52,10 +52,9 @@ class AuthManager {
         client.userId = lastUser.userId;
         client.token = lastUser.token;
         client.username = lastUser.username;
-        
-        // НОВОЕ: Инициализируем InviteManager после успешного авто-логина
+
         InviteManager.init(client);
-        
+
         return true;
     }
 
@@ -116,9 +115,8 @@ class AuthManager {
             client.token = data.token;
             client.username = username;
 
-            // НОВОЕ: Инициализируем InviteManager после регистрации
             InviteManager.init(client);
-            
+
             return true;
         } catch (error) {
             throw error;
@@ -135,8 +133,8 @@ class AuthManager {
             <div class="modal-content">
                 <h2>Выберите пользователя</h2>
                 <div class="saved-users-list">
-                    ${Object.keys(users).length === 0 
-                        ? '<div class="no-users-message">Нет сохранённых пользователей</div>' 
+                    ${Object.keys(users).length === 0
+                        ? '<div class="no-users-message">Нет сохранённых пользователей</div>'
                         : Object.values(users).map(u => `
                             <div class="saved-user-item" data-username="${u.username}">
                                 <span>${u.username}</span>
@@ -151,7 +149,7 @@ class AuthManager {
             </div>
         `;
         document.body.appendChild(modal);
-        
+
         const usernameInput = modal.querySelector('#usernameInput');
         const passwordInput = modal.querySelector('#passwordInput');
         const submitBtn = modal.querySelector('#authSubmitBtn');
@@ -195,21 +193,17 @@ class AuthManager {
                 const success = await this.registerUser(client, u, p);
                 if (success) {
                     modal.remove();
-                    
-                    // НОВОЕ: Загружаем серверы через импорт
+
                     await import('./ServerManager.js').then(module => {
                         return module.default.loadServers(client);
                     });
 
-                    // НОВОЕ: Применяем отложенный инвайт после авторизации
                     const inviteApplied = await InviteManager.applyPendingInvite();
-                    
-                    // Если инвайт был применен, он сам позаботится о навигации
+
                     if (inviteApplied) {
                         return;
                     }
 
-                    // Старая логика для обратной совместимости
                     if (client.inviteServerId) {
                         const serverExists = client.servers.some(s => s.id === client.inviteServerId);
                         if (serverExists) {
@@ -245,8 +239,7 @@ class AuthManager {
                 modal.remove();
             }
         });
-        
-        // НОВОЕ: Инициализируем InviteManager при показе модального окна
+
         InviteManager.init(client);
     }
 }
