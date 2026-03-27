@@ -58,64 +58,103 @@ class MediaManager {
         }
     }
 
-    static async createTransports(client, mediaData) {
-        try {
-            if (!client.sendTransport) {
-                client.sendTransport = client.device.createSendTransport({
-                    id: mediaData.sendTransport.id,
-                    iceParameters: mediaData.sendTransport.iceParameters,
-                    iceCandidates: mediaData.sendTransport.iceCandidates,
-                    dtlsParameters: mediaData.sendTransport.dtlsParameters
-                });
-                this.setupSendTransportHandlers(client);
-                console.log(`📤 [TRANSPORT] Send transport created: ${client.sendTransport.id}`);
-            }
-            if (!client.recvTransport) {
-                client.recvTransport = client.device.createRecvTransport({
-                    id: mediaData.recvTransport.id,
-                    iceParameters: mediaData.recvTransport.iceParameters,
-                    iceCandidates: mediaData.recvTransport.iceCandidates,
-                    dtlsParameters: mediaData.recvTransport.dtlsParameters
-                });
-                this.setupRecvTransportHandlers(client);
-                console.log(`📥 [TRANSPORT] Recv transport created: ${client.recvTransport.id}`);
-            }
-        } catch (error) {
-            console.error('Error creating transports:', error);
-            throw error;
+static async createTransports(client, mediaData) {
+    try {
+        if (!client.sendTransport) {
+            console.log(`📤 [TRANSPORT] Creating send transport...`);
+            client.sendTransport = client.device.createSendTransport({
+                id: mediaData.sendTransport.id,
+                iceParameters: mediaData.sendTransport.iceParameters,
+                iceCandidates: mediaData.sendTransport.iceCandidates,
+                dtlsParameters: mediaData.sendTransport.dtlsParameters
+            });
+            this.setupSendTransportHandlers(client);
+            console.log(`✅ [TRANSPORT] Send transport created: ${client.sendTransport.id}`);
+            console.log(`📊 [TRANSPORT] Send transport initial state: ${client.sendTransport.connectionState}`);
         }
+        
+        if (!client.recvTransport) {
+            console.log(`📥 [TRANSPORT] Creating recv transport...`);
+            client.recvTransport = client.device.createRecvTransport({
+                id: mediaData.recvTransport.id,
+                iceParameters: mediaData.recvTransport.iceParameters,
+                iceCandidates: mediaData.recvTransport.iceCandidates,
+                dtlsParameters: mediaData.recvTransport.dtlsParameters
+            });
+            this.setupRecvTransportHandlers(client);
+            console.log(`✅ [TRANSPORT] Recv transport created: ${client.recvTransport.id}`);
+            console.log(`📊 [TRANSPORT] Recv transport initial state: ${client.recvTransport.connectionState}`);
+        }
+    } catch (error) {
+        console.error('❌ [TRANSPORT] Error creating transports:', error);
+        throw error;
     }
+}
 
-    static _setupTransportConnectHandler(client, transport) {
-        transport.on('connect', async ({ dtlsParameters }, callback, errback) => {
-            console.log(`🔗 [TRANSPORT] Connecting transport ${transport.id}...`);
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 10000);
-                await fetch(`${client.API_SERVER_URL}/api/media/transport/connect`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${client.token}`
-                    },
-                    body: JSON.stringify({
-                        transportId: transport.id,
-                        dtlsParameters: dtlsParameters
-                    }),
-                    signal: controller.signal
-                });
-                clearTimeout(timeoutId);
-                console.log(`✅ [TRANSPORT] Transport ${transport.id} connected`);
-                callback();
-            } catch (error) {
-                console.error('Transport connection failed:', error);
-                errback(error);
+static _setupTransportConnectHandler(client, transport) {
+    console.log(`🔗 [TRANSPORT] Setting up connect handler for ${transport.id}`);
+    
+    transport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+        console.log(`🔗 [TRANSPORT] Connect event fired for ${transport.id}`);
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => {
+                console.error(`⏱️ [TRANSPORT] Connection timeout for ${transport.id}`);
+                controller.abort();
+            }, 15000);
+            
+            console.log(`📤 [TRANSPORT] Sending DTLS parameters for ${transport.id}`);
+            const response = await fetch(`${client.API_SERVER_URL}/api/media/transport/connect`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${client.token}`
+                },
+                body: JSON.stringify({
+                    transportId: transport.id,
+                    dtlsParameters: dtlsParameters
+                }),
+                signal: controller.signal
+            });
+            
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error(`❌ [TRANSPORT] Server returned ${response.status}: ${errorText}`);
+                throw new Error(`HTTP ${response.status}: ${errorText}`);
             }
-        });
-        transport.on('connectionstatechange', (state) => {
-            console.log(`📊 [TRANSPORT] ${transport.id} state: ${state}`);
-        });
-    }
+            
+            console.log(`✅ [TRANSPORT] Transport ${transport.id} connected successfully`);
+            callback();
+        } catch (error) {
+            console.error(`❌ [TRANSPORT] Connection failed for ${transport.id}:`, error.message);
+            errback(error);
+        }
+    });
+    
+    transport.on('connectionstatechange', (state) => {
+        console.log(`📊 [TRANSPORT] ${transport.id} state changed to: ${state}`);
+        if (state === 'failed' || state === 'disconnected') {
+            console.error(`⚠️ [TRANSPORT] ${transport.id} connection failed!`);
+            // Попытка переподключения
+            if (client.currentRoom) {
+                console.log(`🔄 [TRANSPORT] Attempting to reconnect to room ${client.currentRoom}`);
+                client.reconnectToRoom(client.currentRoom).catch(err => {
+                    console.error('Reconnect failed:', err);
+                });
+            }
+        }
+    });
+    
+    transport.on('icestatechange', (state) => {
+        console.log(`🧊 [TRANSPORT] ${transport.id} ICE state: ${state}`);
+    });
+    
+    transport.on('dtlsstatechange', (state) => {
+        console.log(`🔐 [TRANSPORT] ${transport.id} DTLS state: ${state}`);
+    });
+}
 
     static setupSendTransportHandlers(client) {
         this._setupTransportConnectHandler(client, client.sendTransport);

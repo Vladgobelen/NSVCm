@@ -1,13 +1,104 @@
 // modules/UIManager.js
 import MembersManager from './MembersManager.js';
 import VolumeBoostManager from './VolumeBoostManager.js';
+import RoomManager from './RoomManager.js';
+import ServerManager from './ServerManager.js';
 
 class UIManager {
     static client = null;
     static unreadCounts = {};
+    static unreadVersion = 0;
+    static unreadLastSync = null;
+    static usernameCache = new Map();
 
     static setClient(client) {
         this.client = client;
+    }
+
+    static async fetchUsername(userId) {
+        if (!userId) return 'Unknown';
+        if (this.usernameCache.has(userId)) {
+            return this.usernameCache.get(userId);
+        }
+        try {
+            const response = await fetch(`${this.client.API_SERVER_URL}/api/users/${userId}`, {
+                headers: {
+                    'Authorization': `Bearer ${this.client.token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            if (response.ok) {
+                const data = await response.json();
+                const username = data.username || userId.replace('user_', '');
+                this.usernameCache.set(userId, username);
+                return username;
+            }
+        } catch (error) {
+            console.error('Ошибка получения имени пользователя:', error);
+        }
+        const fallback = userId.replace('user_', '');
+        this.usernameCache.set(userId, fallback);
+        return fallback;
+    }
+
+    static async fetchUsernames(userIds) {
+        if (!Array.isArray(userIds) || userIds.length === 0) return;
+        const missing = userIds.filter(id => !this.usernameCache.has(id));
+        if (missing.length === 0) return;
+        try {
+            const response = await fetch(`${this.client.API_SERVER_URL}/api/users/batch?userIds=${missing.join(',')}`, {
+                headers: {
+                    'Authorization': `Bearer ${this.client.token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.users) {
+                    for (const [userId, userData] of Object.entries(data.users)) {
+                        this.usernameCache.set(userId, userData.username || userId.replace('user_', ''));
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Ошибка получения имён пользователей:', error);
+        }
+    }
+
+    static syncUnreadCounts(serverData) {
+        this.unreadVersion++;
+        this.unreadLastSync = new Date().toISOString();
+        console.log(`🎨 [UI] Sync #${this.unreadVersion} at ${this.unreadLastSync}`);
+        console.log('📬 [UI] Полная синхронизация непрочитанных:', serverData);
+        this.unreadCounts = {};
+        for (const [serverId, rooms] of Object.entries(serverData)) {
+            if (!this.unreadCounts[serverId]) {
+                this.unreadCounts[serverId] = {
+                    total: 0,
+                    personalTotal: 0,
+                    hasMentionTotal: false,
+                    rooms: {}
+                };
+            }
+            for (const [roomId, roomData] of Object.entries(rooms)) {
+                this.unreadCounts[serverId].rooms[roomId] = {
+                    count: roomData.count || 0,
+                    hasMention: roomData.hasMention || false,
+                    personalCount: roomData.personalCount || 0
+                };
+                this.unreadCounts[serverId].total += roomData.count || 0;
+                this.unreadCounts[serverId].personalTotal += roomData.personalCount || 0;
+                if (roomData.hasMention) {
+                    this.unreadCounts[serverId].hasMentionTotal = true;
+                }
+            }
+        }
+        this.updateServerBadges();
+        this.updateRoomBadges();
+        this.updateTotalBadge();
+        if (this.client) {
+            this.updateRoomTitleBadge(this.client);
+        }
     }
 
     static updateStatus(text, status) {
@@ -28,7 +119,7 @@ class UIManager {
         }
     }
 
-    static addMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = [], userId = null) {
+    static addMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = [], userId = null, broadcast = false) {
         const messagesContainer = document.querySelector('.messages-container');
         if (!messagesContainer) return;
         const safeUser = user || 'Unknown';
@@ -36,9 +127,10 @@ class UIManager {
         const client = this.client || window.voiceClient;
         const isOwn = client && client.username && safeUser === client.username;
         const messageElement = document.createElement('div');
-        messageElement.className = 'message';
+        messageElement.className = 'message' + (type === 'system' ? ' system-message' : '');
         if (messageId) messageElement.dataset.messageId = messageId;
         if (readBy?.length) messageElement.dataset.readBy = JSON.stringify(readBy);
+        if (broadcast) messageElement.dataset.broadcast = 'true';
         const time = timestamp
             ? new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
             : new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
@@ -48,22 +140,22 @@ class UIManager {
                 finalImageUrl = client.API_SERVER_URL + imageUrl;
             }
         }
-        const avatarHtml = isOwn ? '' : `<div class="message-avatar">${safeUser.charAt(0).toUpperCase()}</div>`;
+        const avatarHtml = (isOwn && type !== 'system') ? '' : `<div class="message-avatar">${safeUser.charAt(0).toUpperCase()}</div>`;
         if (type === 'image') {
             messageElement.innerHTML = `
-${avatarHtml}
-<div class="message-content${isOwn ? ' own' : ''}">
-<div class="message-header">
-<span class="message-username">${this.escapeHtml(safeUser)}</span>
-<span class="message-time">${time}</span>
-</div>
-<div class="message-text">
-<div class="image-placeholder" data-src="${this.escapeHtml(finalImageUrl)}" style="cursor: pointer;">
-📷 Изображение
-</div>
-</div>
-</div>
-`;
+                ${avatarHtml}
+                <div class="message-content${isOwn ? ' own' : ''}">
+                    <div class="message-header">
+                        <span class="message-username">${this.escapeHtml(safeUser)}</span>
+                        <span class="message-time">${time}</span>
+                    </div>
+                    <div class="message-text">
+                        <div class="image-placeholder" data-src="${this.escapeHtml(finalImageUrl)}" style="cursor: pointer;">
+                            📷 Изображение
+                        </div>
+                    </div>
+                </div>
+            `;
             const imagePlaceholder = messageElement.querySelector('.image-placeholder');
             if (imagePlaceholder && finalImageUrl) {
                 imagePlaceholder.addEventListener('click', () => {
@@ -71,17 +163,19 @@ ${avatarHtml}
                 });
             }
         } else {
-            const formattedText = this.escapeHtmlAndFormat(safeText);
+            const formattedText = type === 'system'
+                ? `<pre style="white-space: pre-wrap; font-family: monospace; font-size: 12px; background: #1a1a2e; padding: 10px; border-radius: 5px; overflow-x: auto;">${this.escapeHtml(safeText)}</pre>`
+                : this.escapeHtmlAndFormat(safeText);
             messageElement.innerHTML = `
-${avatarHtml}
-<div class="message-content${isOwn ? ' own' : ''}">
-<div class="message-header">
-<span class="message-username">${this.escapeHtml(safeUser)}</span>
-<span class="message-time">${time}</span>
-</div>
-<div class="message-text">${formattedText}</div>
-</div>
-`;
+                ${avatarHtml}
+                <div class="message-content${isOwn ? ' own' : ''}">
+                    <div class="message-header">
+                        <span class="message-username">${this.escapeHtml(safeUser)}</span>
+                        <span class="message-time">${time}</span>
+                    </div>
+                    <div class="message-text">${formattedText}</div>
+                </div>
+            `;
         }
         messagesContainer.appendChild(messageElement);
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
@@ -96,45 +190,45 @@ ${avatarHtml}
         const modalOverlay = document.createElement('div');
         modalOverlay.className = 'image-modal-overlay';
         modalOverlay.style.cssText = `
-position: fixed;
-top: 0;
-left: 0;
-width: 100%;
-height: 100%;
-background: rgba(0, 0, 0, 0.9);
-display: flex;
-justify-content: center;
-align-items: center;
-z-index: 10000;
-cursor: zoom-out;
-`;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+            cursor: zoom-out;
+        `;
         const imageElement = document.createElement('img');
         imageElement.src = imageUrl;
         imageElement.style.cssText = `
-max-width: 90%;
-max-height: 90%;
-object-fit: contain;
-border-radius: 8px;
-box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
-`;
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        `;
         const closeBtn = document.createElement('button');
         closeBtn.innerHTML = '✕';
         closeBtn.style.cssText = `
-position: absolute;
-top: 20px;
-right: 20px;
-background: rgba(255, 255, 255, 0.2);
-border: none;
-color: white;
-font-size: 24px;
-width: 40px;
-height: 40px;
-border-radius: 50%;
-cursor: pointer;
-display: flex;
-justify-content: center;
-align-items: center;
-`;
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            font-size: 24px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        `;
         closeBtn.addEventListener('click', () => {
             modalOverlay.remove();
         });
@@ -259,13 +353,12 @@ align-items: center;
             }
         });
         membersList.innerHTML = '';
-        // Онлайн секция
         const onlineHeader = document.createElement('div');
         onlineHeader.className = 'members-section-header online-header';
         onlineHeader.innerHTML = `
-<span class="section-toggle-icon">${MembersManager.isSectionCollapsed('online') ? '▶' : '▼'}</span>
-<span class="section-title">Онлайн (${onlineMembers?.length || 0})</span>
-`;
+            <span class="section-toggle-icon">${MembersManager.isSectionCollapsed('online') ? '▶' : '▼'}</span>
+            <span class="section-title">Онлайн (${onlineMembers?.length || 0})</span>
+        `;
         onlineHeader.addEventListener('click', () => {
             MembersManager.toggleSection('online');
         });
@@ -282,13 +375,12 @@ align-items: center;
             });
         }
         membersList.appendChild(onlineContainer);
-        // Офлайн секция
         const offlineHeader = document.createElement('div');
         offlineHeader.className = 'members-section-header offline-header';
         offlineHeader.innerHTML = `
-<span class="section-toggle-icon">${MembersManager.isSectionCollapsed('offline') ? '▶' : '▼'}</span>
-<span class="section-title">Офлайн (${offlineMembers?.length || 0})</span>
-`;
+            <span class="section-toggle-icon">${MembersManager.isSectionCollapsed('offline') ? '▶' : '▼'}</span>
+            <span class="section-title">Офлайн (${offlineMembers?.length || 0})</span>
+        `;
         offlineHeader.addEventListener('click', () => {
             MembersManager.toggleSection('offline');
         });
@@ -324,19 +416,19 @@ align-items: center;
         memberElement.dataset.clientId = user.clientId || '';
         const savedValue = savedSliderValues.get(user.userId) || 100;
         memberElement.innerHTML = `
-<div class="member-avatar">${user.username.charAt(0).toUpperCase()}</div>
-<div class="member-info">
-<div class="member-name ${isOnline ? '' : 'offline-text'}">${this.escapeHtml(user.username)}</div>
-<div class="member-controls">
-<div class="member-status">
-<div class="mic-indicator ${isOnline && user.isMicActive ? 'active' : ''}"
-title="${user.isMicActive ? 'Микрофон включен' : 'Микрофон выключен'}"></div>
-</div>
-<input type="range" class="member-volume-slider" min="0" max="200" value="${savedValue}"
-title="Громкость: ${savedValue}%" data-producer-id="" style="display: none;">
-</div>
-</div>
-`;
+            <div class="member-avatar">${user.username.charAt(0).toUpperCase()}</div>
+            <div class="member-info">
+                <div class="member-name ${isOnline ? '' : 'offline-text'}">${this.escapeHtml(user.username)}</div>
+                <div class="member-controls">
+                    <div class="member-status">
+                        <div class="mic-indicator ${isOnline && user.isMicActive ? 'active' : ''}"
+                            title="${user.isMicActive ? 'Микрофон включен' : 'Микрофон выключен'}"></div>
+                    </div>
+                    <input type="range" class="member-volume-slider" min="0" max="200" value="${savedValue}"
+                        title="Громкость: ${savedValue}%" data-producer-id="" style="display: none;">
+                </div>
+            </div>
+        `;
         const slider = memberElement.querySelector('.member-volume-slider');
         if (slider && !slider._hasVolumeHandler) {
             slider.addEventListener('input', (e) => {
@@ -470,10 +562,10 @@ title="Громкость: ${savedValue}%" data-producer-id="" style="display: n
         const modalContent = document.querySelector('.modal-content');
         if (!modalOverlay || !modalContent) return;
         modalContent.innerHTML = `
-<h2>${title}</h2>
-${content}
-<button class="modal-submit">OK</button>
-`;
+            <h2>${title}</h2>
+            ${content}
+            <button class="modal-submit">OK</button>
+        `;
         modalOverlay.classList.remove('hidden');
         const submitButton = modalContent.querySelector('.modal-submit');
         if (submitButton && onSubmit) {
@@ -491,16 +583,16 @@ ${content}
         errorElement.className = 'error-message';
         errorElement.textContent = message;
         errorElement.style.cssText = `
-position: fixed;
-top: 20px;
-right: 20px;
-background: #ed4245;
-color: white;
-padding: 10px 15px;
-border-radius: 5px;
-z-index: 1000;
-max-width: 300px;
-`;
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #ed4245;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            z-index: 1000;
+            max-width: 300px;
+        `;
         document.body.appendChild(errorElement);
         setTimeout(() => {
             if (document.body.contains(errorElement)) {
@@ -509,7 +601,7 @@ max-width: 300px;
         }, 5000);
     }
 
-    static updateRoomUI(client) {
+    static async updateRoomUI(client) {
         const messagesContainer = document.querySelector('.messages-container');
         if (messagesContainer) {
             messagesContainer.innerHTML = '';
@@ -518,19 +610,62 @@ max-width: 300px;
         if (client.currentRoom) {
             const currentRoomData = client.rooms.find(room => room.id === client.currentRoom);
             if (currentRoomData) {
-                roomTitle = `Комната: ${currentRoomData.name}`;
+                const isPrivate = RoomManager.isPrivateRoom(client.currentRoom);
+                if (isPrivate) {
+                    const displayName = await RoomManager.getPrivateRoomDisplayName(client.currentRoom, client.userId, client.currentServer);
+                    roomTitle = `👤 ${displayName || currentRoomData.name}`;
+                } else {
+                    roomTitle = `Комната: ${currentRoomData.name}`;
+                }
             } else {
-                roomTitle = `Комната: ${client.currentRoom}`;
+                const isPrivate = RoomManager.isPrivateRoom(client.currentRoom);
+                if (isPrivate) {
+                    const displayName = await RoomManager.getPrivateRoomDisplayName(client.currentRoom, client.userId, client.currentServer);
+                    roomTitle = `👤 ${displayName || client.currentRoom}`;
+                } else {
+                    roomTitle = `Комната: ${client.currentRoom}`;
+                }
             }
         }
         this.updateRoomTitle(roomTitle);
         this.updateMicButton(client.isConnected ? (client.isMicActive ? 'active' : 'connected') : 'disconnected');
+        this.updateRoomTitleBadge(client);
+        this.updateTotalBadge();
     }
 
     static updateRoomTitle(title) {
         const titleElement = document.querySelector('.current-room-title');
         if (titleElement) {
             titleElement.textContent = title;
+        }
+    }
+
+    static updateRoomTitleBadge(client) {
+        const titleElement = document.querySelector('.current-room-title');
+        if (!titleElement) return;
+        const existingBadge = titleElement.querySelector('.room-unread-badge');
+        if (existingBadge) {
+            existingBadge.remove();
+        }
+        if (!client || !client.currentRoom) {
+            return;
+        }
+        let roomUnreadData = null;
+        for (const serverId in this.unreadCounts) {
+            if (this.unreadCounts[serverId].rooms?.[client.currentRoom]) {
+                roomUnreadData = this.unreadCounts[serverId].rooms[client.currentRoom];
+                break;
+            }
+        }
+        if (roomUnreadData && roomUnreadData.count > 0) {
+            const badge = document.createElement('span');
+            badge.className = 'room-unread-badge';
+            if (roomUnreadData.personalCount > 0) {
+                badge.textContent = `${roomUnreadData.count}@${roomUnreadData.personalCount}`;
+            } else {
+                badge.textContent = roomUnreadData.count;
+            }
+            titleElement.appendChild(badge);
         }
     }
 
@@ -541,14 +676,42 @@ max-width: 300px;
         }
     }
 
-    // 🔥 ИСПРАВЛЕНО: setUnreadCount с правильным форматом
-    static setUnreadCount(serverId, count, hasMention, personalCount = 0) {
-        this.unreadCounts[serverId] = { count, hasMention, personalCount };
-        console.log(`📬 [UI] setUnreadCount: Server ${serverId} = ${count} total, ${personalCount} personal, hasMention=${hasMention}`);
+    static setUnreadCount(serverId, roomId, count, hasMention, personalCount = 0) {
+        if (!serverId) {
+            console.warn('⚠️ setUnreadCount: serverId is empty, using roomId');
+            serverId = roomId;
+        }
+        let normalizedServerId = serverId;
+        if (serverId.startsWith('user_') || serverId.startsWith('direct_')) {
+            normalizedServerId = roomId || serverId;
+        }
+        if (!this.unreadCounts[normalizedServerId]) {
+            this.unreadCounts[normalizedServerId] = {
+                total: 0,
+                personalTotal: 0,
+                hasMentionTotal: false,
+                rooms: {}
+            };
+        }
+        this.unreadCounts[normalizedServerId].rooms[roomId] = { count, hasMention, personalCount };
+        this.unreadCounts[normalizedServerId].total = 0;
+        this.unreadCounts[normalizedServerId].personalTotal = 0;
+        this.unreadCounts[normalizedServerId].hasMentionTotal = false;
+        for (const rid in this.unreadCounts[normalizedServerId].rooms) {
+            const data = this.unreadCounts[normalizedServerId].rooms[rid];
+            this.unreadCounts[normalizedServerId].total += data.count || 0;
+            this.unreadCounts[normalizedServerId].personalTotal += data.personalCount || 0;
+            if (data.hasMention) {
+                this.unreadCounts[normalizedServerId].hasMentionTotal = true;
+            }
+        }
+        console.log(`📬 [UI] setUnreadCount: Server ${normalizedServerId}, Room ${roomId} = ${count} total, ${personalCount} personal`);
         this.updateServerBadges();
+        this.updateRoomBadges();
+        this.updateTotalBadge();
+        this.updateRoomTitleBadge(this.client);
     }
 
-    // 🔥 ИСПРАВЛЕНО: updateServerBadges с форматом total@personal
     static updateServerBadges() {
         const serversList = document.querySelector('.servers-list');
         if (!serversList) return;
@@ -559,47 +722,93 @@ max-width: 300px;
             if (existingBadge) {
                 existingBadge.remove();
             }
-            const unreadData = this.unreadCounts[serverId];
-            if (unreadData && unreadData.count > 0) {
+            let serverData = this.unreadCounts[serverId];
+            if (!serverData) {
+                for (const sid in this.unreadCounts) {
+                    if (sid === serverId ||
+                        sid === 'null' ||
+                        sid.startsWith('user_') ||
+                        sid.startsWith('direct_')) {
+                        const candidateData = this.unreadCounts[sid];
+                        if (candidateData && candidateData.total > 0) {
+                            if (!serverData) {
+                                serverData = {
+                                    total: 0,
+                                    personalTotal: 0,
+                                    hasMentionTotal: false
+                                };
+                            }
+                            serverData.total += candidateData.total || 0;
+                            serverData.personalTotal += candidateData.personalTotal || 0;
+                            if (candidateData.hasMentionTotal) {
+                                serverData.hasMentionTotal = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if (serverData && serverData.total > 0) {
                 const badge = document.createElement('span');
-                badge.className = 'unread-badge' + (unreadData.hasMention ? ' has-mention' : '');
-                // 🔥 ФОРМАТ: total@personal (например: 2@1)
-                if (unreadData.personalCount > 0) {
-                    badge.textContent = `${unreadData.count}@${unreadData.personalCount}`;
+                badge.className = 'unread-badge' + (serverData.hasMentionTotal ? ' has-mention' : '');
+                if (serverData.personalTotal > 0) {
+                    badge.textContent = `${serverData.total}@${serverData.personalTotal}`;
                 } else {
-                    badge.textContent = unreadData.count;
+                    badge.textContent = serverData.total;
                 }
                 item.appendChild(badge);
-                console.log(`📬 [UI] Badge added to server ${serverId}: ${badge.textContent}`);
             }
         });
-        const serversToggleBtn = document.querySelector('#serversToggle');
-        if (serversToggleBtn) {
-            const existingBtnBadge = serversToggleBtn.querySelector('.unread-badge');
-            if (existingBtnBadge) {
-                existingBtnBadge.remove();
+    }
+
+    static updateRoomBadges() {
+        const roomsList = document.querySelector('.rooms-list');
+        if (!roomsList) return;
+        const roomItems = roomsList.querySelectorAll('.room-item');
+        roomItems.forEach(item => {
+            const roomId = item.dataset.room;
+            const existingBadge = item.querySelector('.room-unread-badge');
+            if (existingBadge) {
+                existingBadge.remove();
             }
-            let totalCount = 0;
-            let totalPersonalCount = 0;
-            let totalHasMention = false;
             for (const serverId in this.unreadCounts) {
-                totalCount += this.unreadCounts[serverId].count || 0;
-                totalPersonalCount += this.unreadCounts[serverId].personalCount || 0;
-                if (this.unreadCounts[serverId].hasMention) {
-                    totalHasMention = true;
+                const roomData = this.unreadCounts[serverId].rooms?.[roomId];
+                if (roomData && roomData.count > 0) {
+                    const badge = document.createElement('span');
+                    badge.className = 'room-unread-badge' + (roomData.hasMention ? ' has-mention' : '');
+                    if (roomData.personalCount > 0) {
+                        badge.textContent = `${roomData.count}@${roomData.personalCount}`;
+                    } else {
+                        badge.textContent = roomData.count;
+                    }
+                    item.appendChild(badge);
+                    break;
                 }
+            }
+        });
+    }
+
+    static updateTotalBadge() {
+        let totalCount = 0;
+        let totalPersonalCount = 0;
+        let totalHasMention = false;
+        for (const serverId in this.unreadCounts) {
+            totalCount += this.unreadCounts[serverId].total || 0;
+            totalPersonalCount += this.unreadCounts[serverId].personalTotal || 0;
+            if (this.unreadCounts[serverId].hasMentionTotal) {
+                totalHasMention = true;
+            }
+        }
+        const currentRoomTitle = document.querySelector('.current-room-title');
+        if (currentRoomTitle) {
+            let existingTitleBadge = currentRoomTitle.querySelector('.title-unread-badge');
+            if (existingTitleBadge) {
+                existingTitleBadge.remove();
             }
             if (totalCount > 0) {
-                const btnBadge = document.createElement('span');
-                btnBadge.className = 'unread-badge' + (totalHasMention ? ' has-mention' : '');
-                // 🔥 ФОРМАТ: total@personal
-                if (totalPersonalCount > 0) {
-                    btnBadge.textContent = `${totalCount}@${totalPersonalCount}`;
-                } else {
-                    btnBadge.textContent = totalCount;
-                }
-                serversToggleBtn.appendChild(btnBadge);
-                console.log(`📬 [UI] Total badge on button: ${btnBadge.textContent}`);
+                const badge = document.createElement('span');
+                badge.className = 'title-unread-badge';
+                badge.textContent = totalCount > 99 ? '99+' : totalCount;
+                currentRoomTitle.appendChild(badge);
             }
         }
     }
@@ -608,12 +817,63 @@ max-width: 300px;
         if (this.unreadCounts[serverId]) {
             delete this.unreadCounts[serverId];
             this.updateServerBadges();
+            this.updateRoomBadges();
+            this.updateTotalBadge();
+        }
+    }
+
+    static clearUnreadForRoom(serverId, roomId) {
+        if (!serverId) {
+            serverId = roomId;
+        }
+        let normalizedServerId = serverId;
+        if (serverId.startsWith('user_') || serverId.startsWith('direct_')) {
+            normalizedServerId = roomId || serverId;
+        }
+        if (this.unreadCounts[normalizedServerId]?.rooms?.[roomId]) {
+            delete this.unreadCounts[normalizedServerId].rooms[roomId];
+            this.unreadCounts[normalizedServerId].total = 0;
+            this.unreadCounts[normalizedServerId].personalTotal = 0;
+            this.unreadCounts[normalizedServerId].hasMentionTotal = false;
+            for (const rid in this.unreadCounts[normalizedServerId].rooms) {
+                const data = this.unreadCounts[normalizedServerId].rooms[rid];
+                this.unreadCounts[normalizedServerId].total += data.count || 0;
+                this.unreadCounts[normalizedServerId].personalTotal += data.personalCount || 0;
+                if (data.hasMention) {
+                    this.unreadCounts[normalizedServerId].hasMentionTotal = true;
+                }
+            }
+            if (this.unreadCounts[normalizedServerId].total === 0) {
+                delete this.unreadCounts[normalizedServerId];
+            }
+            this.updateServerBadges();
+            this.updateRoomBadges();
+            this.updateTotalBadge();
+            this.updateRoomTitleBadge(this.client);
         }
     }
 
     static clearAllUnread() {
         this.unreadCounts = {};
         this.updateServerBadges();
+        this.updateRoomBadges();
+        this.updateTotalBadge();
+    }
+
+    static getSyncStatus() {
+        return {
+            version: this.unreadVersion,
+            lastSync: this.unreadLastSync,
+            localTotal: this.getLocalUnreadTotal()
+        };
+    }
+
+    static getLocalUnreadTotal() {
+        let total = 0;
+        for (const serverId in this.unreadCounts) {
+            total += this.unreadCounts[serverId].total || 0;
+        }
+        return total;
     }
 }
 

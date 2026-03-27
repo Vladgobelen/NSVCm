@@ -43,21 +43,16 @@ class InviteManager {
 
     static async applyPendingInvite() {
         const inviteCode = this.getPendingInvite();
-
         if (!inviteCode || !this.client?.token) {
             return false;
         }
-
         try {
             const inviteInfo = await this.getInviteInfo(inviteCode);
-
             if (!inviteInfo) {
                 this.clearPendingInvite();
                 return false;
             }
-
             let success = false;
-
             if (inviteInfo.invite.targetType === 'server') {
                 success = await this.joinServerByInvite(inviteInfo);
             } else if (
@@ -67,7 +62,6 @@ class InviteManager {
             ) {
                 success = await this.joinRoomByInvite(inviteInfo);
             }
-
             if (success) {
                 this.clearPendingInvite();
                 if (this.client) {
@@ -75,7 +69,6 @@ class InviteManager {
                 }
                 UIManager.addMessage('System', '✅ Присоединение по приглашению успешно');
             }
-
             return success;
         } catch (error) {
             UIManager.showError('Не удалось применить приглашение');
@@ -93,17 +86,14 @@ class InviteManager {
             'Authorization': `Bearer ${this.client.token}`,
             ...(options.headers || {})
         };
-
         const response = await fetch(`${this.client.API_SERVER_URL}${endpoint}`, {
             ...options,
             headers
         });
-
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
             throw new Error(errorData.error || `HTTP error: ${response.status}`);
         }
-
         return response.json();
     }
 
@@ -115,13 +105,11 @@ class InviteManager {
         try {
             const { invite } = inviteInfo;
             const serverExists = this.client.servers.some(s => s.id === invite.targetId);
-
             if (serverExists) {
                 this.client.currentServerId = invite.targetId;
                 UIManager.addMessage('System', `Вы уже присоединены к серверу "${invite.targetInfo.name}"`);
                 return true;
             }
-
             const data = await this._apiRequest(`/api/servers/${invite.targetId}/join`, {
                 method: 'POST',
                 body: JSON.stringify({
@@ -129,19 +117,15 @@ class InviteManager {
                     token: this.client.token
                 })
             });
-
             const serverExistsInList = this.client.servers.some(s => s.id === data.server.id);
             if (!serverExistsInList) {
                 this.client.servers.push(data.server);
             }
-
             this.client.currentServerId = data.server.id;
             this.client.currentServer = data.server;
             UIManager.addMessage('System', `✅ Вы присоединились к серверу "${data.server.name}" по приглашению`);
-
             const RoomManager = (await import('./RoomManager.js')).default;
             await RoomManager.loadRoomsForServer(this.client, data.server.id);
-
             return true;
         } catch (error) {
             UIManager.showError(`Не удалось присоединиться к серверу: ${error.message}`);
@@ -156,7 +140,6 @@ class InviteManager {
                 invite.targetInfo?.type === 'private_room' ||
                 invite.targetType === 'private_room' ||
                 !invite.targetInfo?.serverId;
-
             if (isPrivateRoom) {
                 if (!this.client) {
                     throw new Error('Client not initialized');
@@ -169,14 +152,11 @@ class InviteManager {
                 UIManager.addMessage('System', '✅ Вы присоединились к приватной комнате по приглашению');
                 return true;
             }
-
             if (!invite.targetInfo || !invite.targetInfo.serverId) {
                 throw new Error('Недостаточно информации о комнате в приглашении');
             }
-
             const serverId = invite.targetInfo.serverId;
             const serverExists = this.client.servers.some(s => s.id === serverId);
-
             if (!serverExists) {
                 const serverJoinSuccess = await this.joinServerByInvite({
                     invite: {
@@ -190,14 +170,11 @@ class InviteManager {
                     throw new Error('Не удалось присоединиться к серверу комнаты');
                 }
             }
-
             this.client.currentServerId = serverId;
             this.client.currentRoom = invite.targetId;
-
             const RoomManager = (await import('./RoomManager.js')).default;
             await RoomManager.loadRoomsForServer(this.client, serverId);
             await RoomManager.joinRoom(this.client, invite.targetId);
-
             UIManager.addMessage('System', `✅ Вы присоединились к комнате "${invite.targetInfo.name}" по приглашению`);
             return true;
         } catch (error) {
@@ -206,17 +183,6 @@ class InviteManager {
         }
     }
 
-    static async _createInvite(targetId, targetType, expiresInHours = 168) {
-        const data = await this._apiRequest('/api/invites', {
-            method: 'POST',
-            body: JSON.stringify({
-                targetId,
-                targetType,
-                expiresInHours
-            })
-        });
-        return data.invite;
-    }
 
     static async createServerInvite(serverId, expiresInHours = 168) {
         try {
@@ -226,19 +192,11 @@ class InviteManager {
         }
     }
 
-    static async createRoomInvite(roomId, expiresInHours = 168) {
-        try {
-            return await this._createInvite(roomId, 'room', expiresInHours);
-        } catch (error) {
-            throw error;
-        }
-    }
 
     static async _getInvites(targetId, targetType) {
         const endpoint = targetType === 'server'
             ? `/api/servers/${targetId}/invites`
             : `/api/rooms/${targetId}/invites`;
-        
         const data = await this._apiRequest(endpoint);
         return data.invites;
     }
@@ -253,17 +211,83 @@ class InviteManager {
 
     static async getRoomInvites(roomId) {
         try {
-            return await this._getInvites(roomId, 'room');
+            const isPrivateRoom = roomId.startsWith('user_') && roomId.includes('_user_');
+            const targetType = isPrivateRoom ? 'private_room' : 'room';
+            return await this._getInvites(roomId, targetType);
         } catch (error) {
             throw error;
         }
     }
 
+    static async createRoomInvite(roomId, expiresInHours = 168) {
+        try {
+            // 🔥 ИСПРАВЛЕНО: Для приватных комнат используем 'private_room'
+            const isPrivateRoom = roomId.startsWith('user_') && roomId.includes('_user_');
+            const targetType = isPrivateRoom ? 'private_room' : 'room';
+            
+            console.log(`📋 [INVITE] Создание приглашения для комнаты: ${roomId}, тип: ${targetType}`);
+            
+            return await this._createInvite(roomId, targetType, expiresInHours);
+        } catch (error) {
+            console.error('❌ [INVITE] Ошибка создания приглашения для комнаты:', error);
+            throw error;
+        }
+    }
+
+    static async _createInvite(targetId, targetType, expiresInHours = 168) {
+        console.log(`📨 [INVITE] Запрос создания приглашения:`);
+        console.log(`   - targetId: ${targetId}`);
+        console.log(`   - targetType: ${targetType}`);
+        console.log(`   - expiresInHours: ${expiresInHours}`);
+        
+        const data = await this._apiRequest('/api/invites', {
+            method: 'POST',
+            body: JSON.stringify({
+                targetId,
+                targetType,
+                expiresInHours
+            })
+        });
+        
+        console.log('📨 [INVITE] Получен ответ от сервера:', data);
+        console.log('📨 [INVITE] Объект invite:', data.invite);
+        console.log('📨 [INVITE] Код приглашения:', data.invite?.code);
+        
+        if (!data.invite?.code) {
+            console.error('❌ [INVITE] ВНИМАНИЕ: Код приглашения отсутствует в ответе сервера!');
+            console.error('❌ [INVITE] Полный ответ:', JSON.stringify(data, null, 2));
+        }
+        
+        return data.invite;
+    }
+
     static generateInviteLink(code) {
-        return `https://ns.fiber-gate.ru/${code}`;
+        console.log('🔗 [LINK] Генерация ссылки...');
+        console.log('🔗 [LINK] Входной код:', code);
+        console.log('🔗 [LINK] Тип кода:', typeof code);
+        console.log('🔗 [LINK] Код пустой?:', !code);
+        
+        if (!code || typeof code !== 'string') {
+            console.error('❌ [LINK] КРИТИЧЕСКАЯ ОШИБКА: Код приглашения невалиден!', code);
+            const fallbackLink = 'https://ns.fiber-gate.ru/ERROR_NO_CODE';
+            console.log('🔗 [LINK] Возвращаем запасную ссылку:', fallbackLink);
+            return fallbackLink;
+        }
+        
+        const link = `https://ns.fiber-gate.ru/${code}`;
+        console.log('✅ [LINK] Сгенерированная ссылка:', link);
+        return link;
     }
 
     static copyInviteLink(code) {
+        console.log('🔗 [InviteManager] copyInviteLink called:', { code });
+
+        if (!code) {
+            console.error('❌ [InviteManager] copyInviteLink: Code is empty or undefined!');
+            UIManager.showError('Ошибка: код приглашения пуст');
+            return;
+        }
+
         const link = this.generateInviteLink(code);
         navigator.clipboard.writeText(link)
             .then(() => {

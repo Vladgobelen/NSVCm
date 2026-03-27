@@ -1,20 +1,8 @@
+// AuthManager.js
 import InviteManager from './InviteManager.js';
 
 class AuthManager {
-    static STORAGE_KEY = 'voicechat_users';
     static LAST_USER_KEY = 'voicechat_lastuser';
-
-    static getAllUsers() {
-        try {
-            return JSON.parse(localStorage.getItem(this.STORAGE_KEY)) || {};
-        } catch {
-            return {};
-        }
-    }
-
-    static saveAllUsers(users) {
-        localStorage.setItem(this.STORAGE_KEY, JSON.stringify(users));
-    }
 
     static loadLastUser() {
         try {
@@ -25,14 +13,15 @@ class AuthManager {
     }
 
     static saveLastUser(user) {
-        localStorage.setItem(this.LAST_USER_KEY, JSON.stringify(user));
+        localStorage.setItem(this.LAST_USER_KEY, JSON.stringify({
+            username: user.username,
+            userId: user.userId,
+            token: user.token,
+            tokenVersion: user.tokenVersion
+        }));
     }
 
     static removeUser(username) {
-        const users = this.getAllUsers();
-        delete users[username];
-        this.saveAllUsers(users);
-
         const lastUser = this.loadLastUser();
         if (lastUser && lastUser.username === username) {
             localStorage.removeItem(this.LAST_USER_KEY);
@@ -41,24 +30,27 @@ class AuthManager {
 
     static async tryAutoLogin(client) {
         const lastUser = this.loadLastUser();
-        if (!lastUser) return false;
-
-        const isValid = await this.validateToken(client, lastUser.userId, lastUser.token);
+        if (!lastUser) {
+            console.log('🔐 [AUTH] Нет сохранённых данных для авто-логина');
+            return false;
+        }
+        console.log(`🔐 [AUTH] Попытка авто-логина: ${lastUser.username} (${lastUser.userId}), tokenVersion: ${lastUser.tokenVersion}`);
+        const isValid = await this.validateToken(client, lastUser.userId, lastUser.token, lastUser.tokenVersion);
         if (!isValid) {
+            console.log(`⚠️ [AUTH] Авто-логин не удался, токен невалиден`);
             this.removeUser(lastUser.username);
             return false;
         }
-
         client.userId = lastUser.userId;
         client.token = lastUser.token;
         client.username = lastUser.username;
-
+        client.tokenVersion = lastUser.tokenVersion || 1;
+        console.log(`✅ [AUTH] Авто-логин успешен: ${client.username} (${client.userId})`);
         InviteManager.init(client);
-
         return true;
     }
 
-    static async validateToken(client, userId, token) {
+    static async validateToken(client, userId, token, tokenVersion = 1) {
         try {
             const response = await fetch(`${client.API_SERVER_URL}/api/auth/validate`, {
                 method: 'POST',
@@ -66,13 +58,17 @@ class AuthManager {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify({ userId, token })
+                body: JSON.stringify({ userId, token, tokenVersion })
             });
-
-            if (!response.ok) return false;
+            if (!response.ok) {
+                console.log(`⚠️ [AUTH] Validate HTTP ${response.status}`);
+                return false;
+            }
             const data = await response.json();
+            console.log(`🔐 [AUTH] Validate response:`, data);
             return data.valid === true;
         } catch (error) {
+            console.error('❌ [AUTH] Validate error:', error);
             return false;
         }
     }
@@ -84,7 +80,6 @@ class AuthManager {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password })
             });
-
             const responseText = await response.text();
             let data;
             try {
@@ -92,31 +87,21 @@ class AuthManager {
             } catch (e) {
                 throw new Error('Сервер вернул неверный формат данных');
             }
-
             if (!response.ok) {
                 throw new Error(data.error || `Ошибка сервера: ${response.status}`);
             }
-
-            const users = this.getAllUsers();
-            users[username] = {
-                username: username,
-                password: password,
-                userId: data.userId,
-                token: data.token
-            };
-            this.saveAllUsers(users);
             this.saveLastUser({
                 username: username,
                 userId: data.userId,
-                token: data.token
+                token: data.token,
+                tokenVersion: data.tokenVersion || 1
             });
-
             client.userId = data.userId;
             client.token = data.token;
             client.username = username;
-
+            client.tokenVersion = data.tokenVersion || 1;
+            console.log(`✅ [AUTH] Пользователь ${username} (${data.userId}) авторизован, tokenVersion: ${data.tokenVersion}`);
             InviteManager.init(client);
-
             return true;
         } catch (error) {
             throw error;
@@ -124,25 +109,15 @@ class AuthManager {
     }
 
     static showAuthModal(client) {
-        const users = this.getAllUsers();
-        const savedUser = this.loadLastUser();
+        const lastUser = this.loadLastUser();
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
         modal.style.display = 'flex';
         modal.innerHTML = `
             <div class="modal-content">
-                <h2>Выберите пользователя</h2>
-                <div class="saved-users-list">
-                    ${Object.keys(users).length === 0
-                        ? '<div class="no-users-message">Нет сохранённых пользователей</div>'
-                        : Object.values(users).map(u => `
-                            <div class="saved-user-item" data-username="${u.username}">
-                                <span>${u.username}</span>
-                                <button class="remove-user-btn" data-user="${u.username}">✕</button>
-                            </div>
-                        `).join('')}
-                </div>
-                <input type="text" id="usernameInput" placeholder="Никнейм" value="${savedUser ? savedUser.username : ''}">
+                <h2>Вход в систему</h2>
+                ${lastUser ? `<div class="last-user-hint">Последний пользователь: ${lastUser.username}</div>` : ''}
+                <input type="text" id="usernameInput" placeholder="Никнейм" value="${lastUser ? lastUser.username : ''}">
                 <input type="password" id="passwordInput" placeholder="Пароль">
                 <button id="authSubmitBtn">Войти</button>
                 <button id="createNewUserBtn">➕ Создать нового</button>
@@ -153,28 +128,6 @@ class AuthManager {
         const usernameInput = modal.querySelector('#usernameInput');
         const passwordInput = modal.querySelector('#passwordInput');
         const submitBtn = modal.querySelector('#authSubmitBtn');
-
-        modal.querySelectorAll('.saved-user-item').forEach(item => {
-            item.addEventListener('click', () => {
-                const username = item.dataset.username;
-                const user = users[username];
-                usernameInput.value = username;
-                passwordInput.value = user.password;
-                passwordInput.focus();
-            });
-        });
-
-        modal.querySelectorAll('.remove-user-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const username = btn.dataset.user;
-                if (confirm(`Удалить пользователя ${username}?`)) {
-                    this.removeUser(username);
-                    modal.remove();
-                    this.showAuthModal(client);
-                }
-            });
-        });
 
         modal.querySelector('#createNewUserBtn').addEventListener('click', () => {
             usernameInput.value = '';
@@ -193,17 +146,11 @@ class AuthManager {
                 const success = await this.registerUser(client, u, p);
                 if (success) {
                     modal.remove();
-
                     await import('./ServerManager.js').then(module => {
                         return module.default.loadServers(client);
                     });
-
                     const inviteApplied = await InviteManager.applyPendingInvite();
-
-                    if (inviteApplied) {
-                        return;
-                    }
-
+                    if (inviteApplied) return;
                     if (client.inviteServerId) {
                         const serverExists = client.servers.some(s => s.id === client.inviteServerId);
                         if (serverExists) {
@@ -214,7 +161,6 @@ class AuthManager {
                             return;
                         }
                     }
-
                     if (client.currentServerId) {
                         await import('./RoomManager.js').then(module => {
                             return module.default.loadRoomsForServer(client, client.currentServerId);
@@ -234,11 +180,12 @@ class AuthManager {
             if (e.key === 'Enter') handleSubmit();
         });
 
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                modal.remove();
-            }
-        });
+        // 🔥 ИСПРАВЛЕНО: Убрано закрытие модального окна при клике вне его
+        // modal.addEventListener('click', (e) => {
+        //     if (e.target === modal) {
+        //         modal.remove();
+        //     }
+        // });
 
         InviteManager.init(client);
     }
