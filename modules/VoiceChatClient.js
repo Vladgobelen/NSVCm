@@ -1051,142 +1051,151 @@ class VoiceChatClient {
         }
     }
 
-    async handleDebugCommand() {
-        if (!this.currentRoom) {
-            UIManager.showError('Вы не в комнате');
-            return;
-        }
+async handleDebugCommand() {
+    if (!this.currentRoom) {
+        UIManager.showError('Вы не в комнате');
+        return;
+    }
 
-        // ========================================================================
-        // 🔥 НОВАЯ СЕКЦИЯ: ИНФОРМАЦИЯ О ПРИВАТНОЙ КОМНАТЕ
-        // ========================================================================
-        const isPrivate = this.currentRoom.startsWith('user_') && this.currentRoom.includes('_user_');
+    // ========================================================================
+    // 🔥 ОБНОВЛЁННАЯ ОТЛАДКА КЛИЕНТА
+    // ========================================================================
+    let debugMessage = '🔍 === ОТЛАДКА КЛИЕНТА ===\n';
+    debugMessage += `👤 ClientID: ${this.clientID}\n`;
+    debugMessage += `🏠 Комната: ${this.currentRoom}\n`;
+    debugMessage += `🔗 Подключен: ${this.isConnected}\n`;
+    debugMessage += `🔌 Socket: ${this.socket?.connected ? 'подключен' : 'отключен'}\n`;
+    debugMessage += `📡 mediaData: ${this.mediaData ? 'получен' : 'нет'}\n`;
 
-        let debugMessage = '🔍 === ОТЛАДКА КЛИЕНТА ===\n';
-        debugMessage += `👤 ClientID: ${this.clientID}\n`;
-        debugMessage += `🏠 Комната: ${this.currentRoom}\n`;
-        debugMessage += `🔗 Подключен: ${this.isConnected}\n`;
-        debugMessage += `🔌 Socket: ${this.socket?.connected ? 'подключен' : 'отключен'}\n`;
-        debugMessage += `📡 mediaData: ${this.mediaData ? 'получен' : 'нет'}\n`;
+    // ========================================================================
+    // 🔥 МИНИМАЛЬНАЯ ИНФОРМАЦИЯ О ГОЛОСОВЫХ МАРШРУТАХ
+    // ========================================================================
+    debugMessage += '\n🎤 === ГОЛОСОВЫЕ МАРШРУТЫ ===\n';
+    debugMessage += '🚚 ТРАНСПОРТЫ:\n';
+    debugMessage += `   Send: ${this.sendTransport ? `${this.sendTransport.id} [${this.sendTransport.connectionState}]` : 'нет'}\n`;
+    debugMessage += `   Recv: ${this.recvTransport ? `${this.recvTransport.id} [${this.recvTransport.connectionState}]` : 'нет'}\n`;
 
-        // 🔥 ИНФОРМАЦИЯ О ПРИВАТНОЙ КОМНАТЕ
-        debugMessage += `\n🏷️ ТИП КОМНАТЫ: ${isPrivate ? '✅ ПРИВАТНАЯ' : 'Обычная'}\n`;
+    debugMessage += '\n🎤 ПРОДЮСЕРЫ:\n';
+    if (this.audioProducer) {
+        debugMessage += `   • ${this.audioProducer.id} [audio] — ${this.audioProducer.track?.enabled ? 'активен' : 'выключен'}\n`;
+    } else {
+        debugMessage += `   (нет)\n`;
+    }
 
-        if (isPrivate) {
-            // 🔥 ПОЛНЫЙ ID КОМНАТЫ
-            debugMessage += `\n🆔 ПОЛНЫЙ ID КОМНАТЫ: \`${this.currentRoom}\`\n`;
+    debugMessage += '\n🎧 КОНСЬЮМЕРЫ:\n';
+    if (this.consumerState.size === 0) {
+        debugMessage += `   (нет)\n`;
+    } else {
+        this.consumerState.forEach((state, pid) => {
+            debugMessage += `   • ${pid} → ${state.status} ${state.lastError ? `[ошибка: ${state.lastError.message}]` : ''}\n`;
+        });
+    }
 
-            // 🔥 ПАРСИМ УЧАСТНИКОВ
-            const parts = this.currentRoom.split('_user_');
-            const user1Id = parts[0] || 'unknown';
-	    const user2Id = parts[1] ? (parts[1].startsWith('user_') ? parts[1] : 'user_' + parts[1]) : 'unknown';
-            debugMessage += `\n👥 УЧАСТНИКИ ПРИВАТНОЙ КОМНАТЫ (из ID):\n`;
-            debugMessage += `   Участник 1 ID: \`${user1Id}\`\n`;
-            debugMessage += `   Участник 2 ID: \`${user2Id}\`\n`;
+    debugMessage += '\n📋 МАППИНГИ:\n';
+    const pum = window.producerUserMap?.size || 0;
+    const pcm = window.producerClientMap?.size || 0;
+    debugMessage += `   producerUserMap: ${pum} записей\n`;
+    debugMessage += `   producerClientMap: ${pcm} записей\n`;
 
-            // 🔥 ТЕКУЩИЙ ПОЛЬЗОВАТЕЛЬ
-            const isUser1 = this.userId === user1Id;
-            const isUser2 = this.userId === user2Id;
-            const otherUserId = isUser1 ? user2Id : (isUser2 ? user1Id : 'unknown');
+    // ========================================================================
+    // 🔥 ПОДРОБНАЯ ИНФОРМАЦИЯ О НЕПРОЧИТАННЫХ СООБЩЕНИЯХ (КЛИЕНТ)
+    // ========================================================================
+    debugMessage += '\n📬 === НЕПРОЧИТАННЫЕ СООБЩЕНИЯ (КЛИЕНТ) ===\n';
+    debugMessage += `👤 Пользователь: ${this.username} (${this.userId})\n`;
 
-            debugMessage += `\n🎯 ТЕКУЩИЙ ПОЛЬЗОВАТЕЛЬ:\n`;
-            debugMessage += `   Вы: \`${this.username}\` (${this.userId})\n`;
-            debugMessage += `   Вы участник 1: ${isUser1 ? '✅ ДА' : '❌ НЕТ'}\n`;
-            debugMessage += `   Вы участник 2: ${isUser2 ? '✅ ДА' : '❌ НЕТ'}\n`;
-            debugMessage += `   Другой участник ID: \`${otherUserId}\`\n`;
+    if (UIManager.unreadCounts && Object.keys(UIManager.unreadCounts).length > 0) {
+        let totalUnread = 0;
+        let totalPersonal = 0;
+        let totalRooms = 0;
 
-            // 🔥 ЗАГРУЖАЕМ ИМЯ ДРУГОГО ПОЛЬЗОВАТЕЛЯ ИЗ КЭША
-            const otherUserName = UIManager.usernameCache.get(otherUserId) || '❌ НЕ В КЭШЕ';
-            debugMessage += `   Другой участник имя (кэш): \`${otherUserName}\`\n`;
+        for (const [serverId, data] of Object.entries(UIManager.unreadCounts)) {
+            debugMessage += `\n📁 СЕРВЕР: ${serverId}\n`;
+            let serverTotal = 0;
+            let serverPersonal = 0;
 
-            // 🔥 ИНФОРМАЦИЯ О СЕРВЕРЕ
-            debugMessage += `\n🏠 ИНФОРМАЦИЯ О СЕРВЕРЕ:\n`;
-            if (this.currentServer) {
-                debugMessage += `   ID сервера: \`${this.currentServer.id}\`\n`;
-                debugMessage += `   Название сервера (из БД): \`${this.currentServer.name || 'нет'}\`\n`;
-                debugMessage += `   Тип сервера: \`${this.currentServer.type || 'unknown'}\`\n`;
-                debugMessage += `   members: ${JSON.stringify(this.currentServer.members || [])}\n`;
-                debugMessage += `   participantIds: ${JSON.stringify(this.currentServer.participantIds || [])}\n`;
+            if (data.rooms && Object.keys(data.rooms).length > 0) {
+                for (const [roomId, roomData] of Object.entries(data.rooms)) {
+                    const count = roomData.count || 0;
+                    const personal = roomData.personalCount || 0;
+                    const hasMention = roomData.hasMention || false;
 
-                // 🔥 КАКОЕ НАЗВАНИЕ ВИДИТ ПОЛЬЗОВАТЕЛЬ (через RoomManager)
-                const RoomManager = (await import('./RoomManager.js')).default;
-                const expectedDisplayName = await RoomManager.getPrivateRoomDisplayName(
-                    this.currentRoom,
-                    this.userId,
-                    this.currentServer
-                );
-
-                debugMessage += `\n👁️ ОТОБРАЖАЕМОЕ НАЗВАНИЕ:\n`;
-                debugMessage += `   Ожидаемое (собеседник): \`${otherUserName}\`\n`;
-                debugMessage += `   RoomManager.getDisplayName: \`${expectedDisplayName || 'null'}\`\n`;
-                debugMessage += `   currentServer.name: \`${this.currentServer.name || 'null'}\`\n`;
-                debugMessage += `   ⚠️ ПРОБЛЕМА: ${expectedDisplayName !== otherUserName ? 'getDisplayName не возвращает имя собеседника!' : '✅ OK'}\n`;
-            } else {
-                debugMessage += `   ❌ СЕРВЕР НЕ ЗАГРУЖЕН (currentServer = null)\n`;
-            }
-
-            // 🔥 ИНФОРМАЦИЯ О КОМНАТЕ
-            debugMessage += `\n🏠 ИНФОРМАЦИЯ О КОМНАТЕ (клиент):\n`;
-            const currentRoomData = this.rooms.find(room => room.id === this.currentRoom);
-            if (currentRoomData) {
-                debugMessage += `   ID комнаты: \`${currentRoomData.id}\`\n`;
-                debugMessage += `   Название комнаты (клиент): \`${currentRoomData.name || 'нет'}\`\n`;
-                debugMessage += `   serverId: \`${currentRoomData.serverId || 'нет'}\`\n`;
-                debugMessage += `   members: ${JSON.stringify(currentRoomData.members || [])}\n`;
-                debugMessage += `   participantIds: ${JSON.stringify(currentRoomData.participantIds || [])}\n`;
-            } else {
-                debugMessage += `   ❌ КОМНАТА НЕ НАЙДЕНА В client.rooms\n`;
-            }
-        }
-
-        debugMessage += '\n🚚 ТРАНСПОРТЫ:\n';
-        debugMessage += `   Send: ${this.sendTransport ? `${this.sendTransport.id} [${this.sendTransport.connectionState}]` : 'нет'}\n`;
-        debugMessage += `   Recv: ${this.recvTransport ? `${this.recvTransport.id} [${this.recvTransport.connectionState}]` : 'нет'}\n`;
-
-        debugMessage += '\n🎤 ПРОДЮСЕРЫ:\n';
-        if (this.audioProducer) {
-            debugMessage += `   • ${this.audioProducer.id} [audio] — ${this.audioProducer.track?.enabled ? 'активен' : 'выключен'}\n`;
-        } else {
-            debugMessage += `   (нет)\n`;
-        }
-
-        debugMessage += '\n🎧 КОНСЬЮМЕРЫ:\n';
-        if (this.consumerState.size === 0) {
-            debugMessage += `   (нет)\n`;
-        } else {
-            this.consumerState.forEach((state, pid) => {
-                debugMessage += `   • ${pid} → ${state.status} ${state.lastError ? `[ошибка: ${state.lastError.message}]` : ''}\n`;
-            });
-        }
-
-        debugMessage += '\n📋 МАППИНГИ:\n';
-        const pum = window.producerUserMap?.size || 0;
-        const pcm = window.producerClientMap?.size || 0;
-        debugMessage += `   producerUserMap: ${pum} записей\n`;
-        debugMessage += `   producerClientMap: ${pcm} записей\n`;
-
-        debugMessage += '\n📬 НЕПРОЧИТАННЫЕ (клиент):\n';
-        if (UIManager.unreadCounts && Object.keys(UIManager.unreadCounts).length > 0) {
-            let totalUnread = 0;
-            let totalPersonal = 0;
-            for (const [serverId, data] of Object.entries(UIManager.unreadCounts)) {
-                totalUnread += data.total || 0;
-                totalPersonal += data.personalTotal || 0;
-                debugMessage += `   Сервер ${serverId}: ${data.total} сообщений${data.hasMentionTotal ? ' (есть упоминание)' : ''}`;
-                if (data.personalTotal > 0) {
-                    debugMessage += ` (${data.personalTotal} персональных)`;
+                    if (count > 0) {
+                        debugMessage += `   • ${roomId}: ${count} сообщений`;
+                        if (hasMention) debugMessage += ' (🔔 упоминание)';
+                        if (personal > 0) debugMessage += ` (${personal} персональных)`;
+                        debugMessage += '\n';
+                        serverTotal += count;
+                        serverPersonal += personal;
+                        totalRooms++;
+                    }
                 }
-                debugMessage += '\n';
             }
-            debugMessage += `   Итого: ${totalUnread} непрочитанных (${totalPersonal} персональных)\n`;
-        } else {
-            debugMessage += `   (нет непрочитанных)\n`;
+
+            if (serverTotal > 0) {
+                debugMessage += `   └─ Итого по серверу: ${serverTotal} (персональных: ${serverPersonal})\n`;
+            }
+            totalUnread += serverTotal;
+            totalPersonal += serverPersonal;
         }
 
-        debugMessage += '\n🎨 === ОТРИСОВКА БЕЙДЖЕЙ НЕПРОЧИТАННЫХ ===\n';
-        debugMessage += this.getUnreadBadgeDebugInfo();
+        debugMessage += `\n📊 ИТОГО НА КЛИЕНТЕ: ${totalUnread} сообщений в ${totalRooms} комнатах (${totalPersonal} персональных)\n`;
 
-        debugMessage += '\n🔍 === ЗАПРОС К СЕРВЕРУ ===\n';
+        // ========================================================================
+        // 🔥 ИНФОРМАЦИЯ О БЕЙДЖАХ (ГДЕ ОТОБРАЖАЮТСЯ)
+        // ========================================================================
+        debugMessage += '\n🎨 === ОТОБРАЖЕНИЕ БЕЙДЖЕЙ ===\n';
+
+        const serversList = document.querySelector('.servers-list');
+        if (serversList) {
+            const serverBadges = serversList.querySelectorAll('.unread-badge');
+            debugMessage += `   📁 Servers List: ${serverBadges.length} бейджей\n`;
+            serverBadges.forEach((badge) => {
+                const serverItem = badge.closest('.server-item');
+                const serverId = serverItem?.dataset?.server || 'unknown';
+                debugMessage += `      • Сервер ${serverId}: "${badge.textContent}"\n`;
+            });
+        } else {
+            debugMessage += `   📁 Servers List: не найден ❌\n`;
+        }
+
+        const roomsList = document.querySelector('.rooms-list');
+        if (roomsList) {
+            const roomBadges = roomsList.querySelectorAll('.room-unread-badge');
+            debugMessage += `   🏠 Rooms List: ${roomBadges.length} бейджей\n`;
+            roomBadges.forEach((badge) => {
+                const roomItem = badge.closest('.room-item');
+                const roomId = roomItem?.dataset?.room || 'unknown';
+                debugMessage += `      • Комната ${roomId}: "${badge.textContent}"\n`;
+            });
+        } else {
+            debugMessage += `   🏠 Rooms List: не найден ❌\n`;
+        }
+
+        const currentRoomTitle = document.querySelector('.current-room-title');
+        if (currentRoomTitle) {
+            const titleBadges = currentRoomTitle.querySelectorAll('.room-unread-badge, .title-unread-badge');
+            debugMessage += `   📌 Current Room Title: ${titleBadges.length} бейджей\n`;
+            titleBadges.forEach((badge) => {
+                debugMessage += `      • Заголовок: "${badge.textContent}"\n`;
+            });
+        } else {
+            debugMessage += `   📌 Current Room Title: не найден ❌\n`;
+        }
+
+        const serversToggle = document.querySelector('#serversToggle');
+        if (serversToggle) {
+            const toggleBadge = serversToggle.querySelector('.unread-badge');
+            if (toggleBadge) {
+                debugMessage += `   🔘 Servers Toggle: "${toggleBadge.textContent}"\n`;
+            } else {
+                debugMessage += `   🔘 Servers Toggle: нет бейджа\n`;
+            }
+        }
+
+        // ========================================================================
+        // 🔥 СРАВНЕНИЕ КЛИЕНТ/СЕРВЕР
+        // ========================================================================
+        debugMessage += '\n🔍 === ЗАПРОС К СЕРВЕРУ ДЛЯ СРАВНЕНИЯ ===\n';
         try {
             const response = await fetch(`${this.API_SERVER_URL}/api/messages/unread`, {
                 headers: {
@@ -1197,19 +1206,27 @@ class VoiceChatClient {
             if (response.ok) {
                 const serverData = await response.json();
                 debugMessage += `   Статус: OK ✅\n`;
-                debugMessage += `   Данные с сервера:\n`;
+
                 if (serverData.unread && Object.keys(serverData.unread).length > 0) {
+                    let serverTotalUnread = 0;
+                    let serverTotalPersonal = 0;
+
                     for (const [serverId, rooms] of Object.entries(serverData.unread)) {
                         let serverTotal = 0;
-                        debugMessage += `   📁 Сервер ${serverId}:\n`;
                         for (const [roomId, roomData] of Object.entries(rooms)) {
-                            debugMessage += `      • ${roomId}: ${roomData.count} сообщений`;
-                            if (roomData.hasMention) debugMessage += ' (🔔 упоминание)';
-                            if (roomData.personalCount > 0) debugMessage += ` (${roomData.personalCount} персональных)`;
-                            debugMessage += '\n';
                             serverTotal += roomData.count || 0;
+                            serverTotalPersonal += roomData.personalCount || 0;
                         }
-                        debugMessage += `      └─ Итого: ${serverTotal}\n`;
+                        serverTotalUnread += serverTotal;
+                    }
+
+                    debugMessage += `   📊 СЕРВЕР: ${serverTotalUnread} сообщений (${serverTotalPersonal} персональных)\n`;
+                    debugMessage += `   📊 КЛИЕНТ: ${totalUnread} сообщений (${totalPersonal} персональных)\n`;
+
+                    if (serverTotalUnread !== totalUnread) {
+                        debugMessage += `   ⚠️ РАСХОЖДЕНИЕ: ${Math.abs(serverTotalUnread - totalUnread)} сообщений!\n`;
+                    } else {
+                        debugMessage += `   ✅ СОВПАДЕНИЕ: данные синхронизированы\n`;
                     }
                 } else {
                     debugMessage += `   (нет непрочитанных на сервере)\n`;
@@ -1221,22 +1238,26 @@ class VoiceChatClient {
             debugMessage += `   Ошибка запроса: ${error.message} ❌\n`;
         }
 
-        debugMessage += '\n=================================';
-
-        UIManager.addMessage(
-            '🔍 System Debug',
-            debugMessage,
-            new Date().toISOString(),
-            'system',
-            null,
-            `debug_local_${Date.now()}`,
-            [],
-            'system',
-            true
-        );
-
-        console.log('🔍 [CLIENT DEBUG]', debugMessage);
+    } else {
+        debugMessage += `\n✅ Нет непрочитанных на клиенте\n`;
     }
+
+    debugMessage += '\n=================================';
+
+    UIManager.addMessage(
+        '🔍 System Debug',
+        debugMessage,
+        new Date().toISOString(),
+        'system',
+        null,
+        `debug_local_${Date.now()}`,
+        [],
+        'system',
+        true
+    );
+
+    console.log('🔍 [CLIENT DEBUG]', debugMessage);
+}
 
     getUnreadBadgeDebugInfo() {
         let info = '';

@@ -712,6 +712,9 @@ class UIManager {
         this.updateRoomTitleBadge(this.client);
     }
 
+    // ============================================================================
+    // 🔥 ИСПРАВЛЕНО: updateServerBadges — точное совпадение по serverId
+    // ============================================================================
     static updateServerBadges() {
         const serversList = document.querySelector('.servers-list');
         if (!serversList) return;
@@ -722,29 +725,26 @@ class UIManager {
             if (existingBadge) {
                 existingBadge.remove();
             }
+            // 🔥 Ищем данные ТОЛЬКО для этого serverId
             let serverData = this.unreadCounts[serverId];
-            if (!serverData) {
+            // 🔥 Если не нашли, пробуем нормализованный ID (для приватных комнат)
+            if (!serverData && serverId && serverId.startsWith('user_')) {
                 for (const sid in this.unreadCounts) {
-                    if (sid === serverId ||
-                        sid === 'null' ||
-                        sid.startsWith('user_') ||
-                        sid.startsWith('direct_')) {
-                        const candidateData = this.unreadCounts[sid];
-                        if (candidateData && candidateData.total > 0) {
-                            if (!serverData) {
-                                serverData = {
-                                    total: 0,
-                                    personalTotal: 0,
-                                    hasMentionTotal: false
-                                };
-                            }
-                            serverData.total += candidateData.total || 0;
-                            serverData.personalTotal += candidateData.personalTotal || 0;
-                            if (candidateData.hasMentionTotal) {
-                                serverData.hasMentionTotal = true;
-                            }
-                        }
+                    if (sid === serverId) {
+                        serverData = this.unreadCounts[sid];
+                        break;
                     }
+                }
+            }
+            // 🔥 Если всё ещё не нашли, пробуем null (fallback для старых данных)
+            if (!serverData && this.unreadCounts['null']) {
+                const nullData = this.unreadCounts['null'];
+                if (nullData.rooms && nullData.rooms[serverId]) {
+                    serverData = {
+                        total: nullData.rooms[serverId].count || 0,
+                        personalTotal: nullData.rooms[serverId].personalCount || 0,
+                        hasMentionTotal: nullData.rooms[serverId].hasMention || false
+                    };
                 }
             }
             if (serverData && serverData.total > 0) {
