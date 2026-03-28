@@ -1,6 +1,6 @@
 /* ============================================================================
-ГЛОБАЛЬНЫЕ СТИЛИ
-============================================================================ */
+   ГЛОБАЛЬНЫЕ СТИЛИ
+   ============================================================================ */
 * {
     margin: 0;
     padding: 0;
@@ -29,7 +29,9 @@ body {
     overflow: hidden;
 }
 
-/* Context Menu Styles */
+/* ============================================================================
+   CONTEXT MENU
+   ============================================================================ */
 .message-context-menu {
     position: fixed;
     background: #2d2d44;
@@ -86,18 +88,108 @@ body {
     font-size: 14px;
 }
 
-/* Message hover effect to indicate interactivity */
-.message {
-    transition: background 0.2s;
+/* ============================================================================
+ИЗОБРАЖЕНИЯ И МИНИАТЮРЫ
+============================================================================ */
+.image-thumbnail {
+    position: relative;
+    display: inline-block;
+    border-radius: 8px;
+    overflow: hidden;
+    transition: transform 0.2s ease;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    margin: 0;
+    padding: 0;
+    line-height: 0;
 }
 
-.message:hover {
-    background: rgba(255, 255, 255, 0.03);
+.image-thumbnail:hover {
+    transform: scale(1.02);
+}
+
+.image-thumbnail img {
+    display: block;
+    border-radius: 8px;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    max-width: 320px;
+    max-height: 240px;
+    object-fit: cover;
+    margin: 0;
+    padding: 0;
+    line-height: 0;
+}
+
+.image-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    font-size: 14px;
+    border-radius: 8px;
+    pointer-events: none;
+}
+
+.image-thumbnail:hover .image-overlay {
+    opacity: 1;
+}
+
+/* Стили для изображений в сообщениях */
+img.message-image {
+    display: block;
+    margin-top: 4px;
+    max-width: 100%;
+    max-height: 300px;
+    border-radius: 4px;
+    object-fit: cover;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* Плейсхолдер загрузки (без рамки) */
+.image-placeholder {
+    display: inline-block;
+    padding: 8px 12px;
+    background: #f0f0f0;
+    border-radius: 6px;
+    color: #555;
+    font-size: 0.9em;
+    cursor: pointer;
+    user-select: none;
+    border: none !important;
+    outline: none !important;
+}
+
+.image-placeholder:hover {
+    background: #e8e8e8;
+}
+
+/* Убираем рамки у контейнера сообщений для изображений */
+.message-content .image-thumbnail {
+    margin: 0;
+    padding: 0;
+}
+
+.message-content .image-thumbnail img {
+    margin: 0;
+    padding: 0;
 }
 
 /* ============================================================================
-ОСНОВНАЯ РАЗМЕТКА
-============================================================================ */
+   ОСНОВНАЯ РАЗМЕТКА
+   ============================================================================ */
 .app {
     display: flex;
     height: 100dvh;
@@ -106,8 +198,8 @@ body {
 }
 
 /* ============================================================================
-SIDEBAR
-============================================================================ */
+   SIDEBAR
+   ============================================================================ */
 .sidebar {
     width: 240px;
     background: var(--bg-secondary);
@@ -201,8 +293,8 @@ SIDEBAR
 }
 
 /* ============================================================================
-ЭЛЕМЕНТЫ СПИСКОВ (СЕРВЕРЫ, КОМНАТЫ)
-============================================================================ */
+   ЭЛЕМЕНТЫ СПИСКОВ (СЕРВЕРЫ, КОМНАТЫ)
+   ============================================================================ */
 .server-item,
 .room-item {
     padding: 8px 12px;
@@ -299,8 +391,8 @@ SIDEBAR
 }
 
 /* ============================================================================
-🔥 БЕЙДЖИ НЕПРОЧИТАННЫХ СООБЩЕНИЙ
-============================================================================ */
+   БЕЙДЖИ НЕПРОЧИТАННЫХ СООБЩЕНИЙ
+   ============================================================================ */
 .unread-badge {
     display: inline-flex;
     align-items: center;
@@ -352,7 +444,7 @@ SIDEBAR
     right: 8px;
 }
 
-/* 🔥 Бейдж на элементе комнаты */
+/* Бейдж на элементе комнаты */
 .room-item .room-unread-badge {
     position: absolute;
     top: 8px;
@@ -377,8 +469,8 @@ SIDEBAR
 }
 
 /* ============================================================================
-MAIN CONTENT
-============================================================================ */
+   MAIN CONTENT
+   ============================================================================ */
 .main-content {
     flex: 1;
     display: flex;
@@ -389,8 +481,8 @@ MAIN CONTENT
 }
 
 /* ============================================================================
-CHAT HEADER
-============================================================================ */
+   CHAT HEADER
+   ============================================================================ */
 .chat-header {
     padding: 0 16px;
     height: 48px;
@@ -411,7 +503,7 @@ CHAT HEADER
     flex: 1;
 }
 
-/* 🔥 Бейдж непрочитанных в заголовке комнаты */
+/* Бейдж непрочитанных в заголовке комнаты */
 .current-room-title .room-unread-badge,
 .current-room-title .title-unread-badge {
     display: inline-flex;
@@ -497,8 +589,8 @@ CHAT HEADER
 }
 
 /* ============================================================================
-CHAT AREA
-============================================================================ */
+   CHAT AREA
+   ============================================================================ */
 .chat-area {
     flex: 1;
     display: flex;
@@ -547,8 +639,8 @@ CHAT AREA
 }
 
 /* ============================================================================
-СООБЩЕНИЯ
-============================================================================ */
+   СООБЩЕНИЯ
+   ============================================================================ */
 .message {
     margin-bottom: 16px;
     display: flex;
@@ -556,11 +648,16 @@ CHAT AREA
     opacity: 0;
     transform: translateY(10px);
     transition: opacity 0.3s ease, transform 0.3s ease;
+    justify-content: flex-start;
 }
 
 .message.appeared {
     opacity: 1;
     transform: translateY(0);
+}
+
+.message:hover {
+    background: rgba(255, 255, 255, 0.03);
 }
 
 .message-avatar {
@@ -594,15 +691,6 @@ CHAT AREA
     margin-right: 0;
 }
 
-.message {
-    justify-content: flex-start;
-}
-
-.message .message-content.own {
-    margin-left: auto;
-    margin-right: 0;
-}
-
 .message-header {
     display: flex;
     align-items: baseline;
@@ -624,32 +712,6 @@ CHAT AREA
 .message-text {
     line-height: 1.4;
     word-break: break-word;
-}
-
-/* Изображения в сообщениях */
-img.message-image {
-    display: block;
-    margin-top: 4px;
-    max-width: 100%;
-    max-height: 300px;
-    border-radius: 4px;
-    object-fit: cover;
-}
-
-.image-placeholder {
-    display: inline-block;
-    padding: 8px 12px;
-    background: #f0f0f0;
-    border-radius: 6px;
-    color: #555;
-    font-size: 0.9em;
-    cursor: pointer;
-    user-select: none;
-    border: 1px solid #ddd;
-}
-
-.image-placeholder:hover {
-    background: #e8e8e8;
 }
 
 .drag-over {
@@ -680,8 +742,8 @@ img.message-image {
 }
 
 /* ============================================================================
-MEMBERS PANEL
-============================================================================ */
+   MEMBERS PANEL
+   ============================================================================ */
 .members-panel {
     width: 240px;
     background: var(--bg-secondary);
@@ -810,8 +872,8 @@ MEMBERS PANEL
 }
 
 /* ============================================================================
-ИНДИКАТОРЫ СТАТУСА
-============================================================================ */
+   ИНДИКАТОРЫ СТАТУСА
+   ============================================================================ */
 .status-indicator {
     width: 8px;
     height: 8px;
@@ -867,8 +929,8 @@ MEMBERS PANEL
 }
 
 /* ============================================================================
-МОДАЛЬНЫЕ ОКНА
-============================================================================ */
+   МОДАЛЬНЫЕ ОКНА
+   ============================================================================ */
 .modal-overlay {
     position: fixed;
     top: 0;
@@ -988,8 +1050,8 @@ MEMBERS PANEL
 }
 
 /* ============================================================================
-НАСТРОЙКИ КОМНАТЫ
-============================================================================ */
+   НАСТРОЙКИ КОМНАТЫ
+   ============================================================================ */
 .room-settings-modal .modal-tabs {
     display: flex;
     border-bottom: 1px solid var(--bg-tertiary);
@@ -1023,7 +1085,8 @@ MEMBERS PANEL
     display: block;
 }
 
-.room-settings-modal .setting-item {
+/* Объединенные стили настроек */
+.setting-item {
     margin-bottom: 16px;
 }
 
@@ -1033,6 +1096,12 @@ MEMBERS PANEL
     font-weight: 500;
 }
 
+.setting-item label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .room-settings-modal .setting-item input[type="text"] {
     width: 100%;
     padding: 8px;
@@ -1040,16 +1109,6 @@ MEMBERS PANEL
     border: 1px solid var(--bg-tertiary);
     border-radius: 4px;
     color: var(--text-normal);
-}
-
-.setting-item {
-    margin-bottom: 16px;
-}
-
-.setting-item label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
 }
 
 .apply-settings-btn {
@@ -1072,8 +1131,8 @@ MEMBERS PANEL
 }
 
 /* ============================================================================
-🔥 КНОПКА МИКРОФОНА (ИСПРАВЛЕНО ПОЗИЦИОНИРОВАНИЕ)
-============================================================================ */
+   КНОПКА МИКРОФОНА
+   ============================================================================ */
 .mic-button {
     position: fixed;
     right: 20px;
@@ -1115,11 +1174,9 @@ MEMBERS PANEL
     opacity: 0;
 }
 
-/* 🔥 УДАЛЕНО: Стили бейджа на кнопке микрофона (больше не нужен) */
-
 /* ============================================================================
-ПРИГЛАШЕНИЯ
-============================================================================ */
+   ПРИГЛАШЕНИЯ
+   ============================================================================ */
 .invite-link-container {
     display: flex;
     gap: 8px;
@@ -1150,8 +1207,8 @@ MEMBERS PANEL
 }
 
 /* ============================================================================
-УВЕДОМЛЕНИЯ ОБ ОШИБКАХ
-============================================================================ */
+   УВЕДОМЛЕНИЯ ОБ ОШИБКАХ
+   ============================================================================ */
 .error-message {
     position: fixed;
     top: 20px;
@@ -1188,8 +1245,8 @@ MEMBERS PANEL
 }
 
 /* ============================================================================
-РАЗБЛОКИРОВКА АУДИО (iOS)
-============================================================================ */
+   РАЗБЛОКИРОВКА АУДИО (iOS)
+   ============================================================================ */
 .audio-unlock-btn {
     position: fixed;
     top: 10px;
@@ -1210,8 +1267,8 @@ MEMBERS PANEL
 }
 
 /* ============================================================================
-СКРОЛЛБАРЫ
-============================================================================ */
+   СКРОЛЛБАРЫ
+   ============================================================================ */
 ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -1233,8 +1290,8 @@ MEMBERS PANEL
 }
 
 /* ============================================================================
-АДАПТИВ
-============================================================================ */
+   АДАПТИВ
+   ============================================================================ */
 @media (max-width: 768px) {
     .sidebar {
         position: fixed;

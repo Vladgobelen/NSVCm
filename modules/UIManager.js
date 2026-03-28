@@ -374,85 +374,102 @@ class UIManager {
         }
     }
 
-    static addMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = [], userId = null, broadcast = false) {
-        const messagesContainer = document.querySelector('.messages-container');
-        if (!messagesContainer) return;
+// ============================================================================
+// 🔥 ИСПРАВЛЕНО: addMessage - поддержка thumbnailUrl
+// ============================================================================
+static addMessage(user, text, timestamp = null, type = 'text', imageUrl = null,
+    messageId = null, readBy = [], userId = null, broadcast = false,
+    thumbnailUrl = null) {
+    const messagesContainer = document.querySelector('.messages-container');
+    if (!messagesContainer) return;
 
-        const safeUser = user || 'Unknown';
-        const safeText = text || '';
-        const client = this.client || window.voiceClient;
-        const isOwn = client && client.username && safeUser === client.username;
+    const safeUser = user || 'Unknown';
+    const safeText = text || '';
+    const client = this.client || window.voiceClient;
+    const isOwn = client && client.username && safeUser === client.username;
 
-        const messageElement = document.createElement('div');
-        messageElement.className = 'message' + (type === 'system' ? ' system-message' : '');
-        if (messageId) messageElement.dataset.messageId = messageId;
-        if (userId) messageElement.dataset.userId = userId;
-        if (timestamp) messageElement.dataset.timestamp = timestamp;
-        if (readBy?.length) messageElement.dataset.readBy = JSON.stringify(readBy);
-        if (broadcast) messageElement.dataset.broadcast = 'true';
+    const messageElement = document.createElement('div');
+    messageElement.className = 'message' + (type === 'system' ? ' system-message' : '');
+    if (messageId) messageElement.dataset.messageId = messageId;
+    if (userId) messageElement.dataset.userId = userId;
+    if (timestamp) messageElement.dataset.timestamp = timestamp;
+    if (readBy?.length) messageElement.dataset.readBy = JSON.stringify(readBy);
+    if (broadcast) messageElement.dataset.broadcast = 'true';
 
-        // 🔥 ДОБАВЛЕНО: Обработчик правого клика для контекстного меню
-        messageElement.addEventListener('contextmenu', (event) => {
-            if (messageId && userId) {
-                this.showMessageContextMenu(event, messageId, userId, safeUser, timestamp);
-            }
-        });
-
-        const time = timestamp
-            ? new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-            : new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-
-        let finalImageUrl = imageUrl;
-        if (type === 'image' && imageUrl?.startsWith('/')) {
-            if (client?.API_SERVER_URL) {
-                finalImageUrl = client.API_SERVER_URL + imageUrl;
-            }
+    messageElement.addEventListener('contextmenu', (event) => {
+        if (messageId && userId) {
+            this.showMessageContextMenu(event, messageId, userId, safeUser, timestamp);
         }
+    });
 
-        const avatarHtml = (isOwn && type !== 'system') ? '' : `<div class="message-avatar">${safeUser.charAt(0).toUpperCase()}</div>`;
+    const time = timestamp
+        ? new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+        : new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 
-        if (type === 'image') {
-            messageElement.innerHTML = `
-                ${avatarHtml}
-                <div class="message-content${isOwn ? ' own' : ''}">
-                    <div class="message-header">
-                        <span class="message-username">${this.escapeHtml(safeUser)}</span>
-                        <span class="message-time">${time}</span>
-                    </div>
-                    <div class="message-text">
-                        <div class="image-placeholder" data-src="${this.escapeHtml(finalImageUrl)}" style="cursor: pointer;">
-                            📷 Изображение
-                        </div>
-                    </div>
-                </div>
-            `;
-            const imagePlaceholder = messageElement.querySelector('.image-placeholder');
-            if (imagePlaceholder && finalImageUrl) {
-                imagePlaceholder.addEventListener('click', () => {
-                    this.openImageModal(finalImageUrl);
-                });
-            }
-        } else {
-            const formattedText = type === 'system'
-                ? `<pre style="white-space: pre-wrap; font-family: monospace; font-size: 12px; background: #1a1a2e; padding: 10px; border-radius: 5px; overflow-x: auto;">${this.escapeHtml(safeText)}</pre>`
-                : this.escapeHtmlAndFormat(safeText);
-            messageElement.innerHTML = `
-                ${avatarHtml}
-                <div class="message-content${isOwn ? ' own' : ''}">
-                    <div class="message-header">
-                        <span class="message-username">${this.escapeHtml(safeUser)}</span>
-                        <span class="message-time">${time}</span>
-                    </div>
-                    <div class="message-text">${formattedText}</div>
-                </div>
-            `;
+    let finalImageUrl = imageUrl;
+    let finalThumbnailUrl = thumbnailUrl;
+
+    if (imageUrl?.startsWith('/')) {
+        if (client?.API_SERVER_URL) {
+            finalImageUrl = client.API_SERVER_URL + imageUrl;
         }
-
-        messagesContainer.appendChild(messageElement);
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-
-        setTimeout(() => messageElement.classList.add('appeared'), 10);
     }
+
+    if (thumbnailUrl?.startsWith('/')) {
+        if (client?.API_SERVER_URL) {
+            finalThumbnailUrl = client.API_SERVER_URL + thumbnailUrl;
+        }
+    }
+
+    const avatarHtml = (isOwn && type !== 'system') ? '' :
+        `<div class="message-avatar">${safeUser.charAt(0).toUpperCase()}</div>`;
+
+    if (type === 'image') {
+        // 🔥 ИСПОЛЬЗУЕМ МИНИАТЮРУ ДЛЯ ОТОБРАЖЕНИЯ
+        const displayUrl = finalThumbnailUrl || finalImageUrl;
+        messageElement.innerHTML = `
+${avatarHtml}
+<div class="message-content${isOwn ? ' own' : ''}">
+    <div class="message-header">
+        <span class="message-username">${this.escapeHtml(safeUser)}</span>
+        <span class="message-time">${time}</span>
+    </div>
+    <div class="message-text">
+        <div class="image-thumbnail" data-full-size="${this.escapeHtml(finalImageUrl)}" style="cursor: pointer;">
+            <img src="${this.escapeHtml(displayUrl)}" alt="Изображение" loading="lazy"
+                style="max-width: 320px; max-height: 240px; border-radius: 8px; object-fit: cover; border: none !important; outline: none !important; box-shadow: none !important; display: block;">
+            <div class="image-overlay">🔍 Нажмите для просмотра</div>
+        </div>
+    </div>
+</div>
+`;
+        const imageThumbnail = messageElement.querySelector('.image-thumbnail');
+        if (imageThumbnail && finalImageUrl) {
+            imageThumbnail.addEventListener('click', () => {
+                this.openImageModal(finalImageUrl);
+            });
+        }
+    } else {
+        const formattedText = type === 'system'
+            ? `<pre style="white-space: pre-wrap; font-family: monospace; font-size: 12px; background: #1a1a2e; padding: 10px; border-radius: 5px; overflow-x: auto;">${this.escapeHtml(safeText)}</pre>`
+            : this.escapeHtmlAndFormat(safeText);
+
+        messageElement.innerHTML = `
+${avatarHtml}
+<div class="message-content${isOwn ? ' own' : ''}">
+    <div class="message-header">
+        <span class="message-username">${this.escapeHtml(safeUser)}</span>
+        <span class="message-time">${time}</span>
+    </div>
+    <div class="message-text">${formattedText}</div>
+</div>
+`;
+    }
+
+    messagesContainer.appendChild(messageElement);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    setTimeout(() => messageElement.classList.add('appeared'), 10);
+}
 
     static openImageModal(imageUrl) {
         const existingModal = document.querySelector('.image-modal-overlay');
