@@ -10,9 +10,264 @@ class UIManager {
     static unreadVersion = 0;
     static unreadLastSync = null;
     static usernameCache = new Map();
+    static contextMenu = null;
 
     static setClient(client) {
         this.client = client;
+    }
+
+    // ============================================================================
+    // 🔥 НОВАЯ ФУНКЦИЯ: Создание контекстного меню для сообщений
+    // ============================================================================
+    static showMessageContextMenu(event, messageId, userId, username, timestamp) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        // Удаляем существующее меню если есть
+        if (this.contextMenu) {
+            this.contextMenu.remove();
+        }
+
+        const menu = document.createElement('div');
+        menu.className = 'message-context-menu';
+        menu.style.cssText = `
+            position: fixed;
+            background: #2d2d44;
+            border: 1px solid #404060;
+            border-radius: 8px;
+            padding: 8px 0;
+            min-width: 200px;
+            z-index: 10000;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        `;
+
+        const isOwnMessage = this.client && this.client.userId === userId;
+        const canDelete = isOwnMessage || (this.client && this.client.currentServer && this.client.currentServer.ownerId === this.client.userId);
+
+        // Пункт меню: Информация
+        const infoItem = document.createElement('div');
+        infoItem.className = 'context-menu-item';
+        infoItem.innerHTML = `
+            <span class="context-menu-icon">ℹ️</span>
+            <span class="context-menu-text">Информация</span>
+        `;
+        infoItem.style.cssText = `
+            padding: 10px 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #e0e0e0;
+            transition: background 0.2s;
+        `;
+        infoItem.addEventListener('mouseenter', () => {
+            infoItem.style.background = '#3d3d5c';
+        });
+        infoItem.addEventListener('mouseleave', () => {
+            infoItem.style.background = 'transparent';
+        });
+        infoItem.addEventListener('click', () => {
+            this.showMessageInfo(messageId, userId, username, timestamp);
+            this.hideContextMenu();
+        });
+        menu.appendChild(infoItem);
+
+        // Разделитель
+        if (canDelete) {
+            const separator = document.createElement('div');
+            separator.style.cssText = `
+                height: 1px;
+                background: #404060;
+                margin: 4px 0;
+            `;
+            menu.appendChild(separator);
+
+            // Пункт меню: Удалить
+            const deleteItem = document.createElement('div');
+            deleteItem.className = 'context-menu-item delete';
+            deleteItem.innerHTML = `
+                <span class="context-menu-icon">🗑️</span>
+                <span class="context-menu-text">Удалить</span>
+            `;
+            deleteItem.style.cssText = `
+                padding: 10px 16px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                color: #ed4245;
+                transition: background 0.2s;
+            `;
+            deleteItem.addEventListener('mouseenter', () => {
+                deleteItem.style.background = 'rgba(237, 66, 69, 0.1)';
+            });
+            deleteItem.addEventListener('mouseleave', () => {
+                deleteItem.style.background = 'transparent';
+            });
+            deleteItem.addEventListener('click', () => {
+                this.confirmDeleteMessage(messageId);
+                this.hideContextMenu();
+            });
+            menu.appendChild(deleteItem);
+        }
+
+        // Позиционируем меню
+        const x = event.clientX;
+        const y = event.clientY;
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+
+        // Проверяем чтобы меню не выходило за пределы экрана
+        const rect = menu.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+            menu.style.left = `${window.innerWidth - rect.width - 10}px`;
+        }
+        if (rect.bottom > window.innerHeight) {
+            menu.style.top = `${window.innerHeight - rect.height - 10}px`;
+        }
+
+        document.body.appendChild(menu);
+        this.contextMenu = menu;
+
+        // Закрытие по клику вне меню
+        const closeHandler = () => {
+            this.hideContextMenu();
+            document.removeEventListener('click', closeHandler);
+        };
+        setTimeout(() => {
+            document.addEventListener('click', closeHandler);
+        }, 100);
+
+        // Закрытие по Escape
+        const escapeHandler = (e) => {
+            if (e.key === 'Escape') {
+                this.hideContextMenu();
+                document.removeEventListener('keydown', escapeHandler);
+            }
+        };
+        document.addEventListener('keydown', escapeHandler);
+    }
+
+    static hideContextMenu() {
+        if (this.contextMenu) {
+            this.contextMenu.remove();
+            this.contextMenu = null;
+        }
+    }
+
+    // ============================================================================
+    // 🔥 НОВАЯ ФУНКЦИЯ: Показать информацию о сообщении
+    // ============================================================================
+    static async showMessageInfo(messageId, userId, username, timestamp) {
+        try {
+            const response = await fetch(`${this.client.API_SERVER_URL}/api/messages/${this.client.currentRoom}/${messageId}/info`, {
+                headers: {
+                    'Authorization': `Bearer ${this.client.token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Не удалось получить информацию');
+            }
+
+            const data = await response.json();
+            const message = data.message;
+
+            const modal = document.createElement('div');
+            modal.className = 'modal-overlay';
+            modal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.7);
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                z-index: 10001;
+            `;
+
+            const content = document.createElement('div');
+            content.style.cssText = `
+                background: #2d2d44;
+                border-radius: 12px;
+                padding: 24px;
+                max-width: 500px;
+                width: 90%;
+                border: 1px solid #404060;
+            `;
+
+            content.innerHTML = `
+                <h3 style="margin: 0 0 20px 0; color: #e0e0e0;">📋 Информация о сообщении</h3>
+                <div style="color: #b0b0c0; line-height: 1.8;">
+                    <div><strong>ID:</strong> <code style="background: #1a1a2e; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${message.id}</code></div>
+                    <div style="margin-top: 12px;"><strong>Автор:</strong> ${this.escapeHtml(message.username)}</div>
+                    <div style="margin-top: 8px;"><strong>ID автора:</strong> <code style="background: #1a1a2e; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${message.userId}</code></div>
+                    <div style="margin-top: 8px;"><strong>Время:</strong> ${new Date(message.timestamp).toLocaleString('ru-RU')}</div>
+                    <div style="margin-top: 8px;"><strong>Тип:</strong> ${message.type || 'text'}</div>
+                    <div style="margin-top: 8px;"><strong>Комната:</strong> <code style="background: #1a1a2e; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${message.roomId}</code></div>
+                    ${message.text ? `<div style="margin-top: 16px; padding: 12px; background: #1a1a2e; border-radius: 8px;"><strong>Текст:</strong><br><span style="color: #e0e0e0;">${this.escapeHtml(message.text)}</span></div>` : ''}
+                </div>
+                <button id="closeInfoModal" style="
+                    margin-top: 20px;
+                    padding: 10px 24px;
+                    background: #5865f2;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    font-size: 14px;
+                ">Закрыть</button>
+            `;
+
+            modal.appendChild(content);
+            document.body.appendChild(modal);
+
+            const closeBtn = content.querySelector('#closeInfoModal');
+            closeBtn.addEventListener('click', () => {
+                modal.remove();
+            });
+
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.remove();
+                }
+            });
+        } catch (error) {
+            console.error('Ошибка получения информации о сообщении:', error);
+            this.showError('Не удалось получить информацию о сообщении');
+        }
+    }
+
+    // ============================================================================
+    // 🔥 НОВАЯ ФУНКЦИЯ: Подтверждение удаления сообщения
+    // ============================================================================
+    static async confirmDeleteMessage(messageId) {
+        const confirmed = confirm('Вы уверены, что хотите удалить это сообщение? Это действие нельзя отменить.');
+        if (!confirmed) return;
+
+        try {
+            const response = await fetch(`${this.client.API_SERVER_URL}/api/messages/${this.client.currentRoom}/${messageId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${this.client.token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Не удалось удалить сообщение');
+            }
+
+            console.log(`✅ [UI] Сообщение ${messageId} удалено`);
+            // Сообщение будет удалено из UI через socket event 'message-deleted'
+        } catch (error) {
+            console.error('Ошибка удаления сообщения:', error);
+            this.showError('Не удалось удалить сообщение: ' + error.message);
+        }
     }
 
     static async fetchUsername(userId) {
@@ -122,25 +377,40 @@ class UIManager {
     static addMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = [], userId = null, broadcast = false) {
         const messagesContainer = document.querySelector('.messages-container');
         if (!messagesContainer) return;
+
         const safeUser = user || 'Unknown';
         const safeText = text || '';
         const client = this.client || window.voiceClient;
         const isOwn = client && client.username && safeUser === client.username;
+
         const messageElement = document.createElement('div');
         messageElement.className = 'message' + (type === 'system' ? ' system-message' : '');
         if (messageId) messageElement.dataset.messageId = messageId;
+        if (userId) messageElement.dataset.userId = userId;
+        if (timestamp) messageElement.dataset.timestamp = timestamp;
         if (readBy?.length) messageElement.dataset.readBy = JSON.stringify(readBy);
         if (broadcast) messageElement.dataset.broadcast = 'true';
+
+        // 🔥 ДОБАВЛЕНО: Обработчик правого клика для контекстного меню
+        messageElement.addEventListener('contextmenu', (event) => {
+            if (messageId && userId) {
+                this.showMessageContextMenu(event, messageId, userId, safeUser, timestamp);
+            }
+        });
+
         const time = timestamp
             ? new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
             : new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
         let finalImageUrl = imageUrl;
         if (type === 'image' && imageUrl?.startsWith('/')) {
             if (client?.API_SERVER_URL) {
                 finalImageUrl = client.API_SERVER_URL + imageUrl;
             }
         }
+
         const avatarHtml = (isOwn && type !== 'system') ? '' : `<div class="message-avatar">${safeUser.charAt(0).toUpperCase()}</div>`;
+
         if (type === 'image') {
             messageElement.innerHTML = `
                 ${avatarHtml}
@@ -177,8 +447,10 @@ class UIManager {
                 </div>
             `;
         }
+
         messagesContainer.appendChild(messageElement);
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
         setTimeout(() => messageElement.classList.add('appeared'), 10);
     }
 
@@ -187,6 +459,7 @@ class UIManager {
         if (existingModal) {
             existingModal.remove();
         }
+
         const modalOverlay = document.createElement('div');
         modalOverlay.className = 'image-modal-overlay';
         modalOverlay.style.cssText = `
@@ -202,6 +475,7 @@ class UIManager {
             z-index: 10000;
             cursor: zoom-out;
         `;
+
         const imageElement = document.createElement('img');
         imageElement.src = imageUrl;
         imageElement.style.cssText = `
@@ -211,6 +485,7 @@ class UIManager {
             border-radius: 8px;
             box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
         `;
+
         const closeBtn = document.createElement('button');
         closeBtn.innerHTML = '✕';
         closeBtn.style.cssText = `
@@ -232,13 +507,16 @@ class UIManager {
         closeBtn.addEventListener('click', () => {
             modalOverlay.remove();
         });
+
         modalOverlay.appendChild(imageElement);
         modalOverlay.appendChild(closeBtn);
+
         modalOverlay.addEventListener('click', (e) => {
             if (e.target === modalOverlay) {
                 modalOverlay.remove();
             }
         });
+
         const escapeHandler = (e) => {
             if (e.key === 'Escape') {
                 modalOverlay.remove();
@@ -246,6 +524,7 @@ class UIManager {
             }
         };
         document.addEventListener('keydown', escapeHandler);
+
         document.body.appendChild(modalOverlay);
     }
 
@@ -270,6 +549,24 @@ class UIManager {
                     timeEl.textContent = timeEl.textContent.replace(/✓✓?$/, '') + ' ✓✓✓';
                 }
             }
+        }
+    }
+
+    // ============================================================================
+    // 🔥 НОВАЯ ФУНКЦИЯ: Удаление сообщения из UI
+    // ============================================================================
+    static removeMessageFromUI(messageId) {
+        const messageElement = document.querySelector(`.message[data-message-id="${messageId}"]`);
+        if (messageElement) {
+            messageElement.style.transition = 'all 0.3s ease';
+            messageElement.style.opacity = '0';
+            messageElement.style.transform = 'translateX(-20px)';
+            setTimeout(() => {
+                if (messageElement && messageElement.parentNode) {
+                    messageElement.remove();
+                }
+            }, 300);
+            console.log(`🗑️ [UI] Сообщение ${messageId} удалено из интерфейса`);
         }
     }
 
@@ -333,12 +630,15 @@ class UIManager {
         return div.innerHTML;
     }
 
+    // ... остальные методы UIManager без изменений ...
+
     static updateMembersListWithStatus(onlineMembers, offlineMembers) {
         const membersList = document.querySelector('.members-list');
         if (!membersList) {
             console.error('❌ Members list element not found');
             return;
         }
+
         const savedSliderValues = new Map();
         membersList.querySelectorAll('.member-item').forEach(item => {
             const userId = item.dataset.userId;
@@ -352,7 +652,9 @@ class UIManager {
                 }
             }
         });
+
         membersList.innerHTML = '';
+
         const onlineHeader = document.createElement('div');
         onlineHeader.className = 'members-section-header online-header';
         onlineHeader.innerHTML = `
@@ -363,6 +665,7 @@ class UIManager {
             MembersManager.toggleSection('online');
         });
         membersList.appendChild(onlineHeader);
+
         const onlineContainer = document.createElement('div');
         onlineContainer.className = 'members-section-content';
         onlineContainer.style.display = MembersManager.isSectionCollapsed('online') ? 'none' : 'block';
@@ -375,6 +678,7 @@ class UIManager {
             });
         }
         membersList.appendChild(onlineContainer);
+
         const offlineHeader = document.createElement('div');
         offlineHeader.className = 'members-section-header offline-header';
         offlineHeader.innerHTML = `
@@ -385,6 +689,7 @@ class UIManager {
             MembersManager.toggleSection('offline');
         });
         membersList.appendChild(offlineHeader);
+
         const offlineContainer = document.createElement('div');
         offlineContainer.className = 'members-section-content';
         offlineContainer.style.display = MembersManager.isSectionCollapsed('offline') ? 'none' : 'block';
@@ -397,12 +702,14 @@ class UIManager {
             });
         }
         membersList.appendChild(offlineContainer);
+
         if ((!onlineMembers || onlineMembers.length === 0) && (!offlineMembers || offlineMembers.length === 0)) {
             const emptyMessage = document.createElement('div');
             emptyMessage.className = 'members-empty';
             emptyMessage.textContent = 'В комнате нет участников';
             membersList.appendChild(emptyMessage);
         }
+
         this.syncVolumeSliders();
     }
 
@@ -410,11 +717,14 @@ class UIManager {
         if (!user || !user.userId) {
             return null;
         }
+
         const memberElement = document.createElement('div');
         memberElement.className = 'member-item' + (isOnline ? '' : ' offline');
         memberElement.dataset.userId = user.userId;
         memberElement.dataset.clientId = user.clientId || '';
+
         const savedValue = savedSliderValues.get(user.userId) || 100;
+
         memberElement.innerHTML = `
             <div class="member-avatar">${user.username.charAt(0).toUpperCase()}</div>
             <div class="member-info">
@@ -429,6 +739,7 @@ class UIManager {
                 </div>
             </div>
         `;
+
         const slider = memberElement.querySelector('.member-volume-slider');
         if (slider && !slider._hasVolumeHandler) {
             slider.addEventListener('input', (e) => {
@@ -442,6 +753,7 @@ class UIManager {
             });
             slider._hasVolumeHandler = true;
         }
+
         if (isOnline) {
             memberElement.addEventListener('mouseenter', () => {
                 if (slider.dataset.producerId) {
@@ -459,6 +771,7 @@ class UIManager {
                 slider.style.display = 'none';
             });
         }
+
         return memberElement;
     }
 
@@ -474,9 +787,11 @@ class UIManager {
             console.error('❌ Members list not found');
             return;
         }
+
         const memberItems = membersList.querySelectorAll('.member-item:not(.offline)');
         const producerUserMap = window.producerUserMap || new Map();
         const producerClientMap = window.producerClientMap || new Map();
+
         memberItems.forEach(item => {
             const slider = item.querySelector('.member-volume-slider');
             if (slider) {
@@ -484,6 +799,7 @@ class UIManager {
                 slider.dataset.producerId = '';
             }
         });
+
         for (const [producerId, userId] of producerUserMap.entries()) {
             const memberItem = membersList.querySelector(`.member-item[data-user-id="${userId}"]:not(.offline)`);
             if (memberItem) {
@@ -494,6 +810,7 @@ class UIManager {
                 }
             }
         }
+
         for (const [producerId, clientId] of producerClientMap.entries()) {
             if (producerUserMap.has(producerId)) continue;
             const memberItem = membersList.querySelector(`.member-item[data-client-id="${clientId}"]:not(.offline)`);
@@ -518,6 +835,7 @@ class UIManager {
             console.error('❌ Members list element not found');
             return;
         }
+
         const memberItem = membersList.querySelector(`.member-item[data-user-id="${userId}"]:not(.offline)`);
         if (memberItem) {
             const slider = memberItem.querySelector('.member-volume-slider');
@@ -561,12 +879,14 @@ class UIManager {
         const modalOverlay = document.querySelector('.modal-overlay');
         const modalContent = document.querySelector('.modal-content');
         if (!modalOverlay || !modalContent) return;
+
         modalContent.innerHTML = `
             <h2>${title}</h2>
             ${content}
             <button class="modal-submit">OK</button>
         `;
         modalOverlay.classList.remove('hidden');
+
         const submitButton = modalContent.querySelector('.modal-submit');
         if (submitButton && onSubmit) {
             submitButton.addEventListener('click', onSubmit);
@@ -606,6 +926,7 @@ class UIManager {
         if (messagesContainer) {
             messagesContainer.innerHTML = '';
         }
+
         let roomTitle = 'Выберите комнату';
         if (client.currentRoom) {
             const currentRoomData = client.rooms.find(room => room.id === client.currentRoom);
@@ -627,6 +948,7 @@ class UIManager {
                 }
             }
         }
+
         this.updateRoomTitle(roomTitle);
         this.updateMicButton(client.isConnected ? (client.isMicActive ? 'active' : 'connected') : 'disconnected');
         this.updateRoomTitleBadge(client);
@@ -643,13 +965,16 @@ class UIManager {
     static updateRoomTitleBadge(client) {
         const titleElement = document.querySelector('.current-room-title');
         if (!titleElement) return;
+
         const existingBadge = titleElement.querySelector('.room-unread-badge');
         if (existingBadge) {
             existingBadge.remove();
         }
+
         if (!client || !client.currentRoom) {
             return;
         }
+
         let roomUnreadData = null;
         for (const serverId in this.unreadCounts) {
             if (this.unreadCounts[serverId].rooms?.[client.currentRoom]) {
@@ -657,6 +982,7 @@ class UIManager {
                 break;
             }
         }
+
         if (roomUnreadData && roomUnreadData.count > 0) {
             const badge = document.createElement('span');
             badge.className = 'room-unread-badge';
@@ -681,10 +1007,12 @@ class UIManager {
             console.warn('⚠️ setUnreadCount: serverId is empty, using roomId');
             serverId = roomId;
         }
+
         let normalizedServerId = serverId;
         if (serverId.startsWith('user_') || serverId.startsWith('direct_')) {
             normalizedServerId = roomId || serverId;
         }
+
         if (!this.unreadCounts[normalizedServerId]) {
             this.unreadCounts[normalizedServerId] = {
                 total: 0,
@@ -693,10 +1021,12 @@ class UIManager {
                 rooms: {}
             };
         }
+
         this.unreadCounts[normalizedServerId].rooms[roomId] = { count, hasMention, personalCount };
         this.unreadCounts[normalizedServerId].total = 0;
         this.unreadCounts[normalizedServerId].personalTotal = 0;
         this.unreadCounts[normalizedServerId].hasMentionTotal = false;
+
         for (const rid in this.unreadCounts[normalizedServerId].rooms) {
             const data = this.unreadCounts[normalizedServerId].rooms[rid];
             this.unreadCounts[normalizedServerId].total += data.count || 0;
@@ -705,19 +1035,19 @@ class UIManager {
                 this.unreadCounts[normalizedServerId].hasMentionTotal = true;
             }
         }
+
         console.log(`📬 [UI] setUnreadCount: Server ${normalizedServerId}, Room ${roomId} = ${count} total, ${personalCount} personal`);
+
         this.updateServerBadges();
         this.updateRoomBadges();
         this.updateTotalBadge();
         this.updateRoomTitleBadge(this.client);
     }
 
-    // ============================================================================
-    // 🔥 ИСПРАВЛЕНО: updateServerBadges — точное совпадение по serverId
-    // ============================================================================
     static updateServerBadges() {
         const serversList = document.querySelector('.servers-list');
         if (!serversList) return;
+
         const serverItems = serversList.querySelectorAll('.server-item');
         serverItems.forEach(item => {
             const serverId = item.dataset.server;
@@ -725,9 +1055,9 @@ class UIManager {
             if (existingBadge) {
                 existingBadge.remove();
             }
-            // 🔥 Ищем данные ТОЛЬКО для этого serverId
+
             let serverData = this.unreadCounts[serverId];
-            // 🔥 Если не нашли, пробуем нормализованный ID (для приватных комнат)
+
             if (!serverData && serverId && serverId.startsWith('user_')) {
                 for (const sid in this.unreadCounts) {
                     if (sid === serverId) {
@@ -736,7 +1066,7 @@ class UIManager {
                     }
                 }
             }
-            // 🔥 Если всё ещё не нашли, пробуем null (fallback для старых данных)
+
             if (!serverData && this.unreadCounts['null']) {
                 const nullData = this.unreadCounts['null'];
                 if (nullData.rooms && nullData.rooms[serverId]) {
@@ -747,6 +1077,7 @@ class UIManager {
                     };
                 }
             }
+
             if (serverData && serverData.total > 0) {
                 const badge = document.createElement('span');
                 badge.className = 'unread-badge' + (serverData.hasMentionTotal ? ' has-mention' : '');
@@ -763,6 +1094,7 @@ class UIManager {
     static updateRoomBadges() {
         const roomsList = document.querySelector('.rooms-list');
         if (!roomsList) return;
+
         const roomItems = roomsList.querySelectorAll('.room-item');
         roomItems.forEach(item => {
             const roomId = item.dataset.room;
@@ -770,6 +1102,7 @@ class UIManager {
             if (existingBadge) {
                 existingBadge.remove();
             }
+
             for (const serverId in this.unreadCounts) {
                 const roomData = this.unreadCounts[serverId].rooms?.[roomId];
                 if (roomData && roomData.count > 0) {
@@ -791,6 +1124,7 @@ class UIManager {
         let totalCount = 0;
         let totalPersonalCount = 0;
         let totalHasMention = false;
+
         for (const serverId in this.unreadCounts) {
             totalCount += this.unreadCounts[serverId].total || 0;
             totalPersonalCount += this.unreadCounts[serverId].personalTotal || 0;
@@ -798,12 +1132,14 @@ class UIManager {
                 totalHasMention = true;
             }
         }
+
         const currentRoomTitle = document.querySelector('.current-room-title');
         if (currentRoomTitle) {
             let existingTitleBadge = currentRoomTitle.querySelector('.title-unread-badge');
             if (existingTitleBadge) {
                 existingTitleBadge.remove();
             }
+
             if (totalCount > 0) {
                 const badge = document.createElement('span');
                 badge.className = 'title-unread-badge';
@@ -826,15 +1162,18 @@ class UIManager {
         if (!serverId) {
             serverId = roomId;
         }
+
         let normalizedServerId = serverId;
         if (serverId.startsWith('user_') || serverId.startsWith('direct_')) {
             normalizedServerId = roomId || serverId;
         }
+
         if (this.unreadCounts[normalizedServerId]?.rooms?.[roomId]) {
             delete this.unreadCounts[normalizedServerId].rooms[roomId];
             this.unreadCounts[normalizedServerId].total = 0;
             this.unreadCounts[normalizedServerId].personalTotal = 0;
             this.unreadCounts[normalizedServerId].hasMentionTotal = false;
+
             for (const rid in this.unreadCounts[normalizedServerId].rooms) {
                 const data = this.unreadCounts[normalizedServerId].rooms[rid];
                 this.unreadCounts[normalizedServerId].total += data.count || 0;
@@ -843,9 +1182,11 @@ class UIManager {
                     this.unreadCounts[normalizedServerId].hasMentionTotal = true;
                 }
             }
+
             if (this.unreadCounts[normalizedServerId].total === 0) {
                 delete this.unreadCounts[normalizedServerId];
             }
+
             this.updateServerBadges();
             this.updateRoomBadges();
             this.updateTotalBadge();

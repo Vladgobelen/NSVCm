@@ -454,7 +454,7 @@ static getPrivateRoomParticipants(roomId) {
                 }
                 try {
                     const unlockAudio = new Audio('/sounds/room-join.mp3');
-                    unlockAudio.volume = 0.5;
+                    unlockAudio.volume = 0.6;
                     await unlockAudio.play();
                 } catch (err) {
                     // Ignore audio unlock errors
