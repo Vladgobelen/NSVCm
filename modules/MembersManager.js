@@ -1,233 +1,260 @@
-// modules/MembersManager.js
 import UIManager from './UIManager.js';
 
+const CONNECTION_STATE = {
+  UNKNOWN: 'unknown',
+  CONNECTING: 'connecting',
+  CONNECTED: 'connected',
+  ERROR: 'error',
+  DISCONNECTED: 'disconnected'
+};
+
 class MembersManager {
-    static members = new Map();
-    static onlineMembers = [];
-    static offlineMembers = [];
-    static collapsedSections = {
-        online: false,
-        offline: false
+  static members = new Map();
+  static onlineMembers = [];
+  static offlineMembers = [];
+  static collapsedSections = { online: false, offline: false };
+  static connectionStates = new Map();
+  static micStates = new Map();
+  static client = null;
+  static __bulkUpdate = false;
+
+  static init(client) {
+    this.client = client;
+    try {
+      const saved = localStorage.getItem('membersListCollapsed');
+      if (saved) this.collapsedSections = JSON.parse(saved);
+    } catch (e) {
+      this.collapsedSections = { online: false, offline: false };
+    }
+  }
+
+  static isSectionCollapsed(section) {
+    return this.collapsedSections[section] || false;
+  }
+
+  static toggleSection(section) {
+    this.collapsedSections[section] = !this.collapsedSections[section];
+    localStorage.setItem('membersListCollapsed', JSON.stringify(this.collapsedSections));
+    if (!this.__bulkUpdate) this._updateOnlineOfflineLists();
+    UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+  }
+
+  static setConnectionState(userId, state) {
+    if (!userId) return;
+    const previousState = this.connectionStates.get(userId);
+    this.connectionStates.set(userId, { state, timestamp: Date.now(), previousState });
+    if (this.members.has(userId)) {
+      const member = this.members.get(userId);
+      member.connectionState = state;
+      this.members.set(userId, member);
+    }
+    if (!this.__bulkUpdate) {
+      this._updateOnlineOfflineLists();
+      UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+    }
+    UIManager.showConnectionStatus(userId, state);
+  }
+
+  static getConnectionState(userId) {
+    if (!userId) return CONNECTION_STATE.UNKNOWN;
+    const stateData = this.connectionStates.get(userId);
+    return stateData?.state || CONNECTION_STATE.UNKNOWN;
+  }
+
+  static setMicState(userId, isActive) {
+    if (!userId) return;
+    this.micStates.set(userId, { isActive, timestamp: Date.now() });
+    if (this.members.has(userId)) {
+      const member = this.members.get(userId);
+      member.isMicActive = isActive;
+      this.members.set(userId, member);
+    }
+    UIManager.updateMemberMicState(userId, isActive);
+  }
+
+  static getMicState(userId) {
+    if (!userId) return { isActive: false, timestamp: 0 };
+    return this.micStates.get(userId) || { isActive: false, timestamp: 0 };
+  }
+
+  static updateMember(userId, updates) {
+    if (this.members.has(userId)) {
+      const member = { ...this.members.get(userId), ...updates };
+      if (updates.connectionState) this.setConnectionState(userId, updates.connectionState);
+      if (updates.isMicActive !== undefined) this.setMicState(userId, updates.isMicActive);
+      this.members.set(userId, member);
+      if (!this.__bulkUpdate) {
+        this._updateOnlineOfflineLists();
+        UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+        UIManager.updateMemberMicState(userId, updates.isMicActive);
+      }
+    }
+  }
+
+  static addMember(memberData) {
+    if (!memberData.userId) return;
+    const existingMember = this.members.get(memberData.userId);
+    let isCurrentlyOnline = true;
+    let connectionState = CONNECTION_STATE.CONNECTED;
+    let isMicActive = false;
+    if (existingMember) {
+      isCurrentlyOnline = existingMember.isOnline;
+      connectionState = existingMember.connectionState || CONNECTION_STATE.CONNECTED;
+      isMicActive = existingMember.isMicActive || false;
+    }
+    const processedMemberData = {
+      userId: memberData.userId,
+      username: memberData.username || `User_${memberData.userId.substr(0, 8)}`,
+      isMicActive: memberData.isMicActive !== undefined ? memberData.isMicActive : isMicActive,
+      isOnline: memberData.isOnline !== undefined ? memberData.isOnline : isCurrentlyOnline,
+      clientId: memberData.clientId || null,
+      connectionState: memberData.connectionState || connectionState,
+      joinedAt: memberData.joinedAt || new Date().toISOString()
     };
-
-    static init() {
-        const saved = localStorage.getItem('membersListCollapsed');
-        if (saved) {
-            try {
-                this.collapsedSections = JSON.parse(saved);
-            } catch (e) {
-                this.collapsedSections = { online: false, offline: false };
-            }
-        }
+    this.members.set(processedMemberData.userId, processedMemberData);
+    if (processedMemberData.isOnline) {
+      this.setConnectionState(processedMemberData.userId, processedMemberData.connectionState);
+      this.setMicState(processedMemberData.userId, processedMemberData.isMicActive);
     }
+    this._updateOnlineOfflineLists();
+    UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+  }
 
-    static saveCollapsedState() {
-        localStorage.setItem('membersListCollapsed', JSON.stringify(this.collapsedSections));
+  static removeMember(userId) {
+    if (this.members.has(userId)) {
+      this.members.delete(userId);
+      this.connectionStates.delete(userId);
+      this.micStates.delete(userId);
+      this._updateOnlineOfflineLists();
+      UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
     }
+  }
 
-    static toggleSection(section) {
-        if (section === 'online' || section === 'offline') {
-            this.collapsedSections[section] = !this.collapsedSections[section];
-            this.saveCollapsedState();
-            UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
-        }
+  static clearMembers() {
+    this.members.clear();
+    this.onlineMembers = [];
+    this.offlineMembers = [];
+    this.connectionStates.clear();
+    this.micStates.clear();
+    UIManager.clearConnectionStatuses();
+    UIManager.updateMembersListWithStatus([], []);
+  }
+
+  static updateAllMembers(members) {
+    this.members.clear();
+    members.forEach(member => {
+      this.members.set(member.userId, {
+        ...member,
+        connectionState: member.connectionState || CONNECTION_STATE.CONNECTED,
+        isMicActive: member.isMicActive || false
+      });
+      if (member.isOnline) {
+        this.setConnectionState(member.userId, member.connectionState || CONNECTION_STATE.CONNECTED);
+        this.setMicState(member.userId, member.isMicActive || false);
+      }
+    });
+    this._updateOnlineOfflineLists();
+    UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+  }
+
+  static updateAllMembersWithStatus(online, offline) {
+    this.__bulkUpdate = true;
+    if (!Array.isArray(online)) online = [];
+    if (!Array.isArray(offline)) offline = [];
+    this.members.clear();
+    this.onlineMembers = [...online];
+    this.offlineMembers = [...offline];
+    [...this.onlineMembers].forEach(member => {
+      if (member && member.userId) {
+        const memberWithState = { ...member, connectionState: member.connectionState || CONNECTION_STATE.CONNECTED, isMicActive: member.isMicActive || false, isOnline: true };
+        this.members.set(member.userId, memberWithState);
+        this.setConnectionState(member.userId, memberWithState.connectionState);
+        this.setMicState(member.userId, memberWithState.isMicActive);
+      }
+    });
+    [...this.offlineMembers].forEach(member => {
+      if (member && member.userId) {
+        const memberWithState = { ...member, connectionState: member.connectionState || CONNECTION_STATE.DISCONNECTED, isMicActive: member.isMicActive || false, isOnline: false };
+        this.members.set(member.userId, memberWithState);
+      }
+    });
+    this._updateOnlineOfflineLists();
+    this.__bulkUpdate = false;
+    UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+  }
+
+  static _updateOnlineOfflineLists() {
+    this.onlineMembers = [];
+    this.offlineMembers = [];
+    this.members.forEach(member => {
+      if (member.isOnline === true) this.onlineMembers.push(member);
+      else this.offlineMembers.push(member);
+    });
+    this.onlineMembers.sort((a, b) => (a.username || '').localeCompare(b.username || ''));
+    this.offlineMembers.sort((a, b) => (a.username || '').localeCompare(b.username || ''));
+  }
+
+  static getMembers() {
+    return Array.from(this.members.values());
+  }
+
+  static getMember(userId) {
+    return this.members.get(userId);
+  }
+
+  static getOnlineMembers() {
+    return this.onlineMembers;
+  }
+
+  static getOfflineMembers() {
+    return this.offlineMembers;
+  }
+
+  static isCurrentUser(client, userId) {
+    return client.userId === userId;
+  }
+
+  static initializeRoomMembers(client, participants) {
+    this.clearMembers();
+    participants.forEach(participant => this.addMember(participant));
+  }
+
+  static getMembersByConnectionState(state) {
+    return this.getMembers().filter(m => m.connectionState === state);
+  }
+
+  static getMembersByMicState(isActive) {
+    return this.getMembers().filter(m => m.isMicActive === isActive);
+  }
+
+  static getConnectionStats() {
+    const stats = { [CONNECTION_STATE.UNKNOWN]: 0, [CONNECTION_STATE.CONNECTING]: 0, [CONNECTION_STATE.CONNECTED]: 0, [CONNECTION_STATE.ERROR]: 0, [CONNECTION_STATE.DISCONNECTED]: 0 };
+    this.members.forEach(member => {
+      const state = member.connectionState || CONNECTION_STATE.UNKNOWN;
+      if (stats[state] !== undefined) stats[state]++;
+    });
+    return stats;
+  }
+
+  static getMicStats() {
+    const stats = { active: 0, inactive: 0 };
+    this.members.forEach(member => {
+      if (member.isOnline) {
+        if (member.isMicActive) stats.active++;
+        else stats.inactive++;
+      }
+    });
+    return stats;
+  }
+
+  static syncStatesWithServer(client, roomId) {
+    if (!client || !client.socket || !roomId) return;
+    if (client.userId) {
+      const myMicState = this.getMicState(client.userId);
+      client.socket.emit('mic-indicator-state', { roomId, isActive: myMicState.isActive || false });
     }
-
-    static isSectionCollapsed(section) {
-        return this.collapsedSections[section] || false;
-    }
-
-    static updateMember(userId, updates) {
-        if (this.members.has(userId)) {
-            const member = { ...this.members.get(userId), ...updates };
-            this.members.set(userId, member);
-            this._updateOnlineOfflineLists();
-            UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
-            UIManager.updateMemberMicState(userId, updates.isMicActive);
-        }
-    }
-
-    static addMember(memberData) {
-        if (!memberData.userId) {
-            console.error('Member data must contain userId');
-            return;
-        }
-
-        const existingMember = this.members.get(memberData.userId);
-        let isCurrentlyOnline = true;
-
-        if (existingMember) {
-            isCurrentlyOnline = existingMember.isOnline;
-        }
-
-        const processedMemberData = {
-            userId: memberData.userId,
-            username: memberData.username || `User_${memberData.userId.substr(0, 8)}`,
-            isMicActive: memberData.isMicActive || false,
-            isOnline: memberData.isOnline !== undefined ? memberData.isOnline : isCurrentlyOnline,
-            clientId: memberData.clientId || null
-        };
-
-        this.members.set(processedMemberData.userId, processedMemberData);
-        this._updateOnlineOfflineLists();
-        UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
-    }
-
-    static removeMember(userId) {
-        if (this.members.has(userId)) {
-            this.members.delete(userId);
-            this._updateOnlineOfflineLists();
-            UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
-        }
-    }
-
-    static clearMembers() {
-        this.members.clear();
-        this.onlineMembers = [];
-        this.offlineMembers = [];
-        UIManager.updateMembersListWithStatus([], []);
-    }
-
-    static updateAllMembers(members) {
-        this.members.clear();
-        members.forEach(member => {
-            this.members.set(member.userId, member);
-        });
-        this._updateOnlineOfflineLists();
-        UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
-    }
-
-    static updateAllMembersWithStatus(online, offline) {
-        this.members.clear();
-        this.onlineMembers = online || [];
-        this.offlineMembers = offline || [];
-
-        [...this.onlineMembers, ...this.offlineMembers].forEach(member => {
-            if (member && member.userId) {
-                this.members.set(member.userId, member);
-            }
-        });
-
-        console.log(`👥 MembersManager: ${this.onlineMembers.length} онлайн, ${this.offlineMembers.length} оффлайн`);
-        UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
-    }
-
-    static _updateOnlineOfflineLists() {
-        this.onlineMembers = [];
-        this.offlineMembers = [];
-
-        this.members.forEach(member => {
-            if (member.isOnline === true) {
-                this.onlineMembers.push(member);
-            } else {
-                this.offlineMembers.push(member);
-            }
-        });
-
-        this.onlineMembers.sort((a, b) => a.username.localeCompare(b.username));
-        this.offlineMembers.sort((a, b) => a.username.localeCompare(b.username));
-    }
-
-    static setupSocketHandlers(client) {
-        if (!client.socket) return;
-
-        client.socket.on('room-participants', (participants) => {
-            console.log('👥 Получен список участников:', participants.length);
-            const processedParticipants = participants.map((p) => {
-                if (p.userId === this.userId) {
-                    return { ...p, isOnline: true };
-                }
-                return p;
-            });
-            MembersManager.updateAllMembers(processedParticipants);
-
-            const me = processedParticipants.find((p) => p.userId === this.userId);
-            if (me) {
-                window.voiceClient.userId = me.userId;
-                const displayName = me.username || me.name || me.userId;
-                if (typeof window.setLoggerDisplayName === 'function') {
-                    window.setLoggerDisplayName(displayName);
-                }
-            }
-        });
-
-        client.socket.on('room-participants-updated', (data) => {
-            console.log('👥 Room participants updated:', data);
-            console.log(`👥 Онлайн: ${data.online?.length || 0}, Офлайн: ${data.offline?.length || 0}`);
-
-            if ((!data.online || data.online.length === 0) && (!data.offline || data.offline.length === 0)) {
-                console.warn('⚠️ Получены пустые данные участников, игнорируем');
-                return;
-            }
-
-            MembersManager.updateAllMembersWithStatus(data.online, data.offline);
-        });
-
-        client.socket.on('user-joined', async (user) => {
-            if (this.members.has(user.userId)) {
-                this.updateMember(user.userId, {
-                    ...user,
-                    isOnline: true
-                });
-            } else {
-                this.addMember({
-                    ...user,
-                    isOnline: true
-                });
-            }
-            UIManager.addMessage('System', `Пользователь ${user.username} присоединился к комнате`);
-        });
-
-        client.socket.on('user-left', async (data) => {
-            const member = MembersManager.getMember(data.userId);
-            if (member) {
-                this.updateMember(data.userId, { isOnline: false });
-                UIManager.addMessage('System', `Пользователь ${member.username} покинул комнату`);
-            } else {
-                UIManager.addMessage('System', `Пользователь покинул комнату`);
-            }
-        });
-
-        client.socket.on('user-mic-state', (data) => {
-            if (data.userId) {
-                this.updateMember(data.userId, { isMicActive: data.isActive });
-            } else if (data.clientID) {
-                const members = Array.from(this.members.values());
-                const member = members.find(m => m.clientId === data.clientID);
-                if (member) {
-                    this.updateMember(member.userId, { isMicActive: data.isActive });
-                }
-            }
-        });
-    }
-
-    static setupSSEHandlers() {
-    }
-
-    static getMembers() {
-        return Array.from(this.members.values());
-    }
-
-    static getMember(userId) {
-        return this.members.get(userId);
-    }
-
-    static getOnlineMembers() {
-        return this.onlineMembers;
-    }
-
-    static getOfflineMembers() {
-        return this.offlineMembers;
-    }
-
-    static isCurrentUser(client, userId) {
-        return client.userId === userId;
-    }
-
-    static initializeRoomMembers(client, participants) {
-        this.clearMembers();
-        participants.forEach(participant => this.addMember(participant));
-    }
+    client.socket.emit('request-mic-states', { roomId });
+  }
 }
 
 export default MembersManager;

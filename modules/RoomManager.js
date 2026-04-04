@@ -1,4 +1,3 @@
-// modules/RoomManager.js
 import UIManager from './UIManager.js';
 import MediaManager from './MediaManager.js';
 import TextChatManager from './TextChatManager.js';
@@ -6,23 +5,18 @@ import MembersManager from './MembersManager.js';
 import InviteManager from './InviteManager.js';
 import ServerManager from './ServerManager.js';
 
+const RETRY_BASE_DELAY = 1000;
+const RETRY_MAX_DELAY = 32000;
+
 class RoomManager {
     static async loadRoomsForServer(client, serverId) {
         try {
             const server = client.servers.find(s => s.id === serverId);
             const isPrivateRoom = ServerManager.isPrivateServer(server);
-            console.log('🏠 [LOAD-ROOMS] Загрузка комнат для сервера:', serverId);
-            console.log('🏠 [LOAD-ROOMS] Это private room?', isPrivateRoom);
-            console.log('🏠 [LOAD-ROOMS] Объект сервера:', server);
-
             if (isPrivateRoom) {
                 client.currentServerId = serverId;
                 client.currentServer = server || null;
-                UIManager.updateStatus('Подключение к приватному чату...', 'connecting');
-                
-                // 🔥 ИСПРАВЛЕНО: Сначала кэшируем все имена, потом рендерим
                 await this.cachePrivateRoomUsernames(client, server);
-                
                 const displayName = ServerManager.getPrivateServerDisplayName(server, client.userId);
                 const privateRoom = {
                     id: serverId,
@@ -35,17 +29,12 @@ class RoomManager {
                     isPrivate: true
                 };
                 client.rooms = [privateRoom];
-                
-                // 🔥 ИСПРАВЛЕНО: Перерендериваем после кэширования имён
                 await this.renderRooms(client, [privateRoom]);
                 await this.joinRoom(client, serverId, false);
                 return;
             }
-
             client.currentServerId = serverId;
             client.currentServer = server || null;
-            UIManager.updateStatus('Загрузка комнат...', 'connecting');
-
             const res = await fetch(`${client.API_SERVER_URL}/api/servers/${serverId}/rooms`, {
                 headers: {
                     'Authorization': `Bearer ${client.token}`,
@@ -61,22 +50,16 @@ class RoomManager {
                 throw new Error('Некорректные данные от сервера');
             }
             client.rooms = data.rooms;
-            
-            // 🔥 ИСПРАВЛЕНО: Кэшируем имена перед рендером
             await this.cacheRoomUsernames(client, data.rooms);
             this.renderRooms(client, data.rooms);
-            UIManager.updateStatus('Комнаты загружены', 'normal');
         } catch (error) {
             UIManager.updateStatus('Ошибка загрузки комнат', 'error');
             UIManager.showError('Не удалось загрузить комнаты: ' + error.message);
-            console.error(error);
         }
     }
 
-    // 🔥 НОВАЯ ФУНКЦИЯ: Кэширование имён для всех комнат
     static async cacheRoomUsernames(client, rooms) {
         const userIdsToCache = new Set();
-        
         for (const room of rooms) {
             if (this.isPrivateRoom(room.id)) {
                 const participants = this.getPrivateRoomParticipants(room.id);
@@ -87,7 +70,6 @@ class RoomManager {
                 }
             }
         }
-        
         if (userIdsToCache.size > 0) {
             await UIManager.fetchUsernames(Array.from(userIdsToCache));
         }
@@ -116,11 +98,20 @@ class RoomManager {
 
     static async joinRoom(client, roomId, clearUnread = true) {
         try {
+            if (client.currentRoom && client.socket) {
+                //client.logToRoomChat(`🔄 [${client.username}] Вход в комнату ${roomId}...`, 'connecting');
+            }
             const result = await client.joinRoom(roomId, clearUnread);
+            if (result && client.currentRoom && client.socket) {
+                const room = client.rooms.find(r => r.id === roomId);
+                const roomName = room ? room.name : roomId;
+            }
             return result;
         } catch (error) {
+            if (client.currentRoom && client.socket) {
+                client.logToRoomChat(`❌ [${client.username}] Не удалось войти в комнату: ${error.message}`, 'error');
+            }
             UIManager.showError('Не удалось присоединиться к комнате: ' + error.message);
-            console.error(error);
             throw error;
         }
     }
@@ -128,6 +119,9 @@ class RoomManager {
     static async leaveRoom(client) {
         if (!client.currentRoom) return;
         try {
+            if (client.socket && client.username) {
+                client.logToRoomChat(`🚪 [${client.username}] Покинул комнату`, 'info');
+            }
             if (client.socket) {
                 client.socket.emit('leave-room', { roomId: client.currentRoom });
             }
@@ -149,11 +143,9 @@ class RoomManager {
             client.currentRoom = null;
             client.roomType = null;
             UIManager.updateRoomUI(client);
-            UIManager.addMessage('System', `✅ Вы покинули комнату`);
             return true;
         } catch (error) {
             UIManager.showError('Ошибка при покидании комнаты: ' + error.message);
-            console.error(error);
             return false;
         }
     }
@@ -196,19 +188,14 @@ class RoomManager {
             UIManager.addMessage('System', `✅ Создана комната "${name}"`);
         } catch (error) {
             alert('Ошибка: ' + error.message);
-            console.error(error);
         }
     }
 
     static async createRoomInvite(client, roomId) {
         try {
-            console.log('🏠 [ROOM] Создание приглашения для комнаты:', roomId);
             const invite = await InviteManager.createRoomInvite(roomId);
-            console.log('📋 [ROOM] Получено приглашение:', invite);
             if (invite) {
-                console.log('✅ [ROOM] Код приглашения:', invite.code);
                 const inviteLink = InviteManager.generateInviteLink(invite.code);
-                console.log('🔗 [ROOM] Сгенерированная ссылка:', inviteLink);
                 UIManager.openModal('Приглашение создано', `
                     <p>Приглашение для комнаты создано!</p>
                     <div class="invite-link-container">
@@ -220,40 +207,28 @@ class RoomManager {
                     UIManager.closeModal();
                 });
             } else {
-                console.error('❌ [ROOM] Приглашение не создано (null)');
                 UIManager.showError('Не удалось создать приглашение: пустой ответ');
             }
         } catch (error) {
-            console.error('❌ [ROOM] Ошибка создания приглашения:', error);
             UIManager.showError('Не удалось создать приглашение: ' + error.message);
         }
     }
 
     static async copyRoomInviteLink(client, roomId) {
         try {
-            console.log('📋 [ROOM-COPY] Копирование ссылки для комнаты:', roomId);
             const invites = await InviteManager.getRoomInvites(roomId);
-            console.log('📋 [ROOM-COPY] Существующие приглашения:', invites);
             if (invites && invites.length > 0) {
                 const activeInvite = invites.find(invite => new Date(invite.expiresAt) > new Date());
-                console.log('📋 [ROOM-COPY] Активное приглашение:', activeInvite);
                 if (activeInvite) {
-                    console.log('✅ [ROOM-COPY] Код приглашения:', activeInvite.code);
                     InviteManager.copyInviteLink(activeInvite.code);
                     return;
                 }
             }
-            console.log('🔄 [ROOM-COPY] Создание нового приглашения');
             const invite = await InviteManager.createRoomInvite(roomId);
-            console.log('📋 [ROOM-COPY] Получено новое приглашение:', invite);
             if (invite) {
-                console.log('✅ [ROOM-COPY] Код приглашения:', invite.code);
                 InviteManager.copyInviteLink(invite.code);
-            } else {
-                console.error('❌ [ROOM-COPY] Приглашение не создано');
             }
         } catch (error) {
-            console.error('❌ [ROOM-COPY] Ошибка:', error);
             UIManager.showError('Не удалось скопировать ссылку приглашения');
         }
     }
@@ -281,7 +256,6 @@ class RoomManager {
             UIManager.addMessage('System', `✅ Комната удалена`);
         } catch (error) {
             UIManager.showError('Ошибка: ' + error.message);
-            console.error(error);
         }
     }
 
@@ -291,7 +265,6 @@ class RoomManager {
             return result;
         } catch (error) {
             UIManager.showError('Ошибка переподключения: ' + error.message);
-            console.error(error);
             throw error;
         }
     }
@@ -302,60 +275,45 @@ class RoomManager {
         return roomId.startsWith('user_') && roomId.includes('_user_');
     }
 
-static async getPrivateRoomDisplayName(roomId, currentUserId, server) {
-    if (!this.isPrivateRoom(roomId)) return null;
-    
-    let otherUserId = null;
-    
-    // 🔥 Проверяем participantIds
-    if (server?.participantIds && Array.isArray(server.participantIds)) {
-        otherUserId = server.participantIds.find(id => id !== currentUserId);
-    }
-    
-    // 🔥 Проверяем members
-    if (!otherUserId && server?.members && Array.isArray(server.members)) {
-        otherUserId = server.members.find(id => id !== currentUserId);
-    }
-    
-    // 🔥 Парсим из ID комнаты
-    if (!otherUserId) {
-        const parts = roomId.split('_user_');
-        if (parts.length === 2) {
-            otherUserId = currentUserId === parts[0] ? parts[1] : parts[0];
-            // 🔥 Восстанавливаем префикс user_ если потерялся
-            if (!otherUserId.startsWith('user_')) {
-                otherUserId = 'user_' + otherUserId;
+    static async getPrivateRoomDisplayName(roomId, currentUserId, server) {
+        if (!this.isPrivateRoom(roomId)) return null;
+        let otherUserId = null;
+        if (server?.participantIds && Array.isArray(server.participantIds)) {
+            otherUserId = server.participantIds.find(id => id !== currentUserId);
+        }
+        if (!otherUserId && server?.members && Array.isArray(server.members)) {
+            otherUserId = server.members.find(id => id !== currentUserId);
+        }
+        if (!otherUserId) {
+            const parts = roomId.split('_user_');
+            if (parts.length === 2) {
+                otherUserId = currentUserId === parts[0] ? parts[1] : parts[0];
+                if (!otherUserId.startsWith('user_')) {
+                    otherUserId = 'user_' + otherUserId;
+                }
             }
         }
-    }
-    
-    if (otherUserId) {
-        // 🔥 Сначала проверяем кэш
-        const cachedName = UIManager.usernameCache.get(otherUserId);
-        if (cachedName) {
-            return cachedName;
+        if (otherUserId) {
+            const cachedName = UIManager.usernameCache.get(otherUserId);
+            if (cachedName) {
+                return cachedName;
+            }
+            const username = await UIManager.fetchUsername(otherUserId);
+            return username;
         }
-        // 🔥 Загружаем имя
-        const username = await UIManager.fetchUsername(otherUserId);
-        return username;
+        return null;
     }
-    
-    return null;
-}
 
-static getPrivateRoomParticipants(roomId) {
-    if (!this.isPrivateRoom(roomId)) return [null, null];
-    
-    // 🔥 Правильный парсинг формата user_XXX_user_YYY
-    const parts = roomId.split('_user_');
-    if (parts.length === 2) {
-        // 🔥 Восстанавливаем префикс user_ для второго участника
-        const user1 = parts[0];
-        const user2 = parts[1].startsWith('user_') ? parts[1] : 'user_' + parts[1];
-        return [user1, user2];
+    static getPrivateRoomParticipants(roomId) {
+        if (!this.isPrivateRoom(roomId)) return [null, null];
+        const parts = roomId.split('_user_');
+        if (parts.length === 2) {
+            const user1 = parts[0];
+            const user2 = parts[1].startsWith('user_') ? parts[1] : 'user_' + parts[1];
+            return [user1, user2];
+        }
+        return [null, null];
     }
-    return [null, null];
-}
 
     static async checkPrivateRoomAccess(client, roomId) {
         if (!this.isPrivateRoom(roomId)) return true;
@@ -402,7 +360,6 @@ static getPrivateRoomParticipants(roomId) {
             this.renderRooms(client, [room]);
             return room;
         } catch (error) {
-            console.error('❌ [ROOM] Ошибка загрузки приватной комнаты:', error);
             UIManager.showError('Не удалось загрузить приватную комнату: ' + error.message);
             return null;
         }
@@ -412,41 +369,21 @@ static getPrivateRoomParticipants(roomId) {
         const roomsList = document.querySelector('.rooms-list');
         if (!roomsList) return;
         roomsList.innerHTML = '';
-        console.log('🏠 [ROOM-RENDER] Рендеринг комнат:', rooms);
-        console.log('🏠 [ROOM-RENDER] Текущий сервер:', client.currentServer);
-        console.log('🏠 [ROOM-RENDER] Members:', client.currentServer?.members);
-
         for (const room of rooms) {
             const roomElement = document.createElement('div');
             roomElement.className = 'room-item';
             roomElement.dataset.room = room.id;
-            
             const isOwner = room.ownerId === client.userId;
             const isMember = client.currentServer?.members?.includes(client.userId);
             const isPrivate = this.isPrivateRoom(room.id);
-            
             let displayName = room.name;
-            
-            // 🔥 ИСПРАВЛЕНО: Для приватных комнат всегда используем кэш или загружаем имя
             if (isPrivate) {
                 const cachedName = await this.getPrivateRoomDisplayName(room.id, client.userId, client.currentServer);
                 if (cachedName) {
                     displayName = cachedName;
                 }
             }
-            
-            console.log(`🔍 [ROOM-RENDER] Комната ${room.id}:`, {
-                isOwner,
-                isMember,
-                isPrivate,
-                displayName,
-                serverMembers: client.currentServer?.members,
-                serverType: client.currentServer?.type,
-                roomId: room.id
-            });
-            
             roomElement.innerHTML = `🔊 ${displayName} ${isOwner ? '<span class="owner-badge">(Вы)</span>' : ''}`;
-            
             roomElement.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 if (client.currentRoom === room.id) {
@@ -457,7 +394,7 @@ static getPrivateRoomParticipants(roomId) {
                     unlockAudio.volume = 0.6;
                     await unlockAudio.play();
                 } catch (err) {
-                    // Ignore audio unlock errors
+                    // Ignored
                 }
                 try {
                     await client.joinRoom(room.id, true);
@@ -465,15 +402,11 @@ static getPrivateRoomParticipants(roomId) {
                     localStorage.setItem('lastServerId', client.currentServerId);
                 } catch (error) {
                     UIManager.showError('Не удалось присоединиться к комнате: ' + error.message);
-                    console.error(error);
                 }
             });
-            
             if (isMember || isPrivate) {
-                console.log(`✅ [ROOM-RENDER] Создаем кнопки для комнаты ${room.id} (isMember=${isMember}, isPrivate=${isPrivate})`);
                 const actionButtons = document.createElement('div');
                 actionButtons.className = 'room-actions';
-                
                 const shareBtn = document.createElement('button');
                 shareBtn.className = 'room-action-btn';
                 shareBtn.innerHTML = '📋';
@@ -481,29 +414,23 @@ static getPrivateRoomParticipants(roomId) {
                 shareBtn.addEventListener('click', async (e) => {
                     e.stopPropagation();
                     try {
-                        console.log('📋 [SHARE-BTN] Копирование ссылки для комнаты:', room.id);
                         const invite = await InviteManager.createRoomInvite(room.id);
-                        console.log('📋 [SHARE-BTN] Получено приглашение:', invite);
                         const inviteLink = InviteManager.generateInviteLink(invite.code);
                         await navigator.clipboard.writeText(inviteLink);
                         UIManager.showError('Ссылка скопирована!');
                     } catch (error) {
-                        console.error('❌ [SHARE-BTN] Ошибка:', error);
                         UIManager.showError('Не удалось скопировать ссылку');
                     }
                 });
                 actionButtons.appendChild(shareBtn);
-                
                 if (isOwner) {
                     const inviteBtn = document.createElement('button');
                     inviteBtn.className = 'room-action-btn';
                     inviteBtn.title = 'Создать приглашение';
                     inviteBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
-                        console.log('🎫 [INVITE-BTN] Создание приглашения для комнаты:', room.id);
                         this.createRoomInvite(client, room.id);
                     });
-                    
                     const deleteBtn = document.createElement('button');
                     deleteBtn.className = 'room-action-btn';
                     deleteBtn.innerHTML = '✕';

@@ -1,12 +1,8 @@
-// modules/ServerManager.js
 import UIManager from './UIManager.js';
 import RoomManager from './RoomManager.js';
 import InviteManager from './InviteManager.js';
 
 class ServerManager {
-    // ============================================================================
-    // 🔥 ИСПРАВЛЕНО: loadServers - получаем готовые данные от сервера
-    // ============================================================================
     static async loadServers(client, forceUpdate = false) {
         try {
             let apiServers = [];
@@ -20,20 +16,15 @@ class ServerManager {
                 if (res.ok) {
                     const data = await res.json();
                     apiServers = Array.isArray(data.servers) ? data.servers : [];
-                    console.log(`📋 [SERVER] Loaded ${apiServers.length} servers from API`);
                 } else {
-                    console.error(`📋 [SERVER] API error: ${res.status}`);
+                    UIManager.showError('Не удалось загрузить серверы');
+                    return false;
                 }
             } catch (apiError) {
-                console.error('📋 [SERVER] Fetch error:', apiError);
                 UIManager.showError('Не удалось загрузить серверы');
                 return false;
             }
-
-            // 🔥 Сервер отдаёт готовый список с displayName
             client.servers = [...apiServers];
-            console.log(`📋 [SERVER] Total servers: ${client.servers.length}`);
-
             const lastServerId = localStorage.getItem('lastServerId');
             if (lastServerId) {
                 const serverExists = client.servers.some(s => s.id === lastServerId);
@@ -41,23 +32,17 @@ class ServerManager {
                     client.currentServerId = lastServerId;
                     client.currentServer = client.servers.find(s => s.id === lastServerId);
                 } else {
-                    console.log(`⚠️ [SERVER] Сервер ${lastServerId} не найден, удаляем из localStorage`);
                     localStorage.removeItem('lastServerId');
                     localStorage.removeItem('lastRoomId');
                 }
             }
-
-            // 🔥 УБРАНО: Никаких кэширований — сервер всё отдал готовым
             this.renderServers(client);
             return true;
         } catch (error) {
-            console.error('📋 [SERVER] loadServers error:', error);
             UIManager.showError('Не удалось загрузить серверы: ' + error.message);
             return false;
         }
     }
-
-    // 🔥 УДАЛЕНО: cachePrivateServerUsernames — больше не нужно
 
     static isPrivateServer(server) {
         return server?.type === 'private' ||
@@ -65,9 +50,6 @@ class ServerManager {
             (server?.id && server.id.startsWith('user_') && server.id.includes('_user_'));
     }
 
-    // ============================================================================
-    // 🔥 ИСПРАВЛЕНО: getPrivateServerDisplayName — берём готовое displayName
-    // ============================================================================
     static getPrivateServerDisplayName(server, clientUserId) {
         if (!server || !server.id) {
             return server?.name || 'Приватный чат';
@@ -75,15 +57,10 @@ class ServerManager {
         if (!this.isPrivateServer(server)) {
             return server.name;
         }
-
-        // 🔥 Сервер уже отдал готовое displayName
         if (server.displayName) {
             return server.displayName;
         }
-
-        // 🔥 Фоллбэк на старую логику (на случай если сервер старый)
         let otherUserId = null;
-
         if (server.participantIds && Array.isArray(server.participantIds)) {
             otherUserId = server.participantIds.find(id => id !== clientUserId);
         }
@@ -99,7 +76,6 @@ class ServerManager {
                 }
             }
         }
-
         if (otherUserId) {
             const cachedName = UIManager.usernameCache.get(otherUserId);
             if (cachedName) {
@@ -107,36 +83,27 @@ class ServerManager {
             }
             return otherUserId.replace('user_', '').substring(0, 8);
         }
-
         return server.name || 'Приватный чат';
     }
 
     static renderServers(client) {
         const serversList = document.querySelector('.servers-list');
         if (!serversList) return;
-
         serversList.innerHTML = '';
-
         if (client.servers.length === 0) {
             serversList.innerHTML = '<div class="no-results">Нет серверов. Создайте новый или присоединитесь к существующему.</div>';
             return;
         }
-
         client.servers.forEach(server => {
             const serverElement = document.createElement('div');
             serverElement.className = 'server-item';
             serverElement.dataset.server = server.id;
-
             const isPrivate = this.isPrivateServer(server);
-            // 🔥 Просто берём displayName от сервера
             const displayName = isPrivate
                 ? `👤 ${this.getPrivateServerDisplayName(server, client.userId)}`
                 : `🏠 ${server.name}`;
-
             const isOwner = server.ownerId === client.userId;
-
             serverElement.innerHTML = `${displayName} ${isOwner ? '<span class="owner-badge">(Вы)</span>' : ''}`;
-
             serverElement.addEventListener('click', () => {
                 client.currentServerId = server.id;
                 client.currentServer = server;
@@ -151,10 +118,8 @@ class ServerManager {
                     UIManager.updateRoomBadges();
                 }, 100);
             });
-
             const actionButtons = document.createElement('div');
             actionButtons.className = 'server-actions';
-
             if (isPrivate) {
                 const shareBtn = document.createElement('button');
                 shareBtn.className = 'server-action-btn';
@@ -181,7 +146,6 @@ class ServerManager {
                         e.stopPropagation();
                         this.copyServerInviteLink(client, server.id);
                     });
-
                     const deleteBtn = document.createElement('button');
                     deleteBtn.className = 'server-action-btn';
                     deleteBtn.innerHTML = '✕';
@@ -190,7 +154,6 @@ class ServerManager {
                         e.stopPropagation();
                         this.deleteServer(client, server.id);
                     });
-
                     actionButtons.appendChild(shareBtn);
                     actionButtons.appendChild(deleteBtn);
                 } else if (server.members?.includes(client.userId)) {
@@ -205,17 +168,12 @@ class ServerManager {
                     actionButtons.appendChild(leaveBtn);
                 }
             }
-
             serverElement.appendChild(actionButtons);
             serversList.appendChild(serverElement);
         });
-
         UIManager.updateServerBadges();
     }
 
-    // ============================================================================
-    // 🔥 ИСПРАВЛЕНО: createDirectRoom — retry logic для гонки сохранения
-    // ============================================================================
     static async createDirectRoom(client, targetUserId, targetUsername) {
         try {
             const res = await fetch(`${client.API_SERVER_URL}/api/rooms/private/${targetUserId}`, {
@@ -232,11 +190,10 @@ class ServerManager {
             const data = await res.json();
             const room = data.room;
             const server = data.server;
-
             const directStub = {
                 id: server.id,
                 name: targetUsername,
-                displayName: targetUsername,  // 🔥 Сразу ставим displayName
+                displayName: targetUsername,
                 type: 'private',
                 serverId: server.id,
                 ownerId: client.userId,
@@ -247,11 +204,9 @@ class ServerManager {
                 inviteCode: room.inviteCode || room.code || '',
                 isPrivate: true
             };
-
             if (!client.servers.some(s => s.id === server.id)) {
                 client.servers.push(directStub);
             }
-
             if (room.inviteCode) {
                 const link = `https://ns.fiber-gate.ru/${room.inviteCode}`;
                 await navigator.clipboard.writeText(link);
@@ -259,39 +214,30 @@ class ServerManager {
             } else {
                 UIManager.showError(`Прямой чат создан!`);
             }
-
             client.currentServerId = server.id;
             client.currentServer = directStub;
             localStorage.setItem('lastServerId', server.id);
             client.showPanel('servers');
             this.renderServers(client);
-
-            // 🔥 Даём серверу время сохранить комнату перед join
             await new Promise(resolve => setTimeout(resolve, 500));
-
             let joinSuccess = false;
             let attempts = 0;
             const maxAttempts = 3;
-
             while (!joinSuccess && attempts < maxAttempts) {
                 try {
                     await client.joinRoom(room.id);
                     joinSuccess = true;
-                    console.log(`✅ [DIRECT-ROOM] Успешный вход с попытки ${attempts + 1}`);
                 } catch (joinError) {
                     attempts++;
                     if (attempts < maxAttempts) {
-                        console.log(`⏳ [DIRECT-ROOM] Попытка ${attempts}/${maxAttempts}, ждём...`);
                         await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
                     } else {
                         throw joinError;
                     }
                 }
             }
-
         } catch (error) {
             UIManager.showError('Ошибка: ' + error.message);
-            console.error('❌ [DIRECT-ROOM] Error:', error);
         }
     }
 
@@ -339,20 +285,35 @@ class ServerManager {
         }
     }
 
-    static deleteServer(client, serverId) {
+    static async deleteServer(client, serverId) {
         if (!confirm('Вы уверены, что хотите удалить этот сервер? Все комнаты будут удалены.')) return;
-        const serverIndex = client.servers.findIndex(s => s.id === serverId);
-        if (serverIndex !== -1) {
-            const serverName = client.servers[serverIndex].name;
-            client.servers = client.servers.filter(server => server.id !== serverId);
-            this.renderServers(client);
-            if (client.currentServerId === serverId) {
-                client.currentServerId = null;
-                client.currentServer = null;
-                localStorage.removeItem('lastServerId');
-                localStorage.removeItem('lastRoomId');
+        try {
+            const res = await fetch(`${client.API_SERVER_URL}/api/servers/${serverId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${client.token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Не удалось удалить сервер');
             }
-            UIManager.addMessage('System', `✅ Сервер "${serverName}" удален`);
+            const serverIndex = client.servers.findIndex(s => s.id === serverId);
+            if (serverIndex !== -1) {
+                const serverName = client.servers[serverIndex].name;
+                client.servers = client.servers.filter(server => server.id !== serverId);
+                this.renderServers(client);
+                if (client.currentServerId === serverId) {
+                    client.currentServerId = null;
+                    client.currentServer = null;
+                    localStorage.removeItem('lastServerId');
+                    localStorage.removeItem('lastRoomId');
+                }
+                UIManager.addMessage('System', `✅ Сервер "${serverName}" удален`);
+            }
+        } catch (error) {
+            UIManager.showError('Ошибка: ' + error.message);
         }
     }
 
@@ -362,7 +323,6 @@ class ServerManager {
                 this.renderServers(client);
                 return;
             }
-            console.log(`🔍 [SEARCH] Запрос: "${query}", client.userId: ${client.userId}`);
             const response = await fetch(`${client.API_SERVER_URL}/api/servers/search?q=${encodeURIComponent(query)}`, {
                 headers: {
                     'Authorization': `Bearer ${client.token}`,
@@ -371,13 +331,11 @@ class ServerManager {
             });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
-            console.log(`🔍 [SEARCH] Ответ: серверов=${data.servers?.length || 0}, пользователей=${data.users?.length || 0}`);
             this.renderSearchResults(client, {
                 servers: data.servers || [],
                 users: data.users || []
             });
         } catch (error) {
-            console.error('🔍 [SEARCH] Error:', error);
             UIManager.showError('Ошибка поиска: ' + error.message);
         }
     }
@@ -385,17 +343,13 @@ class ServerManager {
     static renderSearchResults(client, { servers, users }) {
         const serversList = document.querySelector('.servers-list');
         if (!serversList) return;
-
         serversList.innerHTML = '';
-
         if (servers.length === 0 && users.length === 0) {
             serversList.innerHTML = '<div class="no-results">Ничего не найдено</div>';
             return;
         }
-
         servers.forEach(server => {
             if (!server || !server.id) {
-                console.warn('⚠️ [SERVER] Пропущен невалидный сервер:', server);
                 return;
             }
             const serverElement = document.createElement('div');
@@ -429,10 +383,8 @@ class ServerManager {
             }
             serversList.appendChild(serverElement);
         });
-
         users.forEach(user => {
             if (!user || !user.userId) {
-                console.warn('⚠️ [USER] Пропущен невалидный пользователь:', user);
                 return;
             }
             if (String(user.userId) === String(client.userId)) {
