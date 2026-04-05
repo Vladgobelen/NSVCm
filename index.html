@@ -3,14 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" type="image/x-icon" href="/icons/icon.ico">
-    <link rel="icon" type="image/png" sizes="32x32" href="/icons/32x32.png">
-    <link rel="icon" type="image/png" sizes="128x128" href="/icons/128x128.png">
-    <link rel="apple-touch-icon" sizes="128x128" href="/icons/128x128.png">
-    <script src="/socket.io.min.js"></script>    
-    <script src="/mediasoup-client.min.js"></script>
+    <!-- 🔥 Запрет кэширования HTML-документа -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    
+    <link rel="icon" type="image/x-icon" href="/icons/icon.ico?v=20260404">
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/32x32.png?v=20260404">
+    <link rel="icon" type="image/png" sizes="128x128" href="/icons/128x128.png?v=20260404">
+    <link rel="apple-touch-icon" sizes="128x128" href="/icons/128x128.png?v=20260404">
+    
+    <script src="socket.io.min.js?v=20260404"></script>    
+    <script src="mediasoup-client.min.js?v=20260404"></script>
     <title>Щебетало</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=20260404">
 </head>
 <body>
     <div class="app">
@@ -39,7 +45,6 @@
             </div>
         </div>
         <div class="main-content">
-            <!-- 🔑 Кнопка разблокировки аудио для iOS -->
             <div class="chat-header">
                 <button class="toggle-sidebar-btn">☰</button>
                 <div class="current-room-title">Выберите комнату</div>
@@ -53,7 +58,7 @@
                 <div class="messages-container"></div>
                 <div class="input-area">
                     <button class="attach-btn">📎</button>
-			<textarea class="message-input" placeholder="Введите сообщение... (Enter — отправить, Shift+Enter — новая строка)" rows="1"></textarea>
+                    <textarea class="message-input" placeholder="Введите сообщение... (Enter — отправить, Shift+Enter — новая строка)" rows="1"></textarea>
                     <button class="send-btn">Отправить</button>
                 </div>
             </div>
@@ -66,8 +71,10 @@
         </div>
         <button class="mic-button connected">🎤</button>
     </div>
-    <script src="logger.js"></script>
-    <script src="patch_browser_compat.js"></script>
-    <script type="module" src="app.js"></script>
+    
+    <!-- 🔥 ВСЕ скрипты с версией -->
+    <script src="logger.js?v=20260404"></script>
+    <script src="patch_browser_compat.js?v=20260404"></script>
+    <script type="module" src="app.js?v=20260404"></script>
 </body>
 </html>
