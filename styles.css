@@ -29,7 +29,206 @@ body {
   overflow: hidden;
 }
 
-/* 🔗 Стили для ссылок в чате */
+/* ============================================================================
+SPLIT CHAT POPUP & LAYOUT FIXES
+============================================================================ */
+.split-popup {
+  position: absolute;
+  top: 44px;
+  right: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--bg-modifier);
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  gap: 8px;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  animation: popupFadeIn 0.15s ease;
+}
+
+.split-popup-btn {
+  background: var(--bg-modifier);
+  border: 1px solid transparent;
+  color: var(--text-normal);
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+}
+
+.split-popup-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.split-popup-btn.active {
+  background: var(--accent);
+  color: white;
+}
+
+@keyframes popupFadeIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 🔥 ИСПРАВЛЕНО: Логика сетки и порядка фреймов */
+.chat-split-container {
+  display: grid;
+  height: 100%;
+  transition: all 0.2s ease;
+  /* По умолчанию фреймы идут в порядке DOM */
+}
+
+/* 📐 ВЕРТИКАЛЬНОЕ РАЗДЕЛЕНИЕ (Справа) */
+.chat-split-container.split-side {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+}
+
+.split-side .primary-frame {
+  grid-column: 1;
+  border-right: 1px solid var(--bg-tertiary);
+}
+
+.split-side .secondary-frame {
+  grid-column: 2;
+  border-left: 1px solid var(--bg-tertiary);
+}
+
+/* 📐 ГОРИЗОНТАЛЬНОЕ РАЗДЕЛЕНИЕ (Сверху) */
+.chat-split-container.split-top {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+/* 🔥 ИСПРАВЛЕНО: Вторичный фрейм (Secondary) всегда сверху в этом режиме */
+.split-top .secondary-frame {
+  grid-row: 1;
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.split-top .primary-frame {
+  grid-row: 2;
+  border-top: 1px solid var(--bg-tertiary);
+}
+
+.primary-frame,
+.secondary-frame {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.secondary-chat-header {
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.secondary-room-selector {
+  flex: 1;
+  margin: 0 12px;
+  padding: 6px 10px;
+  background: var(--bg-modifier);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-normal);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.secondary-room-selector option {
+  background: var(--bg-secondary);
+  color: var(--text-normal);
+}
+
+.secondary-close-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.secondary-close-btn:hover {
+  background: var(--bg-modifier);
+  color: var(--text-normal);
+}
+
+.secondary-messages-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--bg-primary);
+}
+
+.secondary-input-area {
+  padding: 12px 16px;
+  border-top: 1px solid var(--bg-tertiary);
+  display: flex;
+  gap: 8px;
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.secondary-input-area .message-input {
+  min-height: 36px;
+  max-height: 80px;
+  font-size: 13px;
+  padding: 8px 10px;
+}
+
+.secondary-input-area .send-btn {
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.secondary-room-list {
+  padding: 8px;
+  overflow-y: auto;
+  flex: 1;
+  max-height: 200px;
+}
+
+.secondary-room-item {
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+
+.secondary-room-item:hover {
+  background: var(--bg-modifier);
+}
+
+.secondary-room-item.active {
+  background: var(--accent);
+  color: white;
+}
+
+.secondary-room-item .room-type-badge {
+  font-size: 10px;
+  margin-left: 6px;
+  opacity: 0.7;
+}
+
+/* ============================================================================
+Ссылки в чате
+============================================================================ */
 .chat-link {
   color: #5865f2;
   text-decoration: underline;
@@ -42,7 +241,6 @@ body {
   text-decoration: none;
 }
 
-/* Для тёмной темы */
 .message-content .chat-link {
   color: #7289da;
 }
@@ -67,14 +265,8 @@ CONTEXT MENU
 }
 
 @keyframes contextMenuFadeIn {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .context-menu-item {
@@ -88,27 +280,11 @@ CONTEXT MENU
   user-select: none;
 }
 
-.context-menu-item:hover {
-  background: #3d3d5c;
-}
-
-.context-menu-item.delete {
-  color: #ed4245;
-}
-
-.context-menu-item.delete:hover {
-  background: rgba(237, 66, 69, 0.1);
-}
-
-.context-menu-icon {
-  font-size: 16px;
-  width: 20px;
-  text-align: center;
-}
-
-.context-menu-text {
-  font-size: 14px;
-}
+.context-menu-item:hover { background: #3d3d5c; }
+.context-menu-item.delete { color: #ed4245; }
+.context-menu-item.delete:hover { background: rgba(237, 66, 69, 0.1); }
+.context-menu-icon { font-size: 16px; width: 20px; text-align: center; }
+.context-menu-text { font-size: 14px; }
 
 /* ============================================================================
 ИЗОБРАЖЕНИЯ И МИНИАТЮРЫ
@@ -127,9 +303,7 @@ CONTEXT MENU
   line-height: 0;
 }
 
-.image-thumbnail:hover {
-  transform: scale(1.02);
-}
+.image-thumbnail:hover { transform: scale(1.02); }
 
 .image-thumbnail img {
   display: block;
@@ -163,11 +337,8 @@ CONTEXT MENU
   pointer-events: none;
 }
 
-.image-thumbnail:hover .image-overlay {
-  opacity: 1;
-}
+.image-thumbnail:hover .image-overlay { opacity: 1; }
 
-/* Стили для изображений в сообщениях */
 img.message-image {
   display: block;
   margin-top: 4px;
@@ -180,7 +351,6 @@ img.message-image {
   box-shadow: none !important;
 }
 
-/* Плейсхолдер загрузки (без рамки) */
 .image-placeholder {
   display: inline-block;
   padding: 8px 12px;
@@ -194,20 +364,10 @@ img.message-image {
   outline: none !important;
 }
 
-.image-placeholder:hover {
-  background: #e8e8e8;
-}
+.image-placeholder:hover { background: #e8e8e8; }
 
-/* Убираем рамки у контейнера сообщений для изображений */
-.message-content .image-thumbnail {
-  margin: 0;
-  padding: 0;
-}
-
-.message-content .image-thumbnail img {
-  margin: 0;
-  padding: 0;
-}
+.message-content .image-thumbnail { margin: 0; padding: 0; }
+.message-content .image-thumbnail img { margin: 0; padding: 0; }
 
 /* ============================================================================
 ОСНОВНАЯ РАЗМЕТКА
@@ -267,10 +427,7 @@ SIDEBAR
   font-size: 14px;
 }
 
-.clear-search-btn:hover {
-  background: var(--bg-modifier);
-  color: var(--text-normal);
-}
+.clear-search-btn:hover { background: var(--bg-modifier); color: var(--text-normal); }
 
 .panel-toggle-btn {
   flex: 1;
@@ -283,10 +440,7 @@ SIDEBAR
   margin: 0 2px;
 }
 
-.panel-toggle-btn.active {
-  background: var(--accent);
-  color: white;
-}
+.panel-toggle-btn.active { background: var(--accent); color: white; }
 
 .panel-content {
   display: none;
@@ -295,9 +449,7 @@ SIDEBAR
   overflow: hidden;
 }
 
-.panel-content.active {
-  display: flex;
-}
+.panel-content.active { display: flex; }
 
 .panel-header {
   padding: 12px 16px;
@@ -307,8 +459,7 @@ SIDEBAR
   border-bottom: 1px solid var(--bg-tertiary);
 }
 
-.servers-list,
-.rooms-list {
+.servers-list, .rooms-list {
   flex: 1;
   overflow-y: auto;
   padding: 8px;
@@ -317,8 +468,7 @@ SIDEBAR
 /* ============================================================================
 ЭЛЕМЕНТЫ СПИСКОВ (СЕРВЕРЫ, КОМНАТЫ)
 ============================================================================ */
-.server-item,
-.room-item {
+.server-item, .room-item {
   padding: 8px 12px;
   border-radius: 4px;
   margin-bottom: 4px;
@@ -330,32 +480,22 @@ SIDEBAR
   position: relative;
 }
 
-.server-item:hover,
-.room-item:hover {
-  background: var(--bg-modifier);
-}
+.server-item:hover, .room-item:hover { background: var(--bg-modifier); }
+.server-item.active, .room-item.active { background: var(--accent); }
 
-.server-item.active,
-.room-item.active {
-  background: var(--accent);
-}
-
-.owner-badge,
-.not-member-badge {
+.owner-badge, .not-member-badge {
   font-size: 12px;
   color: var(--text-muted);
   margin-left: 4px;
 }
 
-.server-actions,
-.room-actions {
+.server-actions, .room-actions {
   display: flex;
   gap: 4px;
   margin-left: auto;
 }
 
-.server-action-btn,
-.room-action-btn {
+.server-action-btn, .room-action-btn {
   background: none;
   border: none;
   color: var(--text-muted);
@@ -367,33 +507,13 @@ SIDEBAR
   transition: opacity 0.2s ease;
 }
 
-.server-action-btn:hover,
-.room-action-btn:hover {
-  opacity: 1;
-  color: var(--text-normal);
-  background: var(--bg-modifier);
-}
+.server-action-btn:hover, .room-action-btn:hover { opacity: 1; color: var(--text-normal); background: var(--bg-modifier); }
+.server-action-btn.leave-btn { color: var(--warning); }
+.server-action-btn.leave-btn:hover { background: var(--warning); color: white; }
+.server-action-btn.join-btn { color: var(--success); }
+.server-action-btn.join-btn:hover { background: var(--success); color: white; }
 
-.server-action-btn.leave-btn {
-  color: var(--warning);
-}
-
-.server-action-btn.leave-btn:hover {
-  background: var(--warning);
-  color: white;
-}
-
-.server-action-btn.join-btn {
-  color: var(--success);
-}
-
-.server-action-btn.join-btn:hover {
-  background: var(--success);
-  color: white;
-}
-
-.create-server-btn,
-.create-room-btn {
+.create-server-btn, .create-room-btn {
   background: none;
   border: none;
   color: var(--success);
@@ -407,10 +527,7 @@ SIDEBAR
   border-radius: 3px;
 }
 
-.create-server-btn:hover,
-.create-room-btn:hover {
-  background: var(--bg-modifier);
-}
+.create-server-btn:hover, .create-room-btn:hover { background: var(--bg-modifier); }
 
 /* ============================================================================
 БЕЙДЖИ НЕПРОЧИТАННЫХ СООБЩЕНИЙ
@@ -437,18 +554,10 @@ SIDEBAR
 }
 
 @keyframes pulse-mention {
-  0%,
-  100% {
-    transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(255, 159, 67, 0.7);
-  }
-  50% {
-    transform: scale(1.1);
-    box-shadow: 0 0 0 6px rgba(255, 159, 67, 0);
-  }
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 159, 67, 0.7); }
+  50% { transform: scale(1.1); box-shadow: 0 0 0 6px rgba(255, 159, 67, 0); }
 }
 
-/* Бейдж на кнопке переключения серверов */
 #serversToggle .unread-badge {
   position: absolute;
   top: 4px;
@@ -459,14 +568,12 @@ SIDEBAR
   padding: 0 5px;
 }
 
-/* Бейдж на элементе сервера */
 .server-item .unread-badge {
   position: absolute;
   top: 8px;
   right: 8px;
 }
 
-/* Бейдж на элементе комнаты */
 .room-item .room-unread-badge {
   position: absolute;
   top: 8px;
@@ -525,7 +632,6 @@ CHAT HEADER
   flex: 1;
 }
 
-/* Бейдж непрочитанных в заголовке комнаты */
 .current-room-title .room-unread-badge,
 .current-room-title .title-unread-badge {
   display: inline-flex;
@@ -561,10 +667,7 @@ CHAT HEADER
   border-radius: 4px;
 }
 
-.toggle-sidebar-btn:hover {
-  background: var(--bg-modifier);
-  color: var(--text-normal);
-}
+.toggle-sidebar-btn:hover { background: var(--bg-modifier); color: var(--text-normal); }
 
 .header-controls {
   display: flex;
@@ -572,9 +675,7 @@ CHAT HEADER
   gap: 4px;
 }
 
-.mic-toggle-btn,
-.settings-btn,
-.toggle-members-btn {
+.mic-toggle-btn, .settings-btn, .toggle-members-btn {
   background: none;
   border: none;
   color: var(--text-muted);
@@ -588,27 +689,11 @@ CHAT HEADER
   justify-content: center;
 }
 
-.mic-toggle-btn:hover,
-.settings-btn:hover,
-.toggle-members-btn:hover {
-  background: var(--bg-modifier);
-}
-
-.mic-toggle-btn.disconnected {
-  color: var(--text-muted);
-}
-
-.mic-toggle-btn.connected {
-  color: var(--danger);
-}
-
-.mic-toggle-btn.error {
-  color: var(--warning);
-}
-
-.mic-toggle-btn.active {
-  color: var(--success);
-}
+.mic-toggle-btn:hover, .settings-btn:hover, .toggle-members-btn:hover { background: var(--bg-modifier); }
+.mic-toggle-btn.disconnected { color: var(--text-muted); }
+.mic-toggle-btn.connected { color: var(--danger); }
+.mic-toggle-btn.error { color: var(--warning); }
+.mic-toggle-btn.active { color: var(--success); }
 
 /* ============================================================================
 CHAT AREA
@@ -624,8 +709,7 @@ CHAT AREA
   flex: 1;
   overflow-y: auto;
   padding: 16px;
-  /* Важно для абсолютного позиционирования сентинела внутри */
-  position: relative; 
+  position: relative;
 }
 
 .input-area {
@@ -651,15 +735,8 @@ CHAT AREA
   line-height: 1.4;
 }
 
-.message-input:focus {
-  outline: none;
-  border-color: #5865f2;
-}
-
-/* Автоматическое расширение при вводе текста */
-.message-input {
-  height: 40px;
-}
+.message-input:focus { outline: none; border-color: #5865f2; }
+.message-input { height: 40px; }
 
 .send-btn {
   background: var(--accent);
@@ -670,9 +747,7 @@ CHAT AREA
   cursor: pointer;
 }
 
-.send-btn:hover {
-  background: #4752c4;
-}
+.send-btn:hover { background: #4752c4; }
 
 /* ============================================================================
 СООБЩЕНИЯ
@@ -687,14 +762,8 @@ CHAT AREA
   justify-content: flex-start;
 }
 
-.message.appeared {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.message:hover {
-  background: rgba(255, 255, 255, 0.03);
-}
+.message.appeared { opacity: 1; transform: translateY(0); }
+.message:hover { background: rgba(255, 255, 255, 0.03); }
 
 .message-avatar {
   width: 40px;
@@ -708,7 +777,6 @@ CHAT AREA
   flex-shrink: 0;
 }
 
-/* Общий стиль для всех сообщений */
 .message-content {
   display: flex;
   flex-direction: column;
@@ -720,7 +788,6 @@ CHAT AREA
   white-space: pre-wrap;
 }
 
-/* Свои сообщения - правый край */
 .message-content.own {
   background: var(--bg-secondary);
   margin-left: auto;
@@ -735,27 +802,11 @@ CHAT AREA
   margin-bottom: 4px;
 }
 
-.message-username {
-  font-weight: 600;
-  font-size: 14px;
-}
+.message-username { font-weight: 600; font-size: 14px; }
+.message-time { font-size: 12px; color: var(--text-muted); }
+.message-text { line-height: 1.4; word-break: break-word; }
+.drag-over { background-color: rgba(0, 0, 0, 0.05); outline: 2px dashed #627dea; }
 
-.message-time {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.message-text {
-  line-height: 1.4;
-  word-break: break-word;
-}
-
-.drag-over {
-  background-color: rgba(0, 0, 0, 0.05);
-  outline: 2px dashed #627dea;
-}
-
-/* Кнопка прикрепления изображения */
 .attach-btn {
   background: none;
   border: none;
@@ -772,10 +823,7 @@ CHAT AREA
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-.attach-btn:hover {
-  background: var(--bg-modifier);
-  color: var(--text-normal);
-}
+.attach-btn:hover { background: var(--bg-modifier); color: var(--text-normal); }
 
 /* ============================================================================
 MEMBERS PANEL
@@ -790,9 +838,7 @@ MEMBERS PANEL
   flex-shrink: 0;
 }
 
-.members-panel .panel-header {
-  padding: 12px 16px;
-}
+.members-panel .panel-header { padding: 12px 16px; }
 
 .members-list {
   flex: 1;
@@ -835,7 +881,6 @@ MEMBERS PANEL
   text-overflow: ellipsis;
 }
 
-/* Офлайн пользователи - серый текст */
 .member-item.offline .member-name,
 .member-item.offline .offline-text {
   color: #888 !important;
@@ -865,20 +910,9 @@ MEMBERS PANEL
   transition: opacity 0.2s;
 }
 
-.member-volume-slider:hover {
-  opacity: 1;
-}
+.member-volume-slider:hover { opacity: 1; }
+.member-volume-slider::-webkit-slider-thumb { appearance: none; width: 12px; height: 12px; background: var(--accent); border-radius: 50%; cursor: pointer; }
 
-.member-volume-slider::-webkit-slider-thumb {
-  appearance: none;
-  width: 12px;
-  height: 12px;
-  background: var(--accent);
-  border-radius: 50%;
-  cursor: pointer;
-}
-
-/* Заголовки секций - кликабельные */
 .members-section-header {
   cursor: pointer;
   padding: 8px 12px;
@@ -892,52 +926,19 @@ MEMBERS PANEL
   transition: all 0.2s ease;
 }
 
-.members-section-header:hover {
-  color: var(--text-normal);
-  background: var(--bg-modifier);
-  border-radius: 4px;
-}
-
-.section-toggle-icon {
-  font-size: 10px;
-  transition: transform 0.2s ease;
-}
-
-.members-section-content {
-  transition: all 0.2s ease;
-}
+.members-section-header:hover { color: var(--text-normal); background: var(--bg-modifier); border-radius: 4px; }
+.section-toggle-icon { font-size: 10px; transition: transform 0.2s ease; }
+.members-section-content { transition: all 0.2s ease; }
 
 /* ============================================================================
 ИНДИКАТОРЫ СТАТУСА
 ============================================================================ */
-.status-indicator {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 8px;
-  display: inline-block;
-}
-
-.status-indicator.online {
-  background: var(--success);
-}
-
-.status-indicator.offline {
-  background: var(--text-muted);
-}
-
-.status-indicator.connecting {
-  background: var(--warning);
-  animation: pulse 1.5s infinite;
-}
-
-.status-indicator.disconnected {
-  background: var(--danger);
-}
-
-.status-indicator.connected {
-  background: var(--success);
-}
+.status-indicator { width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; display: inline-block; }
+.status-indicator.online { background: var(--success); }
+.status-indicator.offline { background: var(--text-muted); }
+.status-indicator.connecting { background: var(--warning); animation: pulse 1.5s infinite; }
+.status-indicator.disconnected { background: var(--danger); }
+.status-indicator.connected { background: var(--success); }
 
 .mic-indicator {
   width: 8px;
@@ -984,48 +985,15 @@ MEMBERS PANEL
   color: var(--text-normal);
 }
 
-.modal-content h2 {
-  margin-bottom: 16px;
-}
+.modal-content h2 { margin-bottom: 16px; }
 
-.saved-users-list {
-  max-height: 200px;
-  overflow-y: auto;
-  margin-bottom: 15px;
-}
+.saved-users-list { max-height: 200px; overflow-y: auto; margin-bottom: 15px; }
+.no-users-message { color: var(--text-muted); text-align: center; padding: 10px; }
+.saved-user-item { padding: 8px 10px; margin: 4px 0; background: var(--bg-modifier); border-radius: 4px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+.saved-user-item:hover { background: var(--bg-tertiary); }
+.remove-user-btn { background: var(--danger); color: white; border: none; padding: 2px 6px; border-radius: 3px; cursor: pointer; }
 
-.no-users-message {
-  color: var(--text-muted);
-  text-align: center;
-  padding: 10px;
-}
-
-.saved-user-item {
-  padding: 8px 10px;
-  margin: 4px 0;
-  background: var(--bg-modifier);
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.saved-user-item:hover {
-  background: var(--bg-tertiary);
-}
-
-.remove-user-btn {
-  background: var(--danger);
-  color: white;
-  border: none;
-  padding: 2px 6px;
-  border-radius: 3px;
-  cursor: pointer;
-}
-
-#usernameInput,
-#passwordInput {
+#usernameInput, #passwordInput {
   width: 100%;
   padding: 12px;
   margin: 8px 0;
@@ -1035,8 +1003,7 @@ MEMBERS PANEL
   color: var(--text-normal);
 }
 
-#authSubmitBtn,
-#createNewUserBtn {
+#authSubmitBtn, #createNewUserBtn {
   width: 100%;
   padding: 12px;
   border: none;
@@ -1045,120 +1012,31 @@ MEMBERS PANEL
   margin-top: 8px;
 }
 
-#authSubmitBtn {
-  background: var(--accent);
-  color: white;
-}
+#authSubmitBtn { background: var(--accent); color: white; }
+#createNewUserBtn { background: var(--bg-modifier); color: var(--text-normal); }
 
-#createNewUserBtn {
-  background: var(--bg-modifier);
-  color: var(--text-normal);
-}
-
-.modal-buttons {
-  display: flex;
-  gap: 10px;
-  margin-top: 15px;
-}
-
-.modal-buttons button {
-  flex: 1;
-  padding: 10px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-#confirmCreateRoom {
-  background: var(--accent);
-  color: white;
-}
-
-#cancelCreateRoom {
-  background: var(--bg-modifier);
-  color: var(--text-normal);
-}
+.modal-buttons { display: flex; gap: 10px; margin-top: 15px; }
+.modal-buttons button { flex: 1; padding: 10px; border: none; border-radius: 4px; cursor: pointer; }
+#confirmCreateRoom { background: var(--accent); color: white; }
+#cancelCreateRoom { background: var(--bg-modifier); color: var(--text-normal); }
 
 /* ============================================================================
 НАСТРОЙКИ КОМНАТЫ
 ============================================================================ */
-.room-settings-modal .modal-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--bg-tertiary);
-  margin-bottom: 16px;
-}
+.room-settings-modal .modal-tabs { display: flex; border-bottom: 1px solid var(--bg-tertiary); margin-bottom: 16px; }
+.room-settings-modal .tab-btn { padding: 10px 16px; background: none; border: none; color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; }
+.room-settings-modal .tab-btn.active { color: var(--accent); border-bottom: 2px solid var(--accent); }
+.room-settings-modal .tab-content { min-height: 200px; }
+.room-settings-modal .tab-pane { display: none; padding: 16px 0; }
+.room-settings-modal .tab-pane.active { display: block; }
 
-.room-settings-modal .tab-btn {
-  padding: 10px 16px;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-}
-
-.room-settings-modal .tab-btn.active {
-  color: var(--accent);
-  border-bottom: 2px solid var(--accent);
-}
-
-.room-settings-modal .tab-content {
-  min-height: 200px;
-}
-
-.room-settings-modal .tab-pane {
-  display: none;
-  padding: 16px 0;
-}
-
-.room-settings-modal .tab-pane.active {
-  display: block;
-}
-
-/* Объединенные стили настроек */
-.setting-item {
-  margin-bottom: 16px;
-}
-
-.room-settings-modal .setting-item label {
-  display: block;
-  margin-bottom: 8px;
-  font-weight: 500;
-}
-
-.setting-item label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.room-settings-modal .setting-item input[type="text"] {
-  width: 100%;
-  padding: 8px;
-  background: var(--bg-modifier);
-  border: 1px solid var(--bg-tertiary);
-  border-radius: 4px;
-  color: var(--text-normal);
-}
-
-.apply-settings-btn {
-  width: 100%;
-  padding: 12px;
-  background: var(--accent);
-  border: none;
-  border-radius: 4px;
-  color: white;
-  cursor: pointer;
-  margin-top: 16px;
-}
-
-.apply-settings-btn:hover {
-  background: #4752c4;
-}
-
-.hidden {
-  display: none;
-}
+.setting-item { margin-bottom: 16px; }
+.room-settings-modal .setting-item label { display: block; margin-bottom: 8px; font-weight: 500; }
+.setting-item label { display: flex; align-items: center; gap: 8px; }
+.room-settings-modal .setting-item input[type="text"] { width: 100%; padding: 8px; background: var(--bg-modifier); border: 1px solid var(--bg-tertiary); border-radius: 4px; color: var(--text-normal); }
+.apply-settings-btn { width: 100%; padding: 12px; background: var(--accent); border: none; border-radius: 4px; color: white; cursor: pointer; margin-top: 16px; }
+.apply-settings-btn:hover { background: #4752c4; }
+.hidden { display: none; }
 
 /* ============================================================================
 КНОПКА МИКРОФОНА
@@ -1182,59 +1060,19 @@ MEMBERS PANEL
   transition: transform 0.3s ease, opacity 0.3s ease, background-color 0.3s ease;
 }
 
-.mic-button.disconnected {
-  background: var(--text-muted);
-}
-
-.mic-button.connected {
-  background: var(--danger);
-}
-
-.mic-button.active {
-  background: var(--success);
-}
-
-.mic-button.error {
-  background: var(--warning);
-  animation: pulse 1s infinite;
-}
-
-.mic-button.hidden {
-  transform: scale(0);
-  opacity: 0;
-}
+.mic-button.disconnected { background: var(--text-muted); }
+.mic-button.connected { background: var(--danger); }
+.mic-button.active { background: var(--success); }
+.mic-button.error { background: var(--warning); animation: pulse 1s infinite; }
+.mic-button.hidden { transform: scale(0); opacity: 0; }
 
 /* ============================================================================
 ПРИГЛАШЕНИЯ
 ============================================================================ */
-.invite-link-container {
-  display: flex;
-  gap: 8px;
-  margin: 16px 0;
-}
-
-#inviteLinkInput {
-  flex: 1;
-  padding: 8px 12px;
-  border: 1px solid var(--bg-tertiary);
-  border-radius: 4px;
-  background: var(--bg-modifier);
-  color: var(--text-normal);
-  font-family: monospace;
-}
-
-.invite-link-container button {
-  padding: 8px 12px;
-  background: var(--accent);
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.invite-link-container button:hover {
-  background: #4752c4;
-}
+.invite-link-container { display: flex; gap: 8px; margin: 16px 0; }
+#inviteLinkInput { flex: 1; padding: 8px 12px; border: 1px solid var(--bg-tertiary); border-radius: 4px; background: var(--bg-modifier); color: var(--text-normal); font-family: monospace; }
+.invite-link-container button { padding: 8px 12px; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer; }
+.invite-link-container button:hover { background: #4752c4; }
 
 /* ============================================================================
 УВЕДОМЛЕНИЯ ОБ ОШИБКАХ
@@ -1253,26 +1091,12 @@ MEMBERS PANEL
 }
 
 @keyframes slideIn {
-  from {
-    transform: translateX(100%);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
 }
 
-.status-text {
-  font-size: 14px;
-  color: var(--text-muted);
-}
-
-.no-results {
-  padding: 16px;
-  text-align: center;
-  color: var(--text-muted);
-}
+.status-text { font-size: 14px; color: var(--text-muted); }
+.no-results { padding: 16px; text-align: center; color: var(--text-muted); }
 
 /* ============================================================================
 РАЗБЛОКИРОВКА АУДИО (iOS)
@@ -1291,15 +1115,11 @@ MEMBERS PANEL
   font-size: 14px;
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
 }
-
-.audio-unlock-btn:hover {
-  background: #45a049;
-}
+.audio-unlock-btn:hover { background: #45a049; }
 
 /* ============================================================================
 ПАГИНАЦИЯ ИСТОРИИ СООБЩЕНИЙ
 ============================================================================ */
-/* Индикатор загрузки, появляющийся вверху чата при прокрутке */
 .history-loader {
   position: absolute;
   top: 0;
@@ -1311,11 +1131,10 @@ MEMBERS PANEL
   color: #a0a0b0;
   font-size: 12px;
   z-index: 10;
-  pointer-events: none; /* Чтобы клики проходили сквозь индикатор */
+  pointer-events: none;
   animation: fadeIn 0.3s ease;
 }
 
-/* Текст внутри индикатора */
 .history-loader span {
   background: rgba(45, 45, 68, 0.8);
   padding: 4px 12px;
@@ -1331,25 +1150,10 @@ MEMBERS PANEL
 /* ============================================================================
 СКРОЛЛБАРЫ
 ============================================================================ */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--bg-secondary);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--bg-modifier);
-  border-radius: 4px;
-  border: 2px solid var(--bg-secondary);
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
-}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg-secondary); border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--bg-modifier); border-radius: 4px; border: 2px solid var(--bg-secondary); }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
 /* ============================================================================
 АДАПТИВ
@@ -1367,9 +1171,7 @@ MEMBERS PANEL
     flex-direction: column;
     transition: transform 0.3s ease;
   }
-  .sidebar.open {
-    transform: translateX(0);
-  }
+  .sidebar.open { transform: translateX(0); }
 
   .members-panel {
     position: fixed;
@@ -1382,38 +1184,12 @@ MEMBERS PANEL
     flex-direction: column;
     transition: transform 0.3s ease;
   }
+  .members-panel.open { transform: translateX(0); }
 
-  .members-panel.open {
-    transform: translateX(0);
-  }
-
-  .toggle-sidebar-btn {
-    display: flex;
-    z-index: 101;
-    position: relative;
-  }
-
-  .mic-button {
-    display: none;
-  }
-
-  .mic-toggle-btn {
-    display: flex;
-  }
-
-  .server-actions,
-  .room-actions {
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .server-action-btn,
-  .room-action-btn {
-    padding: 4px;
-    font-size: 14px;
-  }
-
-  .invite-link-container {
-    flex-direction: column;
-  }
+  .toggle-sidebar-btn { display: flex; z-index: 101; position: relative; }
+  .mic-button { display: none; }
+  .mic-toggle-btn { display: flex; }
+  .server-actions, .room-actions { flex-direction: column; gap: 2px; }
+  .server-action-btn, .room-action-btn { padding: 4px; font-size: 14px; }
+  .invite-link-container { flex-direction: column; }
 }

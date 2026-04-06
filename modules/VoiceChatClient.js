@@ -1,4 +1,3 @@
-// VoiceChatClient.js
 import MediaManager from './MediaManager.js';
 import RoomManager from './RoomManager.js';
 import ServerManager from './ServerManager.js';
@@ -64,17 +63,27 @@ class VoiceChatClient {
         this._mediaFetchController = null;
         this._isProcessingConsumers = false;
         this._isMediaReconnecting = false;
-        // 🆕 Состояние пагинации истории чата
         this.isHistoryLoading = false;
         this.hasMoreHistory = true;
         this.oldestMessageId = null;
         this.historyObserver = null;
+        this.secondaryChat = {
+            enabled: false,
+            roomId: null,
+            isLoading: false
+        };
+        this._splitPopup = null;
         this.init();
     }
 
     _abortMediaRequests() {
-        if (this.joinAbortController) { this.joinAbortController.abort(); this.joinAbortController = null; }
-        if (this._mediaFetchController) { this._mediaFetchController.abort(); }
+        if (this.joinAbortController) {
+            this.joinAbortController.abort();
+            this.joinAbortController = null;
+        }
+        if (this._mediaFetchController) {
+            this._mediaFetchController.abort();
+        }
         this._mediaFetchController = new AbortController();
         return this._mediaFetchController;
     }
@@ -86,7 +95,11 @@ class VoiceChatClient {
         try {
             const response = await fetch(url, {
                 ...options,
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}`, ...(options.headers || {}) },
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${this.token}`,
+                    ...(options.headers || {})
+                },
                 signal: controller.signal || timeoutController.signal
             });
             clearTimeout(timeoutId);
@@ -97,7 +110,9 @@ class VoiceChatClient {
             return response;
         } catch (error) {
             clearTimeout(timeoutId);
-            if (error.name === 'AbortError') throw new Error('Request cancelled');
+            if (error.name === 'AbortError') {
+                throw new Error('Request cancelled');
+            }
             throw error;
         }
     }
@@ -105,10 +120,14 @@ class VoiceChatClient {
     logToRoomChat(message, type = 'system') {
         if (!this.currentRoom || !this.socket) return false;
         const requestId = `req_${Date.now()}_${this.requestIdCounter++}`;
-        const systemMessage = {
-            roomId: this.currentRoom, text: message, type: 'system', isSystem: true, requestId, timestamp: new Date().toISOString()
-        };
-        this.socket.emit('send-message', systemMessage);
+        this.socket.emit('send-message', {
+            roomId: this.currentRoom,
+            text: message,
+            type: 'system',
+            isSystem: true,
+            requestId,
+            timestamp: new Date().toISOString()
+        });
         this.pendingRequests.set(requestId, { message, type, timestamp: Date.now(), roomId: this.currentRoom });
         setTimeout(() => this.pendingRequests.delete(requestId), 5000);
         return requestId;
@@ -123,8 +142,13 @@ class VoiceChatClient {
                 [CONNECTION_STATE.ERROR]: '❌ Ошибка подключения'
             };
             const message = stateMessages[state];
-            if (message && (roomId || this.currentRoom)) this.logToRoomChat(message, 'connection');
-            UIManager.updateStatus(message || '', state === CONNECTION_STATE.CONNECTED ? 'connected' : state === CONNECTION_STATE.ERROR ? 'error' : 'connecting');
+            if (message && (roomId || this.currentRoom)) {
+                this.logToRoomChat(message, 'connection');
+            }
+            UIManager.updateStatus(
+                message || '',
+                state === CONNECTION_STATE.CONNECTED ? 'connected' : state === CONNECTION_STATE.ERROR ? 'error' : 'connecting'
+            );
         }
     }
 
@@ -171,7 +195,21 @@ class VoiceChatClient {
         this.elements.serverSearchInput = document.querySelector('#serverSearch');
         this.elements.clearSearchBtn = document.querySelector('#clearSearchBtn');
         this.elements.backBtn = document.querySelector('.back-btn');
-
+        this.elements.splitToggleBtn = document.querySelector('.split-toggle-btn');
+        if (!this.elements.splitToggleBtn) {
+            const headerControls = document.querySelector('.header-controls');
+            const micBtn = headerControls?.querySelector('.mic-toggle-btn');
+            if (headerControls) {
+                const splitBtn = document.createElement('button');
+                splitBtn.className = 'split-toggle-btn';
+                splitBtn.innerHTML = '🔲';
+                splitBtn.title = 'Разделить чат';
+                splitBtn.id = 'splitToggleBtn';
+                if (micBtn) headerControls.insertBefore(splitBtn, micBtn);
+                else headerControls.appendChild(splitBtn);
+                this.elements.splitToggleBtn = splitBtn;
+            }
+        }
         if (this.elements.messagesContainer) {
             let sentinel = this.elements.messagesContainer.querySelector('.history-sentinel');
             if (!sentinel) {
@@ -179,8 +217,8 @@ class VoiceChatClient {
                 sentinel.className = 'history-sentinel';
                 sentinel.style.cssText = 'height: 1px; width: 1px; margin: 0; padding: 0; overflow: hidden; visibility: hidden;';
                 this.elements.messagesContainer.prepend(sentinel);
+                this.elements.historySentinel = sentinel;
             }
-            this.elements.historySentinel = sentinel;
         }
         if (this.elements.clearSearchBtn) {
             this.elements.clearSearchBtn.addEventListener('click', () => ServerManager.clearSearchAndShowAllServers(this));
@@ -204,13 +242,14 @@ class VoiceChatClient {
     initEventListeners() {
         const userGestureHandler = async () => {
             await VolumeBoostManager.resume();
-            if (/Android/i.test(navigator.userAgent)) await VolumeBoostManager.unlockAndroidAudio();
+            if (/Android/i.test(navigator.userAgent)) {
+                await VolumeBoostManager.unlockAndroidAudio();
+            }
             document.removeEventListener('click', userGestureHandler, { once: true });
             document.removeEventListener('touchstart', userGestureHandler, { once: true });
         };
         document.addEventListener('click', userGestureHandler, { once: true });
         document.addEventListener('touchstart', userGestureHandler, { once: true });
-
         const micHandler = async () => await this.toggleMicrophone();
         if (this.elements.micButton) {
             this.elements.micButton.addEventListener('click', micHandler);
@@ -244,12 +283,24 @@ class VoiceChatClient {
                 this.elements.messageInput.value = '';
             });
         }
-        if (this.elements.toggleSidebarBtn) this.elements.toggleSidebarBtn.addEventListener('click', () => this.elements.sidebar.classList.toggle('open'));
-        if (this.elements.toggleMembersBtn) this.elements.toggleMembersBtn.addEventListener('click', () => this.elements.membersPanel.classList.toggle('open'));
-        if (this.elements.closePanelBtn) this.elements.closePanelBtn.addEventListener('click', () => this.elements.membersPanel.classList.remove('open'));
-        if (this.elements.closeSidebarBtn) this.elements.closeSidebarBtn.addEventListener('click', () => this.elements.sidebar.classList.remove('open'));
-        if (this.elements.settingsBtn) this.elements.settingsBtn.addEventListener('click', () => UIManager.openSettings(this));
-        if (this.elements.createServerBtn) this.elements.createServerBtn.addEventListener('click', () => ServerManager.createServer(this));
+        if (this.elements.toggleSidebarBtn) {
+            this.elements.toggleSidebarBtn.addEventListener('click', () => this.elements.sidebar.classList.toggle('open'));
+        }
+        if (this.elements.toggleMembersBtn) {
+            this.elements.toggleMembersBtn.addEventListener('click', () => this.elements.membersPanel.classList.toggle('open'));
+        }
+        if (this.elements.closePanelBtn) {
+            this.elements.closePanelBtn.addEventListener('click', () => this.elements.membersPanel.classList.remove('open'));
+        }
+        if (this.elements.closeSidebarBtn) {
+            this.elements.closeSidebarBtn.addEventListener('click', () => this.elements.sidebar.classList.remove('open'));
+        }
+        if (this.elements.settingsBtn) {
+            this.elements.settingsBtn.addEventListener('click', () => UIManager.openSettings(this));
+        }
+        if (this.elements.createServerBtn) {
+            this.elements.createServerBtn.addEventListener('click', () => ServerManager.createServer(this));
+        }
         if (this.elements.createRoomBtn) {
             this.elements.createRoomBtn.addEventListener('click', () => {
                 if (!this.currentServerId) return UIManager.showError('Сначала выберите сервер');
@@ -262,9 +313,37 @@ class VoiceChatClient {
                 this.showPanel('servers');
             });
         }
-        if (this.elements.roomsToggleBtn) this.elements.roomsToggleBtn.addEventListener('click', () => this.showPanel('rooms'));
-        if (this.elements.serverSearchInput) this.elements.serverSearchInput.addEventListener('input', (e) => this.searchServers(e.target.value));
-
+        if (this.elements.roomsToggleBtn) {
+            this.elements.roomsToggleBtn.addEventListener('click', () => this.showPanel('rooms'));
+        }
+        if (this.elements.serverSearchInput) {
+            this.elements.serverSearchInput.addEventListener('input', (e) => this.searchServers(e.target.value));
+        }
+        if (this.elements.splitToggleBtn) {
+            this.elements.splitToggleBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (!this._splitPopup) {
+                    this._splitPopup = document.createElement('div');
+                    this._splitPopup.className = 'split-popup';
+                    this._splitPopup.innerHTML = `
+                        <button class="split-popup-btn" data-dir="top">↕️ Сверху</button>
+                        <button class="split-popup-btn" data-dir="side">↔️ Справа</button>
+                    `;
+                    this._splitPopup.addEventListener('click', (ev) => {
+                        const btn = ev.target.closest('.split-popup-btn');
+                        if (btn) {
+                            this._splitPopup.style.display = 'none';
+                            this.toggleSecondaryChat(btn.dataset.dir);
+                        }
+                    });
+                    document.body.appendChild(this._splitPopup);
+                }
+                const rect = this.elements.splitToggleBtn.getBoundingClientRect();
+                this._splitPopup.style.display = this._splitPopup.style.display === 'flex' ? 'none' : 'flex';
+                this._splitPopup.style.left = `${rect.left - 100}px`;
+                this._splitPopup.style.top = `${rect.bottom + 5}px`;
+            });
+        }
         const mainContent = document.querySelector('.main-content');
         const fileInput = document.createElement('input');
         fileInput.type = 'file';
@@ -275,49 +354,70 @@ class VoiceChatClient {
         const attachBtn = document.querySelector('.attach-btn');
         if (mainContent) {
             mainContent.addEventListener('click', (e) => {
-                if (!e.target.closest('.message-input, .send-btn, .mic-toggle-btn, .settings-btn, .toggle-members-btn, .current-room-title, .toggle-sidebar-btn, .attach-btn')) {
+                if (!e.target.closest('.message-input, .send-btn, .mic-toggle-btn, .settings-btn, .toggle-members-btn, .current-room-title, .toggle-sidebar-btn, .attach-btn, .split-toggle-btn, .split-popup')) {
                     this.elements.sidebar.classList.remove('open');
                     this.elements.membersPanel.classList.remove('open');
                 }
             });
-            mainContent.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); mainContent.classList.add('drag-over'); });
-            mainContent.addEventListener('dragleave', (e) => { e.preventDefault(); e.stopPropagation(); mainContent.classList.remove('drag-over'); });
+            mainContent.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                mainContent.classList.add('drag-over');
+            });
+            mainContent.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                mainContent.classList.remove('drag-over');
+            });
             mainContent.addEventListener('drop', async (e) => {
-                e.preventDefault(); e.stopPropagation(); mainContent.classList.remove('drag-over');
+                e.preventDefault();
+                e.stopPropagation();
+                mainContent.classList.remove('drag-over');
                 if (!this.currentRoom) return UIManager.showError('Сначала войдите в комнату');
                 const file = e.dataTransfer.files[0];
                 if (!file) return;
-                if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) return UIManager.showError('Поддерживаются только изображения: JPEG, PNG, WebP');
+                if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+                    return UIManager.showError('Поддерживаются только изображения: JPEG, PNG, WebP');
+                }
                 if (file.size > 5 * 1024 * 1024) return UIManager.showError('Файл слишком большой (макс. 5 МБ)');
                 try {
                     const urls = await TextChatManager.uploadImage(this, this.currentRoom, file);
                     await TextChatManager.sendMessage(this, urls, 'image');
-                } catch (error) { UIManager.showError('Не удалось отправить изображение: ' + error.message); }
+                } catch (error) {
+                    UIManager.showError('Не удалось отправить изображение: ' + error.message);
+                }
             });
         }
         fileInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
             if (!this.currentRoom) return UIManager.showError('Сначала войдите в комнату');
-            if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) return UIManager.showError('Поддерживаются только изображения: JPEG, PNG, WebP');
+            if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+                return UIManager.showError('Поддерживаются только изображения: JPEG, PNG, WebP');
+            }
             if (file.size > 5 * 1024 * 1024) return UIManager.showError('Файл слишком большой (макс. 5 МБ)');
             try {
                 const urls = await TextChatManager.uploadImage(this, this.currentRoom, file);
                 await TextChatManager.sendMessage(this, urls, 'image');
-            } catch (error) { UIManager.showError('Не удалось отправить изображение: ' + error.message); }
-            finally { fileInput.value = ''; }
+            } catch (error) {
+                UIManager.showError('Не удалось отправить изображение: ' + error.message);
+            } finally {
+                fileInput.value = '';
+            }
         });
         if (attachBtn) attachBtn.addEventListener('click', () => fileInput.click());
-
         const isAndroid = /Android/i.test(navigator.userAgent);
         if (isAndroid && !document.getElementById('android-audio-unlock')) {
             const androidUnlockBtn = document.createElement('button');
             androidUnlockBtn.id = 'android-audio-unlock';
             androidUnlockBtn.textContent = '🔊 Включить звук';
-            androidUnlockBtn.style.cssText = `position:fixed;bottom:80px;right:20px;z-index:9999;padding:12px 24px;background:#4CAF50;color:white;border:none;border-radius:8px;cursor:pointer;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.3);display:none;`;
+            androidUnlockBtn.style.cssText = 'position:fixed;bottom:80px;right:20px;z-index:9999;padding:12px 24px;background:#4CAF50;color:white;border:none;border-radius:8px;cursor:pointer;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.3);display:none;';
             androidUnlockBtn.addEventListener('click', async () => {
                 const success = await VolumeBoostManager.unlockAndroidAudio();
-                if (success) { androidUnlockBtn.style.display = 'none'; UIManager.addMessage('System', '✅ Звук разблокирован'); }
+                if (success) {
+                    androidUnlockBtn.style.display = 'none';
+                    UIManager.addMessage('System', '✅ Звук разблокирован');
+                }
             });
             document.body.appendChild(androidUnlockBtn);
             const originalJoinRoom = this.joinRoom.bind(this);
@@ -334,35 +434,43 @@ class VoiceChatClient {
 
     initMessageReadObserver() {
         this.unreadMessageIds = new Set();
-        this.messageObserver = new IntersectionObserver((entries) => {
-            const toMark = [];
-            entries.forEach((entry) => {
-                const msgId = entry.target.dataset.messageId;
-                if (!msgId) return;
-                const readBy = JSON.parse(entry.target.dataset.readBy || '[]');
-                const isOwn = entry.target.querySelector('.message-content.own');
-                if (isOwn) return;
-                if (entry.isIntersecting && !readBy.includes(this.userId)) {
-                    toMark.push(msgId);
-                    this.unreadMessageIds.delete(msgId);
-                } else if (!entry.isIntersecting) {
-                    this.unreadMessageIds.add(msgId);
+        this.messageObserver = new IntersectionObserver(
+            (entries) => {
+                const toMark = [];
+                entries.forEach((entry) => {
+                    const msgId = entry.target.dataset.messageId;
+                    if (!msgId) return;
+                    const readBy = JSON.parse(entry.target.dataset.readBy || '[]');
+                    const isOwn = entry.target.querySelector('.message-content.own');
+                    if (isOwn) return;
+                    if (entry.isIntersecting && !readBy.includes(this.userId)) {
+                        toMark.push(msgId);
+                        this.unreadMessageIds.delete(msgId);
+                    } else if (!entry.isIntersecting) {
+                        this.unreadMessageIds.add(msgId);
+                    }
+                });
+                if (toMark.length > 0) {
+                    TextChatManager.markMessagesAsRead(this, toMark);
+                    this.clearUnreadForCurrentRoom();
                 }
-            });
-            if (toMark.length > 0) {
-                TextChatManager.markMessagesAsRead(this, toMark);
-                this.clearUnreadForCurrentRoom();
-            }
-        }, { threshold: 0.5 });
+            },
+            { threshold: 0.5 }
+        );
     }
 
     initHistoryObserver() {
         if (this.historyObserver) this.historyObserver.disconnect();
         const sentinel = this.elements.historySentinel || this.elements.messagesContainer?.querySelector('.history-sentinel');
         if (!sentinel || !this.elements.messagesContainer) return;
-        this.historyObserver = new IntersectionObserver((entries) => {
-            if (entries[0].isIntersecting && this.hasMoreHistory && !this.isHistoryLoading) this.loadHistory();
-        }, { root: this.elements.messagesContainer, rootMargin: '150px 0px 0px 0px', threshold: 0.01 });
+        this.historyObserver = new IntersectionObserver(
+            (entries) => {
+                if (entries[0].isIntersecting && this.hasMoreHistory && !this.isHistoryLoading) {
+                    this.loadHistory();
+                }
+            },
+            { root: this.elements.messagesContainer, rootMargin: '150px 0px 0px 0px', threshold: 0.01 }
+        );
         this.historyObserver.observe(sentinel);
     }
 
@@ -380,7 +488,6 @@ class VoiceChatClient {
             }
             if (!this.hasMoreHistory) this.removeHistorySentinel();
         } catch (error) {
-            console.error('❌ [HISTORY] Ошибка загрузки:', error);
             this.hasMoreHistory = false;
             this.removeHistorySentinel();
             UIManager.showError('⚠️ Не удалось подгрузить историю сообщений');
@@ -393,13 +500,17 @@ class VoiceChatClient {
     updateHistorySentinel(isLoading) {
         const sentinel = this.elements.historySentinel || this.elements.messagesContainer?.querySelector('.history-sentinel');
         if (sentinel) {
-            if (isLoading) sentinel.innerHTML = '<div class="history-loader" style="text-align: center; padding: 10px; color: var(--text-muted); font-size: 12px;">⏳ Загрузка...</div>';
-            else sentinel.innerHTML = '';
+            sentinel.innerHTML = isLoading
+                ? '<div class="history-loader" style="text-align: center; padding: 10px; color: var(--text-muted); font-size: 12px;">⏳ Загрузка...</div>'
+                : '';
         }
     }
 
     removeHistorySentinel() {
-        if (this.historyObserver) { this.historyObserver.disconnect(); this.historyObserver = null; }
+        if (this.historyObserver) {
+            this.historyObserver.disconnect();
+            this.historyObserver = null;
+        }
         const sentinel = this.elements.historySentinel || this.elements.messagesContainer?.querySelector('.history-sentinel');
         if (sentinel) sentinel.remove();
     }
@@ -409,11 +520,15 @@ class VoiceChatClient {
         if (!serversPanel || !roomsPanel || !serversToggleBtn || !roomsToggleBtn) return;
         this.activePanel = panelName;
         if (panelName === 'servers') {
-            serversToggleBtn.classList.add('active'); roomsToggleBtn.classList.remove('active');
-            serversPanel.classList.add('active'); roomsPanel.classList.remove('active');
+            serversToggleBtn.classList.add('active');
+            roomsToggleBtn.classList.remove('active');
+            serversPanel.classList.add('active');
+            roomsPanel.classList.remove('active');
         } else {
-            serversToggleBtn.classList.remove('active'); roomsToggleBtn.classList.add('active');
-            serversPanel.classList.remove('active'); roomsPanel.classList.add('active');
+            serversToggleBtn.classList.remove('active');
+            roomsToggleBtn.classList.add('active');
+            serversPanel.classList.remove('active');
+            roomsPanel.classList.add('active');
         }
     }
 
@@ -433,44 +548,71 @@ class VoiceChatClient {
 
     async ensureConsumer(producerId, producerData = {}) {
         if (this.consumedProducerIdsRef.has(producerId)) return true;
-        if (producerData.clientID === this.clientID) { this.consumedProducerIdsRef.add(producerId); return false; }
+        if (producerData.clientID === this.clientID) {
+            this.consumedProducerIdsRef.add(producerId);
+            return false;
+        }
         if (!this.recvTransport || this.recvTransport.closed || this.recvTransport.connectionState === 'failed') {
             this.pendingProducersRef.push(producerData);
             return false;
         }
         try {
-            this.socket.emit('consume', {
-                producerId, rtpCapabilities: this.device.rtpCapabilities, transportId: this.recvTransport.id, clientId: this.clientID
-            }, async (response) => {
-                if (!response?.success || !response.consumerParameters) { console.warn('Consume response error:', response?.error); return; }
-                try {
-                    const { consumer, audioElement } = await MediaManager.createConsumer(this, response.consumerParameters);
-                    this.consumerState.set(response.consumerParameters.producerId, { status: 'active', consumer, audioElement, lastError: null });
-                    this.consumedProducerIdsRef.add(response.consumerParameters.producerId);
-                    const members = MembersManager.getMembers();
-                    const member = members.find(m => m.clientId === response.consumerParameters.peerId || m.userId === response.consumerParameters.peerId);
-                    const userId = member?.userId || response.consumerParameters.peerId;
-                    if (userId) {
-                        if (!window.producerUserMap) window.producerUserMap = new Map();
-                        window.producerUserMap.set(response.consumerParameters.producerId, userId);
-                        UIManager.showVolumeSliderByUserId(response.consumerParameters.producerId, userId);
-                        VolumeBoostManager.attachToAudioElement(audioElement, userId, 1.0).catch(() => {});
+            this.socket.emit(
+                'consume',
+                {
+                    producerId,
+                    rtpCapabilities: this.device.rtpCapabilities,
+                    transportId: this.recvTransport.id,
+                    clientId: this.clientID
+                },
+                async (response) => {
+                    if (!response?.success || !response.consumerParameters) {
+                        return;
                     }
-                } catch (error) { console.error('Failed to consume audio:', error); }
-            });
+                    try {
+                        const { consumer, audioElement } = await MediaManager.createConsumer(this, response.consumerParameters);
+                        this.consumerState.set(response.consumerParameters.producerId, {
+                            status: 'active',
+                            consumer,
+                            audioElement,
+                            lastError: null
+                        });
+                        this.consumedProducerIdsRef.add(response.consumerParameters.producerId);
+                        const members = MembersManager.getMembers();
+                        const member = members.find(
+                            (m) => m.clientId === response.consumerParameters.peerId || m.userId === response.consumerParameters.peerId
+                        );
+                        const userId = member?.userId || response.consumerParameters.peerId;
+                        if (userId) {
+                            if (!window.producerUserMap) window.producerUserMap = new Map();
+                            window.producerUserMap.set(response.consumerParameters.producerId, userId);
+                            UIManager.showVolumeSliderByUserId(response.consumerParameters.producerId, userId);
+                            VolumeBoostManager.attachToAudioElement(audioElement, userId, 1.0).catch(() => {});
+                        }
+                    } catch (error) {
+                        // Ignore
+                    }
+                }
+            );
             return true;
-        } catch (error) { console.error('Ensure consumer error:', error); this.pendingProducersRef.push(producerData); return false; }
+        } catch (error) {
+            this.pendingProducersRef.push(producerData);
+            return false;
+        }
     }
 
     _processPendingProducers() {
         if (this._isProcessingConsumers) return;
         this._isProcessingConsumers = true;
         if (!this.recvTransport || this.recvTransport.closed || this.recvTransport.connectionState === 'failed') {
-            this._isProcessingConsumers = false; return;
+            this._isProcessingConsumers = false;
+            return;
         }
         const toProcess = [...this.pendingProducersRef];
         this.pendingProducersRef = [];
-        const promises = toProcess.map(p => this.ensureConsumer(p.id || p.producerId, p).catch((err) => console.error('Pending consumer error:', err)));
+        const promises = toProcess.map((p) =>
+            this.ensureConsumer(p.id || p.producerId, p).catch(() => {})
+        );
         Promise.allSettled(promises).finally(() => {
             this._isProcessingConsumers = false;
             if (this.pendingProducersRef.length > 0) setTimeout(() => this._processPendingProducers(), 200);
@@ -486,27 +628,36 @@ class VoiceChatClient {
                 await UIManager.fetchUsernames([this.userId]);
                 if (this.pendingInviteCode || InviteManager.getPendingInvite()) {
                     const inviteApplied = await InviteManager.applyPendingInvite();
-                    if (inviteApplied) { this.clearPendingInvite(); return; }
+                    if (inviteApplied) {
+                        this.clearPendingInvite();
+                        return;
+                    }
                     this.clearPendingInvite();
                 }
                 const lastServerId = localStorage.getItem('lastServerId');
                 const lastRoomId = localStorage.getItem('lastRoomId');
                 if (lastServerId) {
-                    const serverExists = this.servers.some(s => s.id === lastServerId);
+                    const serverExists = this.servers.some((s) => s.id === lastServerId);
                     if (serverExists) {
                         this.currentServerId = lastServerId;
-                        this.currentServer = this.servers.find(s => s.id === lastServerId);
+                        this.currentServer = this.servers.find((s) => s.id === lastServerId);
                         await RoomManager.loadRoomsForServer(this, lastServerId);
                         if (lastRoomId) {
-                            const roomExists = this.rooms?.some(r => r.id === lastRoomId);
-                            if (roomExists) { this.currentRoom = lastRoomId; await this.reconnectToRoom(lastRoomId); return; }
+                            const roomExists = this.rooms?.some((r) => r.id === lastRoomId);
+                            if (roomExists) {
+                                this.currentRoom = lastRoomId;
+                                await this.reconnectToRoom(lastRoomId);
+                                return;
+                            }
                         }
                     }
                 }
                 return;
             }
             AuthManager.showAuthModal(this);
-        } catch (err) { UIManager.showError('Критическая ошибка: не удалось загрузить систему авторизации'); }
+        } catch (err) {
+            UIManager.showError('Критическая ошибка: не удалось загрузить систему авторизации');
+        }
     }
 
     clearPendingInvite() {
@@ -520,63 +671,109 @@ class VoiceChatClient {
     async joinServer(serverId) {
         try {
             const res = await fetch(`${this.API_SERVER_URL}/api/servers/${serverId}/join`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
                 body: JSON.stringify({ userId: this.userId, token: this.token })
             });
-            if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || 'Не удалось присоединиться'); }
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || 'Не удалось присоединиться');
+            }
             const data = await res.json();
             const server = data.server;
-            if (!this.servers.some(s => s.id === server.id)) this.servers.push(server);
+            if (!this.servers.some((s) => s.id === server.id)) this.servers.push(server);
             if (this.elements.serverSearchInput) this.elements.serverSearchInput.value = '';
             localStorage.setItem('lastServerId', server.id);
             ServerManager.renderServers(this);
             this.showPanel('servers');
             UIManager.addMessage('System', `✅ Вы присоединились к "${server.name}"`);
             return true;
-        } catch (error) { UIManager.showError(`❌ Не удалось присоединиться: ${error.message}`); return false; }
+        } catch (error) {
+            UIManager.showError(`❌ Не удалось присоединиться: ${error.message}`);
+            return false;
+        }
     }
 
     async clearUnreadForCurrentRoom() {
         if (!this.currentRoom) return;
         let serverId = this.currentServerId;
-        if (!serverId || this.currentServer?.type === 'direct' || this.currentServerId?.startsWith('user_')) serverId = this.currentRoom;
+        if (!serverId || this.currentServer?.type === 'direct' || this.currentServerId?.startsWith('user_')) {
+            serverId = this.currentRoom;
+        }
         try {
             const response = await fetch(`${this.API_SERVER_URL}/api/messages/${this.currentRoom}/mark-read`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
                 body: JSON.stringify({ serverId })
             });
             if (response.ok) UIManager.clearUnreadForRoom(serverId, this.currentRoom);
-        } catch (error) { return; }
+        } catch (error) {
+            // Ignore
+        }
     }
 
     setupSocketConnection() {
         const currentToken = this.token;
         if (!currentToken) return;
         if (this.socket && this.socket.connected) {
-            if (this.currentRoom && this.socketRoom !== this.currentRoom) this.destroySocket();
-            else { this.socket.emit('join-room', { roomId: this.currentRoom }); return; }
+            if (this.currentRoom && this.socketRoom !== this.currentRoom) {
+                this.destroySocket();
+            } else {
+                this.socket.emit('join-room', { roomId: this.currentRoom });
+                return;
+            }
         }
         this.destroySocket();
         try {
             this.socket = io(this.API_SERVER_URL, {
-                auth: { token: currentToken, userId: this.userId, clientId: this.clientID, username: this.username, tokenVersion: this.tokenVersion },
-                reconnection: true, reconnectionAttempts: 5, reconnectionDelay: 1000, reconnectionDelayMax: 5000, timeout: 20000
+                auth: {
+                    token: currentToken,
+                    userId: this.userId,
+                    clientId: this.clientID,
+                    username: this.username,
+                    tokenVersion: this.tokenVersion
+                },
+                reconnection: true,
+                reconnectionAttempts: 5,
+                reconnectionDelay: 1000,
+                reconnectionDelayMax: 5000,
+                timeout: 20000
             });
             this.socketRoom = this.currentRoom;
             const socket = this.socket;
-
             socket.on('join-ack', (data) => {
                 if (data.success) this.setConnectionState(CONNECTION_STATE.CONNECTED, this.currentRoom);
                 else this.setConnectionState(CONNECTION_STATE.ERROR, this.currentRoom);
             });
-
+            socket.on('user-speaking-state', (data) => {
+                const { userId, speaking, timestamp } = data;
+                MembersManager.updateMember(userId, { isMicActive: speaking, lastSpeakingUpdate: timestamp });
+                UIManager.updateMemberMicState(userId, speaking);
+                if (userId === this.userId) this.sendMicStateToElectron();
+            });
+            socket.on('user-presence-change', (data) => {
+                const { userId, state, timestamp } = data;
+                const connectionState = {
+                    connected: 'connected',
+                    suspect: 'connecting',
+                    offline: 'disconnected',
+                    disconnected: 'disconnected'
+                }[state] || 'unknown';
+                MembersManager.setConnectionState(userId, connectionState);
+                if (state === 'offline' && userId === this.userId) this._reconcileOfflineState();
+            });
             socket.on('consumerParameters', async (data) => {
                 if (!this.consumedProducerIdsRef.has(data.producerId)) {
                     try {
                         const { consumer, audioElement } = await MediaManager.createConsumer(this, data);
-                        this.consumerState.set(data.producerId, { status: 'active', consumer, audioElement, lastError: null });
+                        this.consumerState.set(data.producerId, {
+                            status: 'active',
+                            consumer,
+                            audioElement,
+                            lastError: null
+                        });
                         const members = MembersManager.getMembers();
-                        const member = members.find(m => m.clientId === data.peerId || m.userId === data.peerId);
+                        const member = members.find((m) => m.clientId === data.peerId || m.userId === data.peerId);
                         const userId = member?.userId || data.peerId;
                         if (userId) {
                             if (!window.producerUserMap) window.producerUserMap = new Map();
@@ -584,10 +781,11 @@ class VoiceChatClient {
                             UIManager.showVolumeSliderByUserId(data.producerId, userId);
                             VolumeBoostManager.attachToAudioElement(audioElement, userId, 1.0).catch(() => {});
                         }
-                    } catch (error) { this.consumerState.set(data.producerId, { status: 'error', consumer: null, lastError: error }); }
+                    } catch (error) {
+                        this.consumerState.set(data.producerId, { status: 'error', consumer: null, lastError: error });
+                    }
                 }
             });
-
             socket.on('producerPaused', (data) => {
                 const { producerId, peerId } = data;
                 const state = this.consumerState.get(producerId);
@@ -595,7 +793,6 @@ class VoiceChatClient {
                 if (peerId) MembersManager.updateMember(peerId, { isMicActive: false });
                 UIManager.updateMemberMicState(peerId, false);
             });
-
             socket.on('producerResumed', (data) => {
                 const { producerId, peerId } = data;
                 const state = this.consumerState.get(producerId);
@@ -603,79 +800,118 @@ class VoiceChatClient {
                 if (peerId) MembersManager.updateMember(peerId, { isMicActive: true });
                 UIManager.updateMemberMicState(peerId, true);
             });
-
             socket.on('new-producer', async (data) => {
                 if (data.clientID !== this.clientID && !this.consumedProducerIdsRef.has(data.producerId)) {
                     this.pendingProducersRef.push(data);
                     this._processPendingProducers();
-                } else this.consumedProducerIdsRef.add(data.producerId);
+                } else {
+                    this.consumedProducerIdsRef.add(data.producerId);
+                }
             });
-
             socket.on('current-producers', async (data) => {
                 if (!data?.producers || !Array.isArray(data.producers)) return;
                 for (const producer of data.producers) {
                     if (producer.clientID !== this.clientID && !this.consumedProducerIdsRef.has(producer.id)) {
                         this.pendingProducersRef.push(producer);
-                    } else this.consumedProducerIdsRef.add(producer.id);
+                    } else {
+                        this.consumedProducerIdsRef.add(producer.id);
+                    }
                 }
                 this._processPendingProducers();
             });
-
-            socket.on('room-participants-updated', (data) => { MembersManager.updateAllMembersWithStatus(data.online || [], data.offline || []); });
-
+            socket.on('room-participants-updated', (data) => {
+                MembersManager.updateAllMembersWithStatus(data.online || [], data.offline || []);
+                this._reconcileParticipantsState(data);
+            });
             socket.on('room-participants', (participants) => {
-                const processed = participants.map(p => p.userId === this.userId ? { ...p, isOnline: true } : p);
+                const processed = participants.map((p) => (p.userId === this.userId ? { ...p, isOnline: true } : p));
                 MembersManager.updateAllMembers(processed);
             });
-
             socket.on('user-joined', () => this.playSound('user-join'));
-
             socket.on('user-left', async (data) => {
                 const memberElement = document.querySelector(`.member-item[data-user-id="${data.userId}"]`);
                 if (memberElement) {
                     const slider = memberElement.querySelector('.member-volume-slider');
-                    if (slider) { slider.style.display = 'none'; slider.dataset.producerId = ''; }
+                    if (slider) {
+                        slider.style.display = 'none';
+                        slider.dataset.producerId = '';
+                    }
                     const micIndicator = memberElement.querySelector('.mic-indicator');
-                    if (micIndicator) { micIndicator.className = 'mic-indicator'; micIndicator.title = 'Микрофон выключен'; }
+                    if (micIndicator) {
+                        micIndicator.className = 'mic-indicator';
+                        micIndicator.title = 'Микрофон выключен';
+                    }
                 }
                 this.playSound('user-leave');
             });
-
             socket.on('mic-indicator-update', (data) => {
                 const { userId, isActive } = data;
-                if (userId) MembersManager.updateMember(userId, { isMicActive: isActive });
-                UIManager.updateMemberMicState(userId, isActive);
+                const member = MembersManager.getMember(userId);
+                if (!member?.lastSpeakingUpdate || member.lastSpeakingUpdate < Date.now() - 2000) {
+                    MembersManager.updateMember(userId, { isMicActive: isActive });
+                    UIManager.updateMemberMicState(userId, isActive);
+                }
             });
-
-            socket.on('unread-update', (data) => { UIManager.setUnreadCount(data.serverId, data.roomId, data.count, data.hasMention, data.personalCount || 0); });
-            socket.on('message-deleted', (data) => { UIManager.removeMessageFromUI(data.messageId); });
-
-            socket.on('new-message', (message) => {
-                if (message.roomId === this.currentRoom) {
-                    UIManager.addMessage(message.username, message.text, null, message.type || 'text', message.imageUrl, message.id, message.readBy || [], message.userId, message.broadcast || false, message.thumbnailUrl);
-                    if (message.type !== 'image' && message.username !== this.username) this.playSound('message');
-                    
-                    // 🔍 АВТО-ОТВЕТ НА ЗАПРОС МАРШРУТОВ (ОСТАВЛЕНО)
-                    if (message.type === 'system' && message.text) {
-                        const match = message.text.match(/🔍 Маршруты:\s+(.+?)\s*\(ID:/i);
-                        if (match) {
-                            const requestedNick = match[1].trim();
-                            if (requestedNick.toLowerCase() === this.username.toLowerCase()) {
-                                const clientReport = this.generateClientRouteDebugReport();
-                                const replyText = `📱 [CLIENT] ОТЧЕТ МАРШРУТОВ: ${this.username}\n${clientReport}`;
-                                this.socket.emit('send-message', { 
-                                    roomId: this.currentRoom, 
-                                    text: replyText, 
-                                    type: 'system' 
-                                });
-                            }
+            socket.on('unread-update', (data) => {
+                UIManager.setUnreadCount(data.serverId, data.roomId, data.count, data.hasMention, data.personalCount || 0);
+            });
+            socket.on('message-deleted', (data) => {
+                UIManager.removeMessageFromUI(data.messageId);
+            });
+            socket.on('init-secondary-chat', async (data) => {
+                if (data?.roomId && !this.secondaryChat.enabled) {
+                    await this.toggleSecondaryChat('side');
+                    setTimeout(() => {
+                        if (UIManager.secondaryChat.enabled) {
+                            UIManager._joinSecondaryRoom(this, data.roomId);
                         }
+                    }, 150);
+                }
+            });
+            socket.on('live-notification', (payload) => {
+                this.handleLiveNotification(payload);
+            });
+            socket.on('new-message', (message) => {
+                if (!message || !message.roomId) return;
+                if (message.isForSecondary) {
+                    if (this.secondaryChat.enabled && this.secondaryChat.roomId === message.roomId) {
+                        UIManager.addSecondaryMessage(
+                            message.username,
+                            message.text,
+                            message.timestamp,
+                            message.type || 'text',
+                            message.imageUrl,
+                            message.id,
+                            message.readBy || [],
+                            message.userId,
+                            false,
+                            message.thumbnailUrl
+                        );
+                        if (message.type !== 'image' && message.username !== this.username) {
+                            this.playSound('message');
+                        }
+                    }
+                    return;
+                }
+                if (message.roomId === this.currentRoom) {
+                    UIManager.addMessage(
+                        message.username,
+                        message.text,
+                        message.timestamp,
+                        message.type || 'text',
+                        message.imageUrl,
+                        message.id,
+                        message.readBy || [],
+                        message.userId,
+                        message.broadcast || false,
+                        message.thumbnailUrl
+                    );
+                    if (message.type !== 'image' && message.username !== this.username) {
+                        this.playSound('message');
                     }
                 }
             });
-
             socket.on('error', (error) => UIManager.showError('Ошибка соединения: ' + (error.message || 'неизвестная ошибка')));
-
             socket.on('connect', () => {
                 UIManager.updateStatus('Подключено', 'connected');
                 this.setConnectionState(CONNECTION_STATE.CONNECTED, this.currentRoom);
@@ -686,14 +922,15 @@ class VoiceChatClient {
                 this.loadUnreadCounts();
                 this.startPingInterval();
             });
-
             socket.on('disconnect', (reason) => {
                 UIManager.updateStatus('Отключено', 'disconnected');
                 this.setConnectionState(CONNECTION_STATE.DISCONNECTED, this.currentRoom);
                 this.stopPingInterval();
                 if (reason !== 'io client disconnect' && this.currentRoom && !this.isReconnecting) {
                     setTimeout(() => {
-                        if (this.currentRoom && !this.isReconnecting && !this._reconnectInProgress) this.reconnectToRoom(this.currentRoom);
+                        if (this.currentRoom && !this.isReconnecting && !this._reconnectInProgress) {
+                            this.reconnectToRoom(this.currentRoom);
+                        }
                     }, 2000);
                 }
             });
@@ -703,43 +940,104 @@ class VoiceChatClient {
         }
     }
 
-    // 🆕 Генерация отчета для отладки на клиенте (ОСТАВЛЕНО ДЛЯ КОМАНДЫ -МАРШРУТЫ)
-    generateClientRouteDebugReport() {
-        const lines = [];
-        lines.push(`🌐 [CLIENT] ПОДРОБНАЯ ИНФОРМАЦИЯ О ПОДКЛЮЧЕНИИ:`);
-        lines.push(`📊 ОБЩИЙ СТАТУС:`);
-        lines.push(`   • Онлайн: ✅ Да`);
-        lines.push(`   • Текущая комната: ${this.currentRoom}`);
-        lines.push(`   • Состояние: ${this.isConnected ? 'connected' : 'disconnected'}`);
-        lines.push(`   • Последний пинг: ${new Date().toLocaleTimeString()}`);
-        lines.push(`   • Client ID: ${this.clientID}`);
-        lines.push(`   • Socket ID: ${this.socket?.id || 'N/A'}`);
-        lines.push('');
-
-        lines.push(`📡 МЕДИА-СЕРВЕР (mediasoup):`);
-        lines.push(`🏠 Комната: ${this.currentRoom}`);
-        lines.push(`🚚 Транспорты:`);
-        lines.push(`   • SEND: ${this.sendTransport?.id || 'missing'} | ICE: ${this.sendTransport?.iceConnectionState || 'N/A'} | DTLS: ${this.sendTransport?.connectionState || 'N/A'}`);
-        lines.push(`   • RECV: ${this.recvTransport?.id || 'missing'} | ICE: ${this.recvTransport?.iceConnectionState || 'N/A'} | DTLS: ${this.recvTransport?.connectionState || 'N/A'}`);
+    handleLiveNotification(payload) {
+        const existing = document.getElementById('live-notification-banner');
+        if (existing) existing.remove();
         
-        lines.push(`🎤 Продюсеры (1):`);
-        if (this.audioProducer) {
-            const trackReady = this.audioProducer.track?.readyState || 'no-track';
-            lines.push(`   • ${this.audioProducer.id} [audio] Paused: ${this.audioProducer.paused} | Closed: ${this.audioProducer.closed} | Track: ${trackReady}`);
-        } else lines.push(`   • ❌ Продюсер отсутствует`);
+        this.playSound('pop-up-message');
 
-        lines.push(`🎧 Консьюмеры (${this.consumerState.size}):`);
-        let playing = 0;
-        for (const [pid, state] of this.consumerState) {
-            if (state.status === 'active') playing++;
-            lines.push(`   • ${pid} [audio] Closed: ${state.consumer?.closed || 'N/A'} | Status: ${state.status}`);
+        const banner = document.createElement('div');
+        banner.id = 'live-notification-banner';
+        banner.style.cssText = 'position: sticky; top: 0; background: #2d2d44; border-bottom: 1px solid #404060; padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; z-index: 1000; font-size: 13px; color: #e0e0e0;';
+        banner.innerHTML = `
+            <div style="overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1;">
+                <strong style="color: #5865f2;">${this.escapeHtml(payload.username)}</strong> (${this.escapeHtml(payload.roomName)}): ${this.escapeHtml(payload.text)}
+            </div>
+            <button id="notif-close" style="background: none; border: none; color: #e0e0e0; cursor: pointer; font-size: 16px; padding: 0 8px;">✕</button>
+        `;
+        const chatArea = document.querySelector('.chat-area') || document.querySelector('.primary-frame');
+        if (chatArea) chatArea.prepend(banner);
+        let autoHideTimer;
+        const hide = () => {
+            clearTimeout(autoHideTimer);
+            if (banner.parentNode) banner.remove();
+        };
+        autoHideTimer = setTimeout(hide, 10000);
+        banner.querySelector('#notif-close').addEventListener('click', (e) => { e.stopPropagation(); hide(); });
+        banner.addEventListener('click', () => { hide(); this.openSecondaryFromNotification(payload.roomId); });
+    }
+
+    escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    async openSecondaryFromNotification(roomId) {
+        if (!roomId) return;
+        if (UIManager.secondaryChat.enabled) {
+            await UIManager._joinSecondaryRoom(this, roomId);
+            return;
         }
-        lines.push(`   • ▶ Playing: ${playing} | ⏳ Pending: ${this.pendingProducersRef.length}`);
+        let direction = 'side';
+        const frame = document.querySelector('.primary-frame') || document.querySelector('.chat-area');
+        if (frame) {
+            const rect = frame.getBoundingClientRect();
+            direction = rect.width > rect.height ? 'side' : 'top';
+        }
+        await this.toggleSecondaryChat(direction);
+        setTimeout(async () => {
+            if (UIManager.secondaryChat.enabled) {
+                await UIManager._joinSecondaryRoom(this, roomId);
+            }
+        }, 250);
+        if (this.socket?.connected) {
+            this.socket.emit('secondary-chat-update', { roomId });
+        }
+    }
 
-        lines.push(`📋 ДОПОЛНИТЕЛЬНЫЕ ДАННЫЕ КЛИЕНТА:`);
-        lines.push(`   • Network: ${navigator.connection ? `${navigator.connection.effectiveType} (${navigator.connection.downlink}Mbps)` : 'N/A'}`);
-        lines.push('');
-        return lines.join('\n');
+    async _reconcileOfflineState() {
+        if (this.recvTransport && !this.recvTransport.closed && this.recvTransport.connectionState === 'connected') {
+            let hasActiveMedia = false;
+            for (const [, state] of this.consumerState) {
+                if (state.status === 'active' && state.consumer?.track?.readyState === 'live') {
+                    hasActiveMedia = true;
+                    break;
+                }
+            }
+            if (hasActiveMedia || (this.audioProducer && !this.audioProducer.closed)) {
+                if (this.socket && this.currentRoom) {
+                    this.socket.emit(
+                        'request-room-snapshot',
+                        { roomId: this.currentRoom },
+                        (response) => {
+                            if (response?.success && response.participants) {
+                                MembersManager.updateMember(this.userId, { isOnline: true, connectionState: 'connected' });
+                                UIManager.updateMembersListWithStatus(
+                                    response.participants.filter((p) => p.isOnline),
+                                    response.participants.filter((p) => !p.isOnline)
+                                );
+                            }
+                        }
+                    );
+                }
+            }
+        }
+    }
+
+    _reconcileParticipantsState(serverData) {
+        const { online = [], offline = [] } = serverData;
+        const serverOnlineIds = new Set(online.map((p) => p.userId));
+        for (const [producerId, state] of this.consumerState) {
+            if (state.status === 'active') {
+                const userId = window.producerUserMap?.get(producerId);
+                if (userId && !serverOnlineIds.has(userId)) {
+                    // Ignore
+                }
+            }
+        }
+        if (!serverOnlineIds.has(this.userId)) this._reconcileOfflineState();
     }
 
     startPingInterval() {
@@ -750,7 +1048,10 @@ class VoiceChatClient {
     }
 
     stopPingInterval() {
-        if (this.pingInterval) { clearInterval(this.pingInterval); this.pingInterval = null; }
+        if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+            this.pingInterval = null;
+        }
     }
 
     async loadUnreadCounts() {
@@ -762,11 +1063,16 @@ class VoiceChatClient {
                 const data = await response.json();
                 if (data.unread) UIManager.syncUnreadCounts(data.unread);
             }
-        } catch (error) { return; }
+        } catch (error) {
+            // Ignore
+        }
     }
 
     destroySocket() {
-        if (this.socket) { this.socket.disconnect(); this.socket = null; }
+        if (this.socket) {
+            this.socket.disconnect();
+            this.socket = null;
+        }
         this.socketRoom = null;
         this.stopPingInterval();
     }
@@ -780,10 +1086,11 @@ class VoiceChatClient {
         UIManager.updateMicButton(status);
     }
 
-    // ✅ МИКРОФОН БЕЗ ОТЛАДКИ (ЧИСТЫЙ КОД)
     async toggleMicrophone() {
         if (this._micToggleDebounce) return;
-        this._micToggleDebounce = setTimeout(() => { this._micToggleDebounce = null; }, 500);
+        this._micToggleDebounce = setTimeout(() => {
+            this._micToggleDebounce = null;
+        }, 500);
         try {
             if (!this.currentRoom) {
                 UIManager.showError('Микрофон доступен только в комнатах');
@@ -793,7 +1100,6 @@ class VoiceChatClient {
             this.updateMicButtonState();
             if (this.isMicActive && !this.isMicPaused) this.playSound('mic-on');
             else if (this.isMicPaused) this.playSound('mic-off');
-            // 🔌 Отправляем состояние в Electron после переключения
             this.sendMicStateToElectron();
         } catch (error) {
             UIManager.showError('Ошибка микрофона: ' + error.message);
@@ -804,8 +1110,39 @@ class VoiceChatClient {
     sendMessage(text) {
         if (!text.trim() || !this.currentRoom) return;
         const trimmedText = text.trim();
-        if (this.socket) this.socket.emit('send-message', { roomId: this.currentRoom, text: trimmedText });
-        else TextChatManager.sendMessage(this, text).catch(() => UIManager.showError('Ошибка отправки сообщения'));
+        if (this.socket) {
+            this.socket.emit('send-message', { roomId: this.currentRoom, text: trimmedText });
+        } else {
+            TextChatManager.sendMessage(this, text).catch(() => UIManager.showError('Ошибка отправки сообщения'));
+        }
+    }
+
+    async sendSecondaryMessage(text, targetRoomId) {
+        const roomId = targetRoomId || this.secondaryChat.roomId;
+        if (!roomId || !text.trim()) return;
+        const tempId = `temp_sec_${Date.now()}`;
+        UIManager.addSecondaryMessage(this.username, text.trim(), null, 'text', null, tempId, [], this.userId, false, null);
+        try {
+            if (this.socket && this.socket.connected) {
+                this.socket.emit('send-message', { roomId, text: text.trim() });
+                return;
+            }
+            const result = await TextChatManager.sendMessageToRoom(this, roomId, text.trim(), 'text');
+            if (result && result.message) {
+                const tempEl = document.querySelector(`[data-message-id="${tempId}"]`);
+                if (tempEl) {
+                    tempEl.dataset.messageId = result.message.id;
+                    const timeEl = tempEl.querySelector('.message-time');
+                    if (timeEl && result.message.timestamp) {
+                        timeEl.textContent = new Date(result.message.timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+                    }
+                }
+            }
+        } catch (error) {
+            UIManager.showError('Не удалось отправить сообщение');
+            const tempEl = document.querySelector(`[data-message-id="${tempId}"]`);
+            if (tempEl) tempEl.remove();
+        }
     }
 
     async disconnectFromRoom() {
@@ -828,7 +1165,6 @@ class VoiceChatClient {
             this.consumerState.clear();
             this.updateMicButtonState();
             this.setConnectionState(CONNECTION_STATE.DISCONNECTED);
-            // 🔌 Уведомляем Electron о выходе из комнаты
             this.sendMicStateToElectron();
         }
     }
@@ -850,9 +1186,10 @@ class VoiceChatClient {
                 if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
             }
             await this.disconnectFromRoom();
-            const joinRes = await this._fetchWithTimeout(this.CHAT_API_URL, {
-                method: 'POST', body: JSON.stringify({ roomId, userId: this.userId, token: this.token, clientId: this.clientID })
-            });
+            const joinRes = await this._fetchWithTimeout(
+                this.CHAT_API_URL,
+                { method: 'POST', body: JSON.stringify({ roomId, userId: this.userId, token: this.token, clientId: this.clientID }) }
+            );
             const joinData = await joinRes.json();
             if (!joinData.success) throw new Error(joinData.error || 'Join failed');
             if (!joinData.mediaData) throw new Error('No media data received');
@@ -865,11 +1202,16 @@ class VoiceChatClient {
             this.audioProducer = null;
             this.setupSocketConnection();
             let attempts = 0;
-            while (!this.socket?.connected && attempts < 50) { await new Promise(resolve => setTimeout(resolve, 100)); attempts++; }
+            while (!this.socket?.connected && attempts < 50) {
+                await new Promise((resolve) => setTimeout(resolve, 100));
+                attempts++;
+            }
             if (!this.socket?.connected) throw new Error('WebSocket не подключился после 5 секунд');
             await MediaManager.connect(this, roomId, joinData.mediaData);
             if (this.recvTransport) {
-                this.recvTransport.on('connectionstatechange', (state) => { if (state === 'connected') this._processPendingProducers(); });
+                this.recvTransport.on('connectionstatechange', (state) => {
+                    if (state === 'connected') this._processPendingProducers();
+                });
             }
             this.updateMicButtonState();
             if (this.socket) this.socket.emit('request-mic-states', { roomId });
@@ -883,17 +1225,18 @@ class VoiceChatClient {
                 if (result && result.messages && result.messages.length > 0) {
                     this.oldestMessageId = result.messages[0].id;
                     this.hasMoreHistory = result.hasMore;
-                    if (this.hasMoreHistory) this.initHistoryObserver(); else this.removeHistorySentinel();
-                } else this.removeHistorySentinel();
+                    if (this.hasMoreHistory) this.initHistoryObserver();
+                    else this.removeHistorySentinel();
+                } else {
+                    this.removeHistorySentinel();
+                }
             } catch (chatError) {
-                console.error('❌ [CHAT] Не удалось загрузить историю чата:', chatError);
                 UIManager.addMessage('System', '⚠️ Не удалось загрузить историю сообщений (HTTP)', 'system');
                 this.removeHistorySentinel();
             }
             if (clearUnread) await this.clearUnreadForCurrentRoom();
             this.setConnectionState(CONNECTION_STATE.CONNECTED, roomId);
             this.isConnected = true;
-            // 🔌 Отправляем актуальное состояние при входе
             this.sendMicStateToElectron();
             return true;
         } catch (error) {
@@ -902,28 +1245,45 @@ class VoiceChatClient {
             UIManager.updateStatus('Ошибка: ' + error.message, 'disconnected');
             UIManager.showError('Не удалось присоединиться к комнате: ' + error.message);
             throw error;
-        } finally { this._joinRoomInProgress = false; }
+        } finally {
+            this._joinRoomInProgress = false;
+        }
     }
 
     async reconnectToRoom(roomId, maxRetries = 3, retryDelay = 2000, clearUnread = false, force = false) {
         if (!force && this.currentRoom === roomId && this.isConnected && this.socket?.connected) {
-            this._processPendingProducers(); return true;
+            this._processPendingProducers();
+            return true;
         }
-        this.wasMicActiveBeforeReconnect = this.isMicActive;
+        const wasMicUnmuted = this.isMicActive && !this.isMicPaused;
+        this.wasMicActiveBeforeReconnect = wasMicUnmuted;
         if (this.isMicActive && this.mediaData) await MediaManager.stopMicrophone(this);
         await this.leaveRoom();
         this.isReconnecting = true;
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                await new Promise(r => setTimeout(r, attempt === 1 ? 500 : retryDelay));
+                await new Promise((r) => setTimeout(r, attempt === 1 ? 500 : retryDelay));
                 const result = await this.joinRoom(roomId, clearUnread);
                 this.isReconnecting = false;
                 if (this.wasMicActiveBeforeReconnect && this.mediaData) {
-                    setTimeout(async () => { try { await MediaManager.resumeMicrophone(this); this.wasMicActiveBeforeReconnect = false; } catch {} }, 3000);
+                    setTimeout(async () => {
+                        try {
+                            await MediaManager.resumeMicrophone(this);
+                            this.updateMicButtonState();
+                        } catch (e) {
+                            // Ignore
+                        }
+                    }, 3000);
                 }
                 return result;
             } catch (error) {
-                const isTransient = error.message.includes('404') || error.message.includes('502') || error.message.includes('503') || error.message.includes('504') || error.message.includes('Abort') || error.message.includes('Failed to fetch');
+                const isTransient =
+                    error.message.includes('404') ||
+                    error.message.includes('502') ||
+                    error.message.includes('503') ||
+                    error.message.includes('504') ||
+                    error.message.includes('Abort') ||
+                    error.message.includes('Failed to fetch');
                 if (!isTransient || attempt === maxRetries) {
                     this.isReconnecting = false;
                     UIManager.addMessage('System', '❌ Не удалось подключиться к комнате');
@@ -941,9 +1301,13 @@ class VoiceChatClient {
             if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
             if (this.isConnected) MediaManager.disconnect(this);
             await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.currentRoom}/leave`, {
-                method: 'POST', headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' }
+                method: 'POST',
+                headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' }
             });
-            document.querySelectorAll('.member-volume-slider').forEach(s => { s.style.display = 'none'; s.dataset.producerId = ''; });
+            document.querySelectorAll('.member-volume-slider').forEach((s) => {
+                s.style.display = 'none';
+                s.dataset.producerId = '';
+            });
             MembersManager.clearMembers();
             this.currentRoom = null;
             this.roomType = null;
@@ -951,28 +1315,56 @@ class VoiceChatClient {
             this.setConnectionState(CONNECTION_STATE.DISCONNECTED);
             this.sendMicStateToElectron();
             return true;
-        } catch (error) { UIManager.showError('Ошибка при покидании комнаты: ' + error.message); return false; }
+        } catch (error) {
+            UIManager.showError('Ошибка при покидании комнаты: ' + error.message);
+            return false;
+        }
     }
 
-    autoConnect() { this.elements.sidebar.classList.add('open'); }
-    showMessage(user, text) { UIManager.addMessage(user, text); }
-    showError(text) { UIManager.showError(text); }
-    async searchServers(query) { await ServerManager.searchServers(this, query); }
+    autoConnect() {
+        this.elements.sidebar.classList.add('open');
+    }
 
-    // 🔌 === ЭЛЕКТРОН МОСТ ===
+    showMessage(user, text) {
+        UIManager.addMessage(user, text);
+    }
+
+    showError(text) {
+        UIManager.showError(text);
+    }
+
+    async searchServers(query) {
+        await ServerManager.searchServers(this, query);
+    }
+
+    async toggleSecondaryChat(direction = 'side') {
+        await UIManager.toggleSecondaryChat(this, direction);
+        if (this.socket?.connected) {
+            if (this.secondaryChat.enabled) {
+                if (this.secondaryChat.roomId) {
+                    this.socket.emit('secondary-chat-update', { roomId: this.secondaryChat.roomId });
+                }
+            } else {
+                this.socket.emit('secondary-chat-close');
+            }
+        }
+        if (this.secondaryChat.enabled && this.secondaryChat.roomId) {
+            localStorage.setItem('secondaryChatRoom', this.secondaryChat.roomId);
+        } else {
+            localStorage.removeItem('secondaryChatRoom');
+        }
+    }
+
     setupElectronBridge() {
         this._electronMessageHandler = this.handleElectronMessage.bind(this);
         window.addEventListener('message', this._electronMessageHandler);
-        console.log('[VoiceChat] ✅ Electron Bridge подключён');
     }
 
     handleElectronMessage(event) {
         if (!event.data || event.data.source !== 'electron') return;
         const { channel, data } = event.data;
-        console.log(`[VoiceChat] 📥 Получено от Electron: ${channel}`, data);
         switch (channel) {
             case 'toggle-mic':
-                // data.active: true (вкл), false (выкл), undefined (переключить)
                 if (data.active === true && this.isMicPaused) {
                     MediaManager.resumeMicrophone(this).then(() => this.updateMicButtonState());
                 } else if (data.active === false && !this.isMicPaused) {
@@ -983,7 +1375,6 @@ class VoiceChatClient {
                 setTimeout(() => this.sendMicStateToElectron(), 100);
                 break;
             case 'electron-ready':
-                console.log('[VoiceChat] 🤝 Electron готов, отправляем состояние микрофона');
                 this.sendMicStateToElectron();
                 break;
         }
@@ -996,8 +1387,7 @@ class VoiceChatClient {
             connected: this.isConnected,
             speaking: false
         };
-        console.log('[VoiceChat] 📤 Отправляем состояние в Electron:', state);
-        window.parent.postMessage({ channel: 'mic-state', data: state, source: 'webclient' }, '*');
+        window.parent.postMessage({ channel: 'mic-state', state, source: 'webclient' }, '*');
     }
 }
 

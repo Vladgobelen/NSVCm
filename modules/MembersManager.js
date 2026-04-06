@@ -77,20 +77,66 @@ class MembersManager {
     return this.micStates.get(userId) || { isActive: false, timestamp: 0 };
   }
 
-  static updateMember(userId, updates) {
-    if (this.members.has(userId)) {
-      const member = { ...this.members.get(userId), ...updates };
-      if (updates.connectionState) this.setConnectionState(userId, updates.connectionState);
-      if (updates.isMicActive !== undefined) this.setMicState(userId, updates.isMicActive);
-      this.members.set(userId, member);
-      if (!this.__bulkUpdate) {
-        this._updateOnlineOfflineLists();
-        UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
-        UIManager.updateMemberMicState(userId, updates.isMicActive);
-      }
+// ============================================================================
+// 🔥 ОБНОВЛЁННЫЙ МЕТОД: updateMember (учёт приоритета серверных данных)
+// ============================================================================
+static updateMember(userId, updates) {
+  if (this.members.has(userId)) {
+    const member = { ...this.members.get(userId), ...updates };
+    
+    // 🔥 Приоритет: если есть lastSpeakingUpdate — это серверные данные, они главнее
+    if (updates.isMicActive !== undefined && updates.lastSpeakingUpdate) {
+      member.isMicActive = updates.isMicActive;
+      member.micSource = 'server'; // Маркер источника
+    } else if (updates.isMicActive !== undefined && !member.micSource) {
+      // Локальное обновление только если нет серверного источника
+      member.isMicActive = updates.isMicActive;
+    }
+    
+    if (updates.connectionState) this.setConnectionState(userId, updates.connectionState);
+    if (updates.isMicActive !== undefined) this.setMicState(userId, updates.isMicActive);
+    
+    this.members.set(userId, member);
+    
+    if (!this.__bulkUpdate) {
+      this._updateOnlineOfflineLists();
+      UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+      UIManager.updateMemberMicState(userId, updates.isMicActive);
     }
   }
+}
 
+// ============================================================================
+// 🔥 НОВЫЙ МЕТОД: forceUpdateFromServer (для state reconciliation)
+// ============================================================================
+static forceUpdateFromServer(userId, serverData) {
+  if (!this.members.has(userId)) {
+    this.addMember({ ...serverData, userId });
+    return;
+  }
+  
+  const member = this.members.get(userId);
+  // Принудительное обновление с пометкой серверного источника
+  const updated = {
+    ...member,
+    ...serverData,
+    micSource: 'server',
+    lastServerUpdate: Date.now()
+  };
+  
+  this.members.set(userId, updated);
+  
+  if (serverData.connectionState) this.setConnectionState(userId, serverData.connectionState);
+  if (serverData.isMicActive !== undefined) {
+    this.setMicState(userId, serverData.isMicActive);
+    UIManager.updateMemberMicState(userId, serverData.isMicActive);
+  }
+  
+  if (!this.__bulkUpdate) {
+    this._updateOnlineOfflineLists();
+    UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+  }
+}
   static addMember(memberData) {
     if (!memberData.userId) return;
     const existingMember = this.members.get(memberData.userId);
