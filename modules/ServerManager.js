@@ -17,13 +17,14 @@ class ServerManager {
                     const data = await res.json();
                     apiServers = Array.isArray(data.servers) ? data.servers : [];
                 } else {
-                    UIManager.showError('Не удалось загрузить серверы');
+                    UIManager.showError('Не удалось загрузить деревья');
                     return false;
                 }
             } catch (apiError) {
-                UIManager.showError('Не удалось загрузить серверы');
+                UIManager.showError('Не удалось загрузить деревья');
                 return false;
             }
+
             client.servers = [...apiServers];
             const lastServerId = localStorage.getItem('lastServerId');
             if (lastServerId) {
@@ -39,15 +40,15 @@ class ServerManager {
             this.renderServers(client);
             return true;
         } catch (error) {
-            UIManager.showError('Не удалось загрузить серверы: ' + error.message);
+            UIManager.showError('Не удалось загрузить деревья: ' + error.message);
             return false;
         }
     }
 
     static isPrivateServer(server) {
         return server?.type === 'private' ||
-            server?.isPrivate === true ||
-            (server?.id && server.id.startsWith('user_') && server.id.includes('_user_'));
+               server?.isPrivate === true ||
+               (server?.id && server.id.startsWith('user_') && server.id.includes('_user_'));
     }
 
     static getPrivateServerDisplayName(server, clientUserId) {
@@ -91,7 +92,7 @@ class ServerManager {
         if (!serversList) return;
         serversList.innerHTML = '';
         if (client.servers.length === 0) {
-            serversList.innerHTML = '<div class="no-results">Нет серверов. Создайте новый или присоединитесь к существующему.</div>';
+            serversList.innerHTML = '<div class="no-results">Нет деревьев. Посадите новое или присоединитесь к существующему.</div>';
             return;
         }
         client.servers.forEach(server => {
@@ -149,7 +150,7 @@ class ServerManager {
                     const deleteBtn = document.createElement('button');
                     deleteBtn.className = 'server-action-btn';
                     deleteBtn.innerHTML = '✕';
-                    deleteBtn.title = 'Удалить';
+                    deleteBtn.title = 'Срубить';
                     deleteBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
                         this.deleteServer(client, server.id);
@@ -160,7 +161,7 @@ class ServerManager {
                     const leaveBtn = document.createElement('button');
                     leaveBtn.className = 'server-action-btn leave-btn';
                     leaveBtn.innerHTML = '🚪';
-                    leaveBtn.title = 'Покинуть сервер';
+                    leaveBtn.title = 'Покинуть дерево';
                     leaveBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
                         this.leaveServer(client, server.id);
@@ -242,7 +243,7 @@ class ServerManager {
     }
 
     static async createServer(client) {
-        const name = prompt('Введите название сервера:');
+        const name = prompt('Назовите дерево:');
         if (!name || name.length < 3) {
             UIManager.showError('Название должно быть от 3 символов');
             return;
@@ -262,7 +263,7 @@ class ServerManager {
             });
             if (!res.ok) {
                 const errorData = await res.json().catch(() => ({}));
-                const errorMessage = errorData.error || 'Не удалось создать сервер';
+                const errorMessage = errorData.error || 'Не удалось посадить дерево';
                 if (errorMessage.includes('уже существует')) {
                     UIManager.showError(`Ошибка: ${errorMessage}. Выберите другое название.`);
                 } else if (errorMessage.includes('Превышен лимит')) {
@@ -286,7 +287,7 @@ class ServerManager {
     }
 
     static async deleteServer(client, serverId) {
-        if (!confirm('Вы уверены, что хотите удалить этот сервер? Все комнаты будут удалены.')) return;
+        if (!confirm('Вы уверены, что хотите срубить это дерево? Все гнёзда будут разорены.')) return;
         try {
             const res = await fetch(`${client.API_SERVER_URL}/api/servers/${serverId}`, {
                 method: 'DELETE',
@@ -297,7 +298,7 @@ class ServerManager {
             });
             if (!res.ok) {
                 const errorData = await res.json().catch(() => ({}));
-                throw new Error(errorData.error || 'Не удалось удалить сервер');
+                throw new Error(errorData.error || 'Не удалось срубить дерево');
             }
             const serverIndex = client.servers.findIndex(s => s.id === serverId);
             if (serverIndex !== -1) {
@@ -310,7 +311,7 @@ class ServerManager {
                     localStorage.removeItem('lastServerId');
                     localStorage.removeItem('lastRoomId');
                 }
-                UIManager.addMessage('System', `✅ Сервер "${serverName}" удален`);
+                UIManager.addMessage('System', `✅ Дерево "${serverName}" срублено`);
             }
         } catch (error) {
             UIManager.showError('Ошибка: ' + error.message);
@@ -349,9 +350,7 @@ class ServerManager {
             return;
         }
         servers.forEach(server => {
-            if (!server || !server.id) {
-                return;
-            }
+            if (!server || !server.id) return;
             const serverElement = document.createElement('div');
             serverElement.className = 'server-item';
             serverElement.dataset.server = server.id;
@@ -384,21 +383,15 @@ class ServerManager {
             serversList.appendChild(serverElement);
         });
         users.forEach(user => {
-            if (!user || !user.userId) {
-                return;
-            }
-            if (String(user.userId) === String(client.userId)) {
-                return;
-            }
+            if (!user || !user.userId) return;
+            if (String(user.userId) === String(client.userId)) return;
             const hasDirectRoom = client.servers.some(s => {
                 if (!s || !s.id) return false;
                 const isDirectFormat = s.id.startsWith('user_') && s.id.split('_user_').length === 2;
                 if (!isDirectFormat) return false;
                 return s.id.includes(user.userId);
             });
-            if (hasDirectRoom) {
-                return;
-            }
+            if (hasDirectRoom) return;
             const userElement = document.createElement('div');
             userElement.className = 'server-item';
             userElement.innerHTML = `👤 ${user.username}`;
@@ -444,14 +437,14 @@ class ServerManager {
             localStorage.setItem('lastServerId', server.id);
             this.renderServers(client);
             client.showPanel('servers');
-            UIManager.addMessage('System', `✅ Вы присоединились к "${server.name}"`);
+            UIManager.addMessage('System', `✅ Вы присоединились к дереву "${server.name}"`);
         } catch (error) {
             UIManager.showError(`❌ Не удалось присоединиться: ${error.message}`);
         }
     }
 
     static async leaveServer(client, serverId) {
-        if (!confirm('Вы уверены, что хотите покинуть этот сервер?')) return;
+        if (!confirm('Вы уверены, что хотите покинуть это дерево?')) return;
         try {
             const res = await fetch(`${client.API_SERVER_URL}/api/servers/${serverId}/leave`, {
                 method: 'DELETE',
@@ -462,7 +455,7 @@ class ServerManager {
             });
             if (!res.ok) {
                 const errorData = await res.json().catch(() => ({}));
-                throw new Error(errorData.error || 'Не удалось покинуть сервер');
+                throw new Error(errorData.error || 'Не удалось покинуть дерево');
             }
             client.servers = client.servers.filter(server => server.id !== serverId);
             if (client.currentServerId === serverId) {
@@ -473,7 +466,7 @@ class ServerManager {
                 localStorage.removeItem('lastRoomId');
             }
             this.renderServers(client);
-            UIManager.addMessage('System', `✅ Вы покинули сервер`);
+            UIManager.addMessage('System', `✅ Вы покинули дерево`);
         } catch (error) {
             UIManager.showError('Ошибка: ' + error.message);
         }

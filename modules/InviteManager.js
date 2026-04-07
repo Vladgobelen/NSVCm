@@ -107,7 +107,7 @@ class InviteManager {
             const serverExists = this.client.servers.some(s => s.id === invite.targetId);
             if (serverExists) {
                 this.client.currentServerId = invite.targetId;
-                UIManager.addMessage('System', `Вы уже присоединены к серверу "${invite.targetInfo.name}"`);
+                UIManager.addMessage('System', `Вы уже в дереве "${invite.targetInfo.name}"`);
                 return true;
             }
             const data = await this._apiRequest(`/api/servers/${invite.targetId}/join`, {
@@ -123,12 +123,12 @@ class InviteManager {
             }
             this.client.currentServerId = data.server.id;
             this.client.currentServer = data.server;
-            UIManager.addMessage('System', `✅ Вы присоединились к серверу "${data.server.name}" по приглашению`);
+            UIManager.addMessage('System', `✅ Вы присоединились к дереву "${data.server.name}" по приглашению`);
             const RoomManager = (await import('./RoomManager.js')).default;
             await RoomManager.loadRoomsForServer(this.client, data.server.id);
             return true;
         } catch (error) {
-            UIManager.showError(`Не удалось присоединиться к серверу: ${error.message}`);
+            UIManager.showError(`Не удалось присоединиться к дереву: ${error.message}`);
             return false;
         }
     }
@@ -145,15 +145,15 @@ class InviteManager {
                     throw new Error('Client not initialized');
                 }
                 if (this.client.currentRoom === invite.targetId) {
-                    UIManager.addMessage('System', 'Вы уже в комнате');
+                    UIManager.addMessage('System', 'Вы уже в гнезде');
                     return true;
                 }
                 await this.client.joinRoom(invite.targetId);
-                UIManager.addMessage('System', '✅ Вы присоединились к приватной комнате по приглашению');
+                UIManager.addMessage('System', '✅ Вы заняли приватное гнездо по приглашению');
                 return true;
             }
             if (!invite.targetInfo || !invite.targetInfo.serverId) {
-                throw new Error('Недостаточно информации о комнате в приглашении');
+                throw new Error('Недостаточно информации о гнезде в приглашении');
             }
             const serverId = invite.targetInfo.serverId;
             const serverExists = this.client.servers.some(s => s.id === serverId);
@@ -167,7 +167,7 @@ class InviteManager {
                     }
                 });
                 if (!serverJoinSuccess) {
-                    throw new Error('Не удалось присоединиться к серверу комнаты');
+                    throw new Error('Не удалось присоединиться к дереву');
                 }
             }
             this.client.currentServerId = serverId;
@@ -175,14 +175,13 @@ class InviteManager {
             const RoomManager = (await import('./RoomManager.js')).default;
             await RoomManager.loadRoomsForServer(this.client, serverId);
             await RoomManager.joinRoom(this.client, invite.targetId);
-            UIManager.addMessage('System', `✅ Вы присоединились к комнате "${invite.targetInfo.name}" по приглашению`);
+            UIManager.addMessage('System', `✅ Вы заняли гнездо "${invite.targetInfo.name}" по приглашению`);
             return true;
         } catch (error) {
-            UIManager.showError('Не удалось присоединиться к комнате: ' + error.message);
+            UIManager.showError('Не удалось занять гнездо: ' + error.message);
             return false;
         }
     }
-
 
     static async createServerInvite(serverId, expiresInHours = 168) {
         try {
@@ -191,7 +190,6 @@ class InviteManager {
             throw error;
         }
     }
-
 
     static async _getInvites(targetId, targetType) {
         const endpoint = targetType === 'server'
@@ -221,25 +219,16 @@ class InviteManager {
 
     static async createRoomInvite(roomId, expiresInHours = 168) {
         try {
-            // 🔥 ИСПРАВЛЕНО: Для приватных комнат используем 'private_room'
             const isPrivateRoom = roomId.startsWith('user_') && roomId.includes('_user_');
             const targetType = isPrivateRoom ? 'private_room' : 'room';
-            
-            console.log(`📋 [INVITE] Создание приглашения для комнаты: ${roomId}, тип: ${targetType}`);
-            
             return await this._createInvite(roomId, targetType, expiresInHours);
         } catch (error) {
-            console.error('❌ [INVITE] Ошибка создания приглашения для комнаты:', error);
+            console.error('Ошибка создания приглашения для гнезда:', error);
             throw error;
         }
     }
 
     static async _createInvite(targetId, targetType, expiresInHours = 168) {
-        console.log(`📨 [INVITE] Запрос создания приглашения:`);
-        console.log(`   - targetId: ${targetId}`);
-        console.log(`   - targetType: ${targetType}`);
-        console.log(`   - expiresInHours: ${expiresInHours}`);
-        
         const data = await this._apiRequest('/api/invites', {
             method: 'POST',
             body: JSON.stringify({
@@ -248,46 +237,26 @@ class InviteManager {
                 expiresInHours
             })
         });
-        
-        console.log('📨 [INVITE] Получен ответ от сервера:', data);
-        console.log('📨 [INVITE] Объект invite:', data.invite);
-        console.log('📨 [INVITE] Код приглашения:', data.invite?.code);
-        
         if (!data.invite?.code) {
-            console.error('❌ [INVITE] ВНИМАНИЕ: Код приглашения отсутствует в ответе сервера!');
-            console.error('❌ [INVITE] Полный ответ:', JSON.stringify(data, null, 2));
+            console.error('Код приглашения отсутствует в ответе сервера!', data);
         }
-        
         return data.invite;
     }
 
     static generateInviteLink(code) {
-        console.log('🔗 [LINK] Генерация ссылки...');
-        console.log('🔗 [LINK] Входной код:', code);
-        console.log('🔗 [LINK] Тип кода:', typeof code);
-        console.log('🔗 [LINK] Код пустой?:', !code);
-        
         if (!code || typeof code !== 'string') {
-            console.error('❌ [LINK] КРИТИЧЕСКАЯ ОШИБКА: Код приглашения невалиден!', code);
-            const fallbackLink = 'https://ns.fiber-gate.ru/ERROR_NO_CODE';
-            console.log('🔗 [LINK] Возвращаем запасную ссылку:', fallbackLink);
-            return fallbackLink;
+            console.error('КРИТИЧЕСКАЯ ОШИБКА: Код приглашения невалиден!', code);
+            return 'https://ns.fiber-gate.ru/ERROR_NO_CODE';
         }
-        
-        const link = `https://ns.fiber-gate.ru/${code}`;
-        console.log('✅ [LINK] Сгенерированная ссылка:', link);
-        return link;
+        return `https://ns.fiber-gate.ru/${code}`;
     }
 
     static copyInviteLink(code) {
-        console.log('🔗 [InviteManager] copyInviteLink called:', { code });
-
         if (!code) {
-            console.error('❌ [InviteManager] copyInviteLink: Code is empty or undefined!');
+            console.error('Ошибка: код приглашения пуст!');
             UIManager.showError('Ошибка: код приглашения пуст');
             return;
         }
-
         const link = this.generateInviteLink(code);
         navigator.clipboard.writeText(link)
             .then(() => {
