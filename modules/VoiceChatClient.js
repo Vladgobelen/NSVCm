@@ -694,11 +694,6 @@ class VoiceChatClient {
       }
       AuthManager.showAuthModal(this);
     } catch (err) {
-      if (err.message === 'Request cancelled' || err.name === 'AbortError') {
-        console.warn('⚠️ Автоподключение прервано (запрос отменён), пробуем повторно...');
-        setTimeout(() => this.initAutoConnect(), 1000);
-        return;
-      }
       console.error('Критическая ошибка автоподключения:', err);
       UIManager.showError('Критическая ошибка: не удалось загрузить систему авторизации');
     }
@@ -927,7 +922,8 @@ class VoiceChatClient {
               message.readBy || [],
               message.userId,
               false,
-              message.thumbnailUrl
+              message.thumbnailUrl,
+              message.replyTo
             );
             if (message.type !== 'image' && message.username !== this.username) {
               this.playSound('message');
@@ -946,7 +942,9 @@ class VoiceChatClient {
             message.readBy || [],
             message.userId,
             message.broadcast || false,
-            message.thumbnailUrl
+            message.thumbnailUrl,
+            null,
+            message.replyTo
           );
           if (message.type !== 'image' && message.username !== this.username) {
             this.playSound('message');
@@ -1148,24 +1146,32 @@ class VoiceChatClient {
   sendMessage(text) {
     if (!text.trim() || !this.currentRoom) return;
     const trimmedText = text.trim();
+    const replyTarget = UIManager.replyTarget ? {
+      id: UIManager.replyTarget.id,
+      userId: UIManager.replyTarget.userId,
+      username: UIManager.replyTarget.username,
+      text: UIManager.replyTarget.text
+    } : null;
+    UIManager.clearReplyTarget();
     if (this.socket) {
-      this.socket.emit('send-message', { roomId: this.currentRoom, text: trimmedText });
+      this.socket.emit('send-message', { roomId: this.currentRoom, text: trimmedText, replyTo: replyTarget });
     } else {
-      TextChatManager.sendMessage(this, text).catch(() => UIManager.showError('Ошибка отправки сообщения'));
+      TextChatManager.sendMessage(this, trimmedText, 'text', replyTarget).catch(() => UIManager.showError('Ошибка отправки сообщения'));
     }
   }
 
-  async sendSecondaryMessage(text, targetRoomId) {
+  async sendSecondaryMessage(text, targetRoomId, replyTo = null) {
     const roomId = targetRoomId || this.secondaryChat.roomId;
     if (!roomId || !text.trim()) return;
     const tempId = `temp_sec_${Date.now()}`;
-    UIManager.addSecondaryMessage(this.username, text.trim(), null, 'text', null, tempId, [], this.userId, false, null);
+    UIManager.addSecondaryMessage(this.username, text.trim(), null, 'text', null, tempId, [], this.userId, false, null, replyTo);
+    const payloadReplyTo = replyTo ? { id: replyTo.id, username: replyTo.username } : null;
     try {
       if (this.socket && this.socket.connected) {
-        this.socket.emit('send-message', { roomId, text: text.trim() });
+        this.socket.emit('send-message', { roomId, text: text.trim(), replyTo: payloadReplyTo });
         return;
       }
-      const result = await TextChatManager.sendMessageToRoom(this, roomId, text.trim(), 'text');
+      const result = await TextChatManager.sendMessageToRoom(this, roomId, text.trim(), 'text', payloadReplyTo);
       if (result && result.message) {
         const tempEl = document.querySelector(`[data-message-id="${tempId}"]`);
         if (tempEl) {
@@ -1183,34 +1189,10 @@ class VoiceChatClient {
     }
   }
 
-  async disconnectFromRoom() {
-    if (this.currentRoom) {
-      if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
-      MediaManager.disconnect(this);
-      TextChatManager.leaveTextRoom(this, this.currentRoom);
-      MembersManager.clearMembers();
-      this.destroySocket();
-      this.removeHistorySentinel();
-      this.hasMoreHistory = true;
-      this.isHistoryLoading = false;
-      this.oldestMessageId = null;
-      this.currentRoom = null;
-      this.isConnected = false;
-      this.isMicActive = false;
-      this.isMicPaused = false;
-      this.pendingProducersRef = [];
-      this.consumedProducerIdsRef.clear();
-      this.consumerState.clear();
-      this.updateMicButtonState();
-      this.setConnectionState(CONNECTION_STATE.DISCONNECTED);
-      this.sendMicStateToElectron();
-    }
-  }
-
-  async joinRoom(roomId, clearUnread = true) {
+async joinRoom(roomId, clearUnread = true) {
     if (this.currentRoom === roomId && this.isConnected && this.socket?.connected) {
-      this._processPendingProducers();
-      return true;
+        this._processPendingProducers();
+        return true;
     }
     this._abortMediaRequests();
     this.setConnectionState(CONNECTION_STATE.CONNECTING, roomId);
@@ -1219,74 +1201,130 @@ class VoiceChatClient {
     this.consumedProducerIdsRef.clear();
     this.consumerState.clear();
     this._isProcessingConsumers = false;
+
     try {
-      if (this.currentRoom && this.currentRoom !== roomId) {
-        if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
-      }
-      await this.disconnectFromRoom();
-      const joinRes = await this._fetchWithTimeout(
-        this.CHAT_API_URL,
-        { method: 'POST', body: JSON.stringify({ roomId, userId: this.userId, token: this.token, clientId: this.clientID }) }
-      );
-      const joinData = await joinRes.json();
-      if (!joinData.success) throw new Error(joinData.error || 'Join failed');
-      if (!joinData.mediaData) throw new Error('No media data received');
-      this.clientID = joinData.clientId;
-      this.mediaData = joinData.mediaData;
-      this.currentRoom = roomId;
-      this.roomType = 'voice';
-      localStorage.setItem('lastServerId', this.currentServerId);
-      localStorage.setItem('lastRoomId', this.currentRoom);
-      this.audioProducer = null;
-      this.setupSocketConnection();
-      let attempts = 0;
-      while (!this.socket?.connected && attempts < 50) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        attempts++;
-      }
-      if (!this.socket?.connected) throw new Error('WebSocket не подключился после 5 секунд');
-      await MediaManager.connect(this, roomId, joinData.mediaData);
-      if (this.recvTransport) {
-        this.recvTransport.on('connectionstatechange', (state) => {
-          if (state === 'connected') this._processPendingProducers();
-        });
-      }
-      this.updateMicButtonState();
-      if (this.socket) this.socket.emit('request-mic-states', { roomId });
-      this._processPendingProducers();
-      await UIManager.updateRoomUI(this);
-      TextChatManager.joinTextRoom(this, roomId);
-      this.resetHistoryState();
-      try {
-        if (!this.token) throw new Error('Токен отсутствует');
-        const result = await TextChatManager.loadMessages(this, roomId);
-        if (result && result.messages && result.messages.length > 0) {
-          this.oldestMessageId = result.messages[0].id;
-          this.hasMoreHistory = result.hasMore;
-          if (this.hasMoreHistory) this.initHistoryObserver();
-          else this.removeHistorySentinel();
-        } else {
-          this.removeHistorySentinel();
+        if (this.currentRoom && this.currentRoom !== roomId) {
+            if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
         }
-      } catch (chatError) {
-        UIManager.addMessage('System', '⚠️ Не удалось загрузить историю сообщений (HTTP)', 'system');
-        this.removeHistorySentinel();
-      }
-      if (clearUnread) await this.clearUnreadForCurrentRoom();
-      this.setConnectionState(CONNECTION_STATE.CONNECTED, roomId);
-      this.isConnected = true;
-      this.sendMicStateToElectron();
-      return true;
+        await this.disconnectFromRoom();
+
+        const joinRes = await this._fetchWithTimeout(
+            this.CHAT_API_URL,
+            { method: 'POST', body: JSON.stringify({ roomId, userId: this.userId, token: this.token, clientId: this.clientID }) }
+        );
+        const joinData = await joinRes.json();
+        if (!joinData.success) throw new Error(joinData.error || 'Join failed');
+        if (!joinData.mediaData) throw new Error('No media data received');
+
+        this.clientID = joinData.clientId;
+        this.mediaData = joinData.mediaData;
+        this.currentRoom = roomId;
+        this.roomType = 'voice';
+        localStorage.setItem('lastServerId', this.currentServerId);
+        localStorage.setItem('lastRoomId', this.currentRoom);
+        this.audioProducer = null;
+
+        this.setupSocketConnection();
+        let attempts = 0;
+        while (!this.socket?.connected && attempts < 50) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            attempts++;
+        }
+        if (!this.socket?.connected) throw new Error('WebSocket не подключился после 5 секунд');
+
+        await MediaManager.connect(this, roomId, joinData.mediaData);
+
+        if (this.recvTransport) {
+            this.recvTransport.on('connectionstatechange', (state) => {
+                if (state === 'connected') this._processPendingProducers();
+            });
+        }
+
+        this.updateMicButtonState();
+        if (this.socket) this.socket.emit('request-mic-states', { roomId });
+        this._processPendingProducers();
+        await UIManager.updateRoomUI(this);
+        TextChatManager.joinTextRoom(this, roomId);
+
+        this.resetHistoryState();
+        try {
+            if (!this.token) throw new Error('Токен отсутствует');
+            const result = await TextChatManager.loadMessages(this, roomId);
+            if (result && result.messages && result.messages.length > 0) {
+                this.oldestMessageId = result.messages[0].id;
+                this.hasMoreHistory = result.hasMore;
+                if (this.hasMoreHistory) this.initHistoryObserver();
+                else this.removeHistorySentinel();
+            } else {
+                this.removeHistorySentinel();
+            }
+
+            // 🔥 Логика начального скролла: пробуем найти последнее просмотренное сообщение, иначе скроллим вниз
+            const lastViewed = localStorage.getItem(`lastViewedMessage_${roomId}`);
+            UIManager.initScrollTracker(roomId); // Включаем трекинг для будущих сессий
+            setTimeout(() => {
+                if (!lastViewed || !UIManager.scrollToMessage(lastViewed)) {
+                    UIManager.scrollToBottom();
+                }
+            }, 100);
+
+        } catch (chatError) {
+            UIManager.addMessage('System', '⚠️ Не удалось загрузить историю сообщений (HTTP)', 'system');
+            this.removeHistorySentinel();
+            setTimeout(() => UIManager.scrollToBottom(), 100);
+        }
+
+        if (clearUnread) await this.clearUnreadForCurrentRoom();
+        this.setConnectionState(CONNECTION_STATE.CONNECTED, roomId);
+        this.isConnected = true;
+        this.sendMicStateToElectron();
+        return true;
     } catch (error) {
-      this._joinRoomInProgress = false;
-      this.setConnectionState(CONNECTION_STATE.ERROR, roomId);
-      UIManager.updateStatus('Ошибка: ' + error.message, 'disconnected');
-      UIManager.showError('Не удалось занять гнездо: ' + error.message);
-      throw error;
+        this._joinRoomInProgress = false;
+        this.setConnectionState(CONNECTION_STATE.ERROR, roomId);
+        UIManager.updateStatus('Ошибка: ' + error.message, 'disconnected');
+        UIManager.showError('Не удалось занять гнездо: ' + error.message);
+        throw error;
     } finally {
-      this._joinRoomInProgress = false;
+        this._joinRoomInProgress = false;
     }
-  }
+}
+
+async disconnectFromRoom() {
+    if (this.currentRoom) {
+        // 🔥 Сохраняем позицию перед выходом
+        UIManager.saveLastViewedMessage(this.currentRoom);
+        
+        if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
+        MediaManager.disconnect(this);
+        TextChatManager.leaveTextRoom(this, this.currentRoom);
+        MembersManager.clearMembers();
+        this.destroySocket();
+        this.removeHistorySentinel();
+        this.hasMoreHistory = true;
+        this.isHistoryLoading = false;
+        this.oldestMessageId = null;
+        
+        const oldRoom = this.currentRoom;
+        this.currentRoom = null;
+        this.isConnected = false;
+        this.isMicActive = false;
+        this.isMicPaused = false;
+        this.pendingProducersRef = [];
+        this.consumedProducerIdsRef.clear();
+        this.consumerState.clear();
+        this.updateMicButtonState();
+        this.setConnectionState(CONNECTION_STATE.DISCONNECTED);
+        this.sendMicStateToElectron();
+        
+        // Очищаем трекинг скролла для старого контейнера
+        const container = document.querySelector('.messages-container');
+        if (container) {
+            container._scrollTrackerBound = false;
+            delete container._scrollSaveTimeout;
+        }
+    }
+}
 
   async reconnectToRoom(roomId, maxRetries = 3, retryDelay = 2000, clearUnread = false, force = false) {
     if (!force && this.currentRoom === roomId && this.isConnected && this.socket?.connected) {
