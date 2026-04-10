@@ -3,30 +3,39 @@ import UIManager from './UIManager.js';
 import MembersManager from './MembersManager.js';
 
 class MediaManager {
-    static async connect(client, roomId, mediaData) {
-        try {
-            if (typeof mediasoupClient === 'undefined') {
-                throw new Error('mediasoup-client not loaded');
-            }
+static async connect(client, roomId, mediaData) {
+    try {
+        if (typeof mediasoupClient === 'undefined') {
+            throw new Error('mediasoup-client not loaded');
+        }
+
+        // Не пересоздаём устройство, если оно уже загружено для этой комнаты
+        if (!client.device || client.device.loaded === false) {
             client.device = new mediasoupClient.Device();
             await client.device.load({ routerRtpCapabilities: mediaData.rtpCapabilities });
-            await this.createTransports(client, mediaData);
-            await this.initMicrophone(client);
-
-            client.isConnected = true;
-            client.isMicActive = client.audioProducer !== null;
-            client.isMicPaused = true;
-            client.consumerState = new Map();
-
-            if (client.socket) {
-                client.socket.emit('request-mic-states', { roomId });
-            }
-        } catch (error) {
-            console.error('Media connection failed:', error.message);
-            throw new Error(`Media connection failed: ${error.message}`);
         }
-    }
 
+        await this.createTransports(client, mediaData);
+        await this.initMicrophone(client);
+
+        client.isConnected = true;
+        client.isMicActive = client.audioProducer !== null;
+        client.isMicPaused = true;
+        client.consumerState = new Map();
+        
+        if (client.socket) {
+            client.socket.emit('request-mic-states', { roomId });
+        }
+    } catch (error) {
+        console.error('Media connection failed:', error.message);
+        // Сбрасываем состояние при ошибке, чтобы не висели "полуинициализированные" транспорты
+        client.device = null;
+        client.sendTransport = null;
+        client.recvTransport = null;
+        client.audioProducer = null;
+        throw new Error(`Media connection failed: ${error.message}`);
+    }
+}
     static async createTransports(client, mediaData) {
         if (!client.sendTransport) {
             const sendOptions = {

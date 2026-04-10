@@ -1752,3 +1752,131 @@ pre, .code-block {
         flex-direction: column;
     }
 }
+/* ============================================================================
+РЕАКЦИИ (ОБНОВЛЁННЫЕ)
+============================================================================ */
+.message-reactions {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 6px;
+    align-items: center;
+}
+.reaction-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 6px;
+    border-radius: 12px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: rgba(64,64,96,0.5);
+    border: 1px solid transparent;
+}
+.reaction-pill:hover { background: rgba(88,101,242,0.3); transform: scale(1.05); }
+
+.reaction-tooltip {
+    position: fixed;
+    display: none;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    pointer-events: none;
+    z-index: 10001;
+    border: 1px solid #404060;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    max-width: 200px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Инлайн-панель реакций */
+.reaction-picker-inline {
+    background: #2d2d44;
+    border: 1px solid #404060;
+    border-radius: 8px;
+    padding: 4px;
+    margin-top: 6px;
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    animation: fadeIn 0.15s ease;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.reaction-picker-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    width: 100%;
+}
+.reaction-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 4px;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.reaction-btn:hover { background: rgba(88,101,242,0.3); transform: scale(1.1); }
+.reaction-btn.active {
+    background: rgba(88,101,242,0.25);
+    border: 1px solid #5865f2;
+    box-shadow: 0 0 0 2px rgba(88,101,242,0.2);
+}
+/* Кнопка ответа на сообщение */
+.message-reply-btn {
+    background: none;
+    border: none;
+    color: #72767d;
+    cursor: pointer;
+    font-size: 13px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    margin-left: 4px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+    flex-shrink: 0;
+}
+
+/* Показываем кнопку при наведении на сообщение */
+.message:hover .message-reply-btn {
+    opacity: 1;
+}
+
+/* Ховер эффект */
+.message-reply-btn:hover {
+    background: #3d3d5c;
+    color: #dcddde;
+}
+
+/* Активное состояние */
+.message-reply-btn:active {
+    background: #4a4a6a;
+    transform: scale(0.95);
+}
+.message-reply-btn {
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.message:hover .message-reply-btn {
+    opacity: 1;
+}
+
+.message-reply-btn:hover {
+    background: #3d3d5c;
+    color: #e0e0e0;
+}
