@@ -1,41 +1,43 @@
 import VolumeBoostManager from './VolumeBoostManager.js';
 import UIManager from './UIManager.js';
-import MembersManager from './MembersManager.js';
+
+const TRANSPORT_CONNECT_TIMEOUT = 20000;
+const PRODUCE_TIMEOUT = 15000;
+const CONSUME_TIMEOUT = 10000;
 
 class MediaManager {
-static async connect(client, roomId, mediaData) {
-    try {
-        if (typeof mediasoupClient === 'undefined') {
-            throw new Error('mediasoup-client not loaded');
-        }
+    static async connect(client, roomId, mediaData) {
+        try {
+            if (typeof mediasoupClient === 'undefined') {
+                throw new Error('mediasoup-client not loaded');
+            }
 
-        // Не пересоздаём устройство, если оно уже загружено для этой комнаты
-        if (!client.device || client.device.loaded === false) {
-            client.device = new mediasoupClient.Device();
-            await client.device.load({ routerRtpCapabilities: mediaData.rtpCapabilities });
-        }
+            if (!client.device || client.device.loaded === false) {
+                client.device = new mediasoupClient.Device();
+                await client.device.load({ routerRtpCapabilities: mediaData.rtpCapabilities });
+            }
 
-        await this.createTransports(client, mediaData);
-        await this.initMicrophone(client);
+            await this.createTransports(client, mediaData);
+            await this.initMicrophone(client);
 
-        client.isConnected = true;
-        client.isMicActive = client.audioProducer !== null;
-        client.isMicPaused = true;
-        client.consumerState = new Map();
-        
-        if (client.socket) {
-            client.socket.emit('request-mic-states', { roomId });
+            client.isConnected = true;
+            client.isMicActive = client.audioProducer !== null;
+            client.isMicPaused = true;
+            client.consumerState = new Map();
+            
+            if (client.socket) {
+                client.socket.emit('request-mic-states', { roomId });
+            }
+        } catch (error) {
+            console.error('Media connection failed:', error.message);
+            client.device = null;
+            client.sendTransport = null;
+            client.recvTransport = null;
+            client.audioProducer = null;
+            throw new Error(`Media connection failed: ${error.message}`);
         }
-    } catch (error) {
-        console.error('Media connection failed:', error.message);
-        // Сбрасываем состояние при ошибке, чтобы не висели "полуинициализированные" транспорты
-        client.device = null;
-        client.sendTransport = null;
-        client.recvTransport = null;
-        client.audioProducer = null;
-        throw new Error(`Media connection failed: ${error.message}`);
     }
-}
+
     static async createTransports(client, mediaData) {
         if (!client.sendTransport) {
             const sendOptions = {
@@ -67,11 +69,29 @@ static async connect(client, roomId, mediaData) {
     static setupTransportStateChangeHandler(client, transport) {
         transport.on('connectionstatechange', (state) => {
             if (transport.closed) return;
+            
+            const isRecvTransport = (transport === client.recvTransport);
+            const transportType = isRecvTransport ? 'recv' : 'send';
+            
             if (state === 'failed' || state === 'disconnected') {
                 if (client.currentRoom && !client.isReconnecting && !client._isMediaReconnecting) {
-                    client._isMediaReconnecting = true;
-                    client.reconnectToRoom(client.currentRoom, 3, 2000, false, true)
-                        .finally(() => { client._isMediaReconnecting = false; });
+                    if (client._scheduleIceRestart) {
+                        client._scheduleIceRestart(transport, transportType);
+                    } else {
+                        client._isMediaReconnecting = true;
+                        client.reconnectToRoom(client.currentRoom, 3, 2000, false, true)
+                            .finally(() => { client._isMediaReconnecting = false; });
+                    }
+                }
+            } else if (state === 'connected') {
+                if (isRecvTransport && client._transportReadyForConsume !== undefined) {
+                    client._transportReadyForConsume = true;
+                    if (client._processPendingConsumeQueue) {
+                        client._processPendingConsumeQueue();
+                    }
+                }
+                if (client.iceRestartState) {
+                    client.iceRestartState.delete(transport.id);
                 }
             }
         });
@@ -91,8 +111,8 @@ static async connect(client, roomId, mediaData) {
             }
 
             const responseTimeout = setTimeout(() => {
-                if (errback) errback(new Error('Server response timeout (20s)'));
-            }, 20000);
+                if (errback) errback(new Error('Server response timeout'));
+            }, TRANSPORT_CONNECT_TIMEOUT);
 
             client.socket.emit('transport-connect', {
                 transportId: transport.id,
@@ -115,8 +135,8 @@ static async connect(client, roomId, mediaData) {
         client.sendTransport.on('produce', async (parameters, callback, errback) => {
             try {
                 const responseTimeout = setTimeout(() => {
-                    if (errback) errback(new Error('Produce response timeout (15s)'));
-                }, 15000);
+                    if (errback) errback(new Error('Produce response timeout'));
+                }, PRODUCE_TIMEOUT);
 
                 client.socket.emit('produce', {
                     transportId: client.sendTransport.id,
@@ -160,6 +180,20 @@ static async connect(client, roomId, mediaData) {
                 track,
                 encodings: [{ maxBitrate: 24000, dtx: true }],
                 appData: { clientID: client.clientID, roomId: client.currentRoom }
+            });
+
+            client.audioProducer.on('transportclose', () => {
+                client.audioProducer = null;
+                client.isMicActive = false;
+                client.isMicPaused = false;
+                client.updateMicButtonState?.();
+            });
+
+            client.audioProducer.on('trackended', () => {
+                client.audioProducer = null;
+                client.isMicActive = false;
+                client.isMicPaused = false;
+                client.updateMicButtonState?.();
             });
 
             await client.audioProducer.pause();
@@ -243,6 +277,32 @@ static async connect(client, roomId, mediaData) {
             rtpParameters: consumerParams.rtpParameters
         });
 
+        consumer.on('trackended', () => {
+            if (client._scheduleConsumerRetry) {
+                client._scheduleConsumerRetry(
+                    consumerParams.producerId,
+                    { producerId: consumerParams.producerId, kind: consumerParams.kind },
+                    'track_ended'
+                );
+            }
+        });
+
+        consumer.on('transportclose', () => {
+            if (client._scheduleConsumerRetry) {
+                client._scheduleConsumerRetry(
+                    consumerParams.producerId,
+                    { producerId: consumerParams.producerId, kind: consumerParams.kind },
+                    'transport_closed'
+                );
+            }
+        });
+
+        consumer.on('producerclose', () => {
+            if (client._resetConsumerRecoveryState) {
+                client._resetConsumerRecoveryState(consumerParams.producerId);
+            }
+        });
+
         const audioElement = document.createElement('audio');
         audioElement.id = `audio-${consumerParams.producerId}`;
         audioElement.autoplay = true;
@@ -255,18 +315,64 @@ static async connect(client, roomId, mediaData) {
         const playPromise = audioElement.play();
         if (playPromise !== undefined) {
             playPromise.catch(() => {
-                // Восстановлено: вызов менеджера усиления громкости при блокировке автовоспроизведения
                 VolumeBoostManager.resume().catch(() => {});
-                
                 const retryPlay = () => audioElement.play().catch(() => {});
                 document.addEventListener('click', retryPlay, { once: true });
                 document.addEventListener('touchstart', retryPlay, { once: true });
             });
         }
 
-        consumer.on('trackended', () => { consumer.trackEnded = true; });
-        consumer.on('transportclose', () => { consumer.transportClosed = true; });
         return { consumer, audioElement };
+    }
+
+    static async recoverConsumer(client, producerId, producerData) {
+        if (!client.recvTransport || client.recvTransport.closed) {
+            return false;
+        }
+        if (client.consumedProducerIdsRef?.has(producerId)) {
+            return true;
+        }
+        try {
+            return new Promise((resolve) => {
+                if (!client.socket?.connected) {
+                    resolve(false);
+                    return;
+                }
+                client.socket.emit('consume', {
+                    producerId,
+                    rtpCapabilities: client.device.rtpCapabilities,
+                    transportId: client.recvTransport.id,
+                    clientId: client.clientID
+                }, async (response) => {
+                    if (response?.success && response.consumerParameters) {
+                        try {
+                            const { consumer, audioElement } = await this.createConsumer(client, response.consumerParameters);
+                            if (client.consumerState) {
+                                client.consumerState.set(producerId, {
+                                    status: 'active',
+                                    consumer,
+                                    audioElement,
+                                    lastError: null
+                                });
+                            }
+                            if (client.consumedProducerIdsRef) {
+                                client.consumedProducerIdsRef.add(producerId);
+                            }
+                            if (client._resetConsumerRecoveryState) {
+                                client._resetConsumerRecoveryState(producerId);
+                            }
+                            resolve(true);
+                        } catch (error) {
+                            resolve(false);
+                        }
+                    } else {
+                        resolve(false);
+                    }
+                });
+            });
+        } catch (error) {
+            return false;
+        }
     }
 
     static disconnect(client) {

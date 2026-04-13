@@ -77,66 +77,109 @@ class MembersManager {
     return this.micStates.get(userId) || { isActive: false, timestamp: 0 };
   }
 
-// ============================================================================
-// 🔥 ОБНОВЛЁННЫЙ МЕТОД: updateMember (учёт приоритета серверных данных)
-// ============================================================================
-static updateMember(userId, updates) {
-  if (this.members.has(userId)) {
-    const member = { ...this.members.get(userId), ...updates };
+  static updateMember(userId, updates) {
+    if (this.members.has(userId)) {
+      const member = { ...this.members.get(userId), ...updates };
+      
+      if (updates.isMicActive !== undefined && updates.lastSpeakingUpdate) {
+        member.isMicActive = updates.isMicActive;
+        member.micSource = 'server';
+      } else if (updates.isMicActive !== undefined && !member.micSource) {
+        member.isMicActive = updates.isMicActive;
+      }
+      
+      if (updates.connectionState) this.setConnectionState(userId, updates.connectionState);
+      if (updates.isMicActive !== undefined) this.setMicState(userId, updates.isMicActive);
+      
+      this.members.set(userId, member);
+      
+      if (updates.isMicActive === true && this.client) {
+        this._ensureConsumerForActiveSpeaker(userId);
+      }
+      
+      if (!this.__bulkUpdate) {
+        this._updateOnlineOfflineLists();
+        UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+        UIManager.updateMemberMicState(userId, updates.isMicActive);
+      }
+    }
+  }
+
+  static _ensureConsumerForActiveSpeaker(userId) {
+    if (!this.client || !this.client.currentRoom) return;
     
-    // 🔥 Приоритет: если есть lastSpeakingUpdate — это серверные данные, они главнее
-    if (updates.isMicActive !== undefined && updates.lastSpeakingUpdate) {
-      member.isMicActive = updates.isMicActive;
-      member.micSource = 'server'; // Маркер источника
-    } else if (updates.isMicActive !== undefined && !member.micSource) {
-      // Локальное обновление только если нет серверного источника
-      member.isMicActive = updates.isMicActive;
+    const member = this.members.get(userId);
+    if (!member || !member.isOnline) return;
+    
+    const producerUserMap = window.producerUserMap;
+    if (!producerUserMap) return;
+    
+    let producerId = null;
+    for (const [pid, uid] of producerUserMap.entries()) {
+      if (uid === userId) {
+        producerId = pid;
+        break;
+      }
     }
     
-    if (updates.connectionState) this.setConnectionState(userId, updates.connectionState);
-    if (updates.isMicActive !== undefined) this.setMicState(userId, updates.isMicActive);
+    if (!producerId) return;
     
-    this.members.set(userId, member);
+    const consumerState = this.client.consumerState;
+    const consumedProducerIds = this.client.consumedProducerIdsRef;
+    
+    if (consumedProducerIds && !consumedProducerIds.has(producerId)) {
+      if (typeof this.client.ensureConsumer === 'function') {
+        this.client.ensureConsumer(producerId, { producerId, clientID: member.clientId }).catch(e => {
+          console.error('MembersManager: failed to ensure consumer for active speaker:', e.message);
+        });
+      }
+    } else if (consumerState && consumerState.has(producerId)) {
+      const state = consumerState.get(producerId);
+      if (state.status === 'error' || !state.consumer || state.consumer.closed) {
+        if (consumedProducerIds) consumedProducerIds.delete(producerId);
+        consumerState.delete(producerId);
+        
+        if (typeof this.client.ensureConsumer === 'function') {
+          this.client.ensureConsumer(producerId, { producerId, clientID: member.clientId }).catch(e => {
+            console.error('MembersManager: failed to recover consumer:', e.message);
+          });
+        }
+      }
+    }
+  }
+
+  static forceUpdateFromServer(userId, serverData) {
+    if (!this.members.has(userId)) {
+      this.addMember({ ...serverData, userId });
+      return;
+    }
+    
+    const member = this.members.get(userId);
+    const updated = {
+      ...member,
+      ...serverData,
+      micSource: 'server',
+      lastServerUpdate: Date.now()
+    };
+    
+    this.members.set(userId, updated);
+    
+    if (serverData.connectionState) this.setConnectionState(userId, serverData.connectionState);
+    if (serverData.isMicActive !== undefined) {
+      this.setMicState(userId, serverData.isMicActive);
+      UIManager.updateMemberMicState(userId, serverData.isMicActive);
+      
+      if (serverData.isMicActive === true) {
+        this._ensureConsumerForActiveSpeaker(userId);
+      }
+    }
     
     if (!this.__bulkUpdate) {
       this._updateOnlineOfflineLists();
       UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
-      UIManager.updateMemberMicState(userId, updates.isMicActive);
     }
   }
-}
 
-// ============================================================================
-// 🔥 НОВЫЙ МЕТОД: forceUpdateFromServer (для state reconciliation)
-// ============================================================================
-static forceUpdateFromServer(userId, serverData) {
-  if (!this.members.has(userId)) {
-    this.addMember({ ...serverData, userId });
-    return;
-  }
-  
-  const member = this.members.get(userId);
-  // Принудительное обновление с пометкой серверного источника
-  const updated = {
-    ...member,
-    ...serverData,
-    micSource: 'server',
-    lastServerUpdate: Date.now()
-  };
-  
-  this.members.set(userId, updated);
-  
-  if (serverData.connectionState) this.setConnectionState(userId, serverData.connectionState);
-  if (serverData.isMicActive !== undefined) {
-    this.setMicState(userId, serverData.isMicActive);
-    UIManager.updateMemberMicState(userId, serverData.isMicActive);
-  }
-  
-  if (!this.__bulkUpdate) {
-    this._updateOnlineOfflineLists();
-    UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
-  }
-}
   static addMember(memberData) {
     if (!memberData.userId) return;
     const existingMember = this.members.get(memberData.userId);
@@ -216,6 +259,10 @@ static forceUpdateFromServer(userId, serverData) {
         this.members.set(member.userId, memberWithState);
         this.setConnectionState(member.userId, memberWithState.connectionState);
         this.setMicState(member.userId, memberWithState.isMicActive);
+        
+        if (memberWithState.isMicActive === true) {
+          setTimeout(() => this._ensureConsumerForActiveSpeaker(member.userId), 100);
+        }
       }
     });
     [...this.offlineMembers].forEach(member => {
@@ -300,6 +347,33 @@ static forceUpdateFromServer(userId, serverData) {
       client.socket.emit('mic-indicator-state', { roomId, isActive: myMicState.isActive || false });
     }
     client.socket.emit('request-mic-states', { roomId });
+  }
+
+  static hasMembers() {
+    return this.onlineMembers.length > 0 || this.offlineMembers.length > 0;
+  }
+
+  static getMemberByClientId(clientId) {
+    if (!clientId) return null;
+    for (const member of this.members.values()) {
+      if (member.clientId === clientId) {
+        return member;
+      }
+    }
+    return null;
+  }
+
+  static getMemberByProducerId(producerId) {
+    if (!producerId || !window.producerUserMap) return null;
+    const userId = window.producerUserMap.get(producerId);
+    if (!userId) return null;
+    return this.getMember(userId);
+  }
+
+  static forceSyncFromServer() {
+    if (this.client && this.client.socket && this.client.currentRoom) {
+      this.client.socket.emit('request-room-snapshot', { roomId: this.client.currentRoom });
+    }
   }
 }
 

@@ -1,3 +1,4 @@
+// modules/TextChatManager.js
 import MessageRenderer from './MessageRenderer.js';
 import UIManager from './UIManager.js';
 
@@ -28,16 +29,102 @@ class TextChatManager {
     return this.loadMessages(client, roomId, 50, beforeMessageId);
   }
 
+  // 🔥 Вспомогательный метод: извлекает первый URL из текста
+  static extractFirstUrl(text) {
+    if (!text || typeof text !== 'string') return null;
+    const urlRegex = /https?:\/\/[^\s<>"'()]+(?:\([^\s<>"'()]*\)[^\s<>"'()]*)*/gi;
+    const matches = text.match(urlRegex);
+    if (!matches || matches.length === 0) return null;
+    return matches[0].replace(/[.,;:!?)\]]+$/, '');
+  }
+
+  // 🔥 Вспомогательный метод: запрашивает embed для сообщения
+  static fetchEmbedForMessage(client, messageId, url, roomId) {
+    if (!client.socket?.connected) {
+      console.warn(`⚠️ [TextChatManager] Сокет не подключен, не могу запросить embed`);
+      return;
+    }
+    
+    console.log(`🔗 [TextChatManager] Запрос embed для ${messageId}: ${url}`);
+    
+    client.socket.emit('fetch-message-embed', { 
+      messageId, 
+      roomId, 
+      url 
+    });
+  }
+
 static loadMessages(client, roomId, limit = 100, beforeId = null, targetContainer = null) {
     return new Promise((resolve, reject) => {
+        console.log(`🚀🚀🚀 [TextChatManager] loadMessages вызван: roomId=${roomId}, limit=${limit}, beforeId=${beforeId}`);
+        
         if (!client.socket?.connected) {
+            console.error('❌ [TextChatManager] Сокет не подключен');
             return reject(new Error('WebSocket не подключен'));
         }
         
+        console.log(`📤 [TextChatManager] Отправляем request-message-history...`);
+        
         client.socket.emit('request-message-history', { roomId, limit, beforeId }, async (response) => {
+            console.log(`📥 [TextChatManager] Получен ответ на request-message-history`);
+            console.log(`📥 [TextChatManager] response.success = ${response?.success}`);
+            console.log(`📥 [TextChatManager] response.messages.length = ${response?.messages?.length || 0}`);
+            console.log(`📥 [TextChatManager] response.hasMore = ${response?.hasMore}`);
+            
             if (response?.success && Array.isArray(response.messages)) {
-                // 🔥 ДОБАВИТЬ ЛОГ
-                console.log(`[TextChatManager] Получено ${response.messages.length} сообщений от сервера`);
+                
+                // 🔥 ДЕТАЛЬНЫЙ АНАЛИЗ СООБЩЕНИЙ
+                console.log(`\n📊📊📊 [АНАЛИЗ СООБЩЕНИЙ] Всего: ${response.messages.length}`);
+                
+                const textMessages = response.messages.filter(m => m.type === 'text' || m.type === undefined);
+                console.log(`📊 Текстовых сообщений (type=text или undefined): ${textMessages.length}`);
+                
+                const messagesWithEmbed = response.messages.filter(m => m.embed);
+                console.log(`📊 Сообщений с embed: ${messagesWithEmbed.length}`);
+                
+                const textMessagesWithoutEmbed = textMessages.filter(m => !m.embed);
+                console.log(`📊 Текстовых сообщений БЕЗ embed: ${textMessagesWithoutEmbed.length}`);
+                
+                // 🔥 Показываем примеры
+                if (messagesWithEmbed.length > 0) {
+                    console.log(`\n✅ ПРИМЕР СООБЩЕНИЯ С EMBED:`);
+                    const example = messagesWithEmbed[0];
+                    console.log(`  ID: ${example.id}`);
+                    console.log(`  Текст: ${example.text?.substring(0, 50)}...`);
+                    console.log(`  Embed:`, example.embed);
+                }
+                
+                if (textMessagesWithoutEmbed.length > 0) {
+                    console.log(`\n⚠️ ПРИМЕР ТЕКСТОВОГО СООБЩЕНИЯ БЕЗ EMBED:`);
+                    const example = textMessagesWithoutEmbed[0];
+                    console.log(`  ID: ${example.id}`);
+                    console.log(`  Текст: ${example.text?.substring(0, 100)}...`);
+                    console.log(`  type: ${example.type}`);
+                    console.log(`  embed: ${example.embed}`);
+                    
+                    // Проверяем, есть ли URL в тексте
+                    const url = this.extractFirstUrl(example.text);
+                    if (url) {
+                        console.log(`  🔗 Найден URL: ${url}`);
+                    } else {
+                        console.log(`  ❌ URL не найден в тексте`);
+                    }
+                }
+                
+                // 🔥 Показываем первые 5 сообщений для детального анализа
+                console.log(`\n📋 ПЕРВЫЕ 5 СООБЩЕНИЙ:`);
+                response.messages.slice(0, 5).forEach((msg, i) => {
+                    console.log(`  ${i+1}. ID: ${msg.id}`);
+                    console.log(`     type: ${msg.type}, hasText: ${!!msg.text}, hasEmbed: ${!!msg.embed}`);
+                    if (msg.text) {
+                        console.log(`     text: ${msg.text.substring(0, 50)}...`);
+                    }
+                    if (msg.embed) {
+                        console.log(`     embed keys: ${Object.keys(msg.embed).join(', ')}`);
+                    }
+                });
+                
+                console.log(`\n✅ [TextChatManager] Начинаем рендеринг сообщений...`);
                 
                 if (response.messages.length > 0) {
                     const container = targetContainer || document.querySelector('.messages-container');
@@ -45,54 +132,98 @@ static loadMessages(client, roomId, limit = 100, beforeId = null, targetContaine
                     if (beforeId && container) {
                         await MessageRenderer.prependMessagesBatch(response.messages);
                     } else {
+                        let renderedCount = 0;
                         for (const msg of response.messages) {
                             UIManager.addMessage(
                                 msg.username, msg.text, msg.timestamp, msg.type, msg.imageUrl, msg.id,
-                                msg.readBy || [], msg.userId, false, msg.thumbnailUrl, container, msg.replyTo, msg.reactions || {}
+                                msg.readBy || [], msg.userId, false, msg.thumbnailUrl, container, msg.replyTo,
+                                msg.reactions || {}, msg.poll, msg.forwardedFrom, msg.pollRef, msg.embed
                             );
+                            renderedCount++;
                         }
+                        console.log(`✅ [TextChatManager] Отрендерено ${renderedCount} сообщений`);
                     }
                 }
+                
+                // 🔥 ПРОВЕРЯЕМ СООБЩЕНИЯ БЕЗ EMBED И ЗАПРАШИВАЕМ ПРЕВЬЮ
+                if (textMessagesWithoutEmbed.length > 0) {
+                    console.log(`\n🔄 [TextChatManager] Проверяем ${textMessagesWithoutEmbed.length} сообщений без embed на наличие URL...`);
+                    
+                    let urlFoundCount = 0;
+                    for (const msg of textMessagesWithoutEmbed) {
+                        const url = this.extractFirstUrl(msg.text);
+                        if (url) {
+                            console.log(`  🔗 Найден URL в ${msg.id}: ${url}`);
+                            urlFoundCount++;
+                            // Запрашиваем embed
+                            this.fetchEmbedForMessage(client, msg.id, url, roomId);
+                        }
+                    }
+                    
+                    if (urlFoundCount > 0) {
+                        console.log(`🔄 [TextChatManager] Отправлено ${urlFoundCount} запросов на получение embed`);
+                    } else {
+                        console.log(`ℹ️ [TextChatManager] URL не найдены в сообщениях без embed`);
+                    }
+                }
+                
                 resolve({ messages: response.messages, hasMore: response.hasMore ?? false });
             } else {
+                console.error('❌ [TextChatManager] Ошибка в ответе:', response?.error);
                 reject(new Error(response?.error || 'Не удалось загрузить историю'));
             }
         });
     });
 }
 
-static loadMessagesAround(client, roomId, messageId, limit = 50, targetContainer = null) {
+// 🔥 Добавь эти методы в класс, если их ещё нет
+static extractFirstUrl(text) {
+    if (!text || typeof text !== 'string') return null;
+    const urlRegex = /https?:\/\/[^\s<>"'()]+(?:\([^\s<>"'()]*\)[^\s<>"'()]*)*/gi;
+    const matches = text.match(urlRegex);
+    if (!matches || matches.length === 0) return null;
+    return matches[0].replace(/[.,;:!?)\]]+$/, '');
+}
+
+static fetchEmbedForMessage(client, messageId, url, roomId) {
+    if (!client.socket?.connected) {
+        console.warn(`⚠️ [TextChatManager] Сокет не подключен, не могу запросить embed`);
+        return;
+    }
+    
+    console.log(`📤 [TextChatManager] Запрос embed для ${messageId}: ${url}`);
+    
+    client.socket.emit('fetch-message-embed', { 
+        messageId, 
+        roomId, 
+        url 
+    });
+}
+
+  static loadMessagesAround(client, roomId, messageId, limit = 50, targetContainer = null) {
     return new Promise((resolve, reject) => {
         if (!client.socket?.connected) return reject(new Error('WebSocket не подключен'));
         
-        console.log(`[TextChatManager] loadMessagesAround: roomId=${roomId}, messageId=${messageId}, limit=${limit}`);
-        
         client.socket.emit('request-message-history', { roomId, limit, aroundId: messageId }, (response) => {
             if (response?.success && Array.isArray(response.messages)) {
-                console.log(`[TextChatManager] loadMessagesAround: получено ${response.messages.length} сообщений`);
-                
                 const container = targetContainer || document.querySelector('.messages-container');
                 if (container) {
-                    // 🔥 ВАЖНО: Собираем ID существующих сообщений
                     const existingIds = new Set();
                     container.querySelectorAll('.message[data-message-id]').forEach(el => {
                         existingIds.add(el.dataset.messageId);
                     });
                     
-                    // 🔥 Фильтруем дубликаты
                     const newMessages = response.messages.filter(msg => !existingIds.has(msg.id));
-                    console.log(`[TextChatManager] loadMessagesAround: ${newMessages.length} новых сообщений (${response.messages.length - newMessages.length} дубликатов)`);
                     
                     if (newMessages.length > 0) {
-                        // 🔥 Очищаем контейнер и добавляем ТОЛЬКО НОВЫЕ сообщения
-                        // Не очищаем полностью, а добавляем новые в правильном порядке
                         const fragment = document.createDocumentFragment();
                         
                         for (const msg of newMessages) {
                             const el = MessageRenderer._createMessageElement(
                                 msg.username, msg.text, msg.timestamp, msg.type,
                                 msg.imageUrl, msg.id, msg.readBy || [], msg.userId, 
-                                false, msg.thumbnailUrl, msg.replyTo, msg.reactions || {}
+                                false, msg.thumbnailUrl, msg.replyTo, msg.reactions || {},
+                                msg.poll, msg.forwardedFrom, msg.pollRef, msg.embed
                             );
                             if (el) {
                                 el.classList.add('appeared');
@@ -100,7 +231,6 @@ static loadMessagesAround(client, roomId, messageId, limit = 50, targetContainer
                             }
                         }
                         
-                        // 🔥 Добавляем в начало контейнера (перед sentinel)
                         const sentinel = container.querySelector('.history-sentinel');
                         if (sentinel) {
                             sentinel.after(fragment);
@@ -108,6 +238,18 @@ static loadMessagesAround(client, roomId, messageId, limit = 50, targetContainer
                             container.prepend(fragment);
                         }
                     }
+                    
+                    // 🔥 Проверяем новые сообщения на embed
+                    newMessages.forEach(msg => {
+                        if (msg.type === 'text' && msg.text && !msg.embed) {
+                            const url = this.extractFirstUrl(msg.text);
+                            if (url) {
+                                setTimeout(() => {
+                                    this.fetchEmbedForMessage(client, msg.id, url, roomId);
+                                }, 100);
+                            }
+                        }
+                    });
                 }
                 
                 resolve({ 
@@ -123,7 +265,8 @@ static loadMessagesAround(client, roomId, messageId, limit = 50, targetContainer
             }
         });
     });
-}
+  }
+
   static async uploadImage(client, roomId, file) {
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
       throw new Error('Поддерживаются только JPEG, PNG и WebP');

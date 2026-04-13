@@ -12,6 +12,8 @@ import ModalManager from './ModalManager.js';
 import SecondaryChatManager from './SecondaryChatManager.js';
 import DiagnosticPanel from './DiagnosticPanel.js';
 import MessageRenderer from './MessageRenderer.js';
+import CreatePollModal from './CreatePollModal.js';
+import SoundManager from './SoundManager.js';
 
 const PING_INTERVAL = 10000;
 const JOIN_TIMEOUT = 9000;
@@ -20,6 +22,27 @@ const CONNECTION_STATE = {
     CONNECTING: 'connecting',
     CONNECTED: 'connected',
     ERROR: 'error'
+};
+
+const CONSUMER_RETRY_CONFIG = {
+    BASE_DELAY: 1000,
+    MAX_DELAY: 32000,
+    MAX_ATTEMPTS: 8,
+    JITTER_FACTOR: 0.3
+};
+
+const ICE_RESTART_CONFIG = {
+    BASE_DELAY: 2000,
+    MAX_DELAY: 30000,
+    MAX_ATTEMPTS: 5,
+    JITTER_FACTOR: 0.2
+};
+
+const TRANSPORT_RECONNECT_CONFIG = {
+    BASE_DELAY: 1000,
+    MAX_DELAY: 16000,
+    MAX_ATTEMPTS: 6,
+    JITTER_FACTOR: 0.25
 };
 
 class VoiceChatClient {
@@ -67,13 +90,10 @@ class VoiceChatClient {
         this._mediaFetchController = null;
         this._isProcessingConsumers = false;
         this._isMediaReconnecting = false;
-        
-        // 🔥 История чата
         this.isHistoryLoading = false;
         this.hasMoreHistory = true;
         this.oldestMessageId = null;
         this.historyObserver = null;
-        
         this.secondaryChat = {
             enabled: false,
             roomId: null,
@@ -83,7 +103,429 @@ class VoiceChatClient {
         };
         this._authFetchController = null;
         this.diagnosticActive = false;
+        this.pinnedMessages = new Map();
+        this.currentPinnedIndex = new Map();
+        this._touchStartX = 0;
+        this._touchStartY = 0;
+        this.consumerRecoveryState = new Map();
+        this.iceRestartState = new Map();
+        this.transportRecoveryState = new Map();
+        this._producersPendingConsume = [];
+        this._transportReadyForConsume = false;
+        this._recoveryTimers = new Set();
+        
         this.init();
+    }
+
+    _calculateBackoffDelay(attempt, baseDelay, maxDelay, jitterFactor) {
+        const exponential = baseDelay * Math.pow(2, attempt);
+        const capped = Math.min(exponential, maxDelay);
+        const jitter = capped * jitterFactor * (Math.random() * 2 - 1);
+        const result = Math.max(baseDelay, Math.min(maxDelay, capped + jitter));
+        return Math.floor(result);
+    }
+    
+    _safeSetTimeout(callback, delay, description = 'unknown') {
+        const timer = setTimeout(() => {
+            this._recoveryTimers.delete(timer);
+            callback();
+        }, delay);
+        this._recoveryTimers.add(timer);
+        return timer;
+    }
+    
+    _clearAllRecoveryTimers() {
+        for (const timer of this._recoveryTimers) {
+            clearTimeout(timer);
+        }
+        this._recoveryTimers.clear();
+    }
+    
+    _resetConsumerRecoveryState(producerId) {
+        const state = this.consumerRecoveryState.get(producerId);
+        if (state?.nextRetryTimer) {
+            clearTimeout(state.nextRetryTimer);
+        }
+        this.consumerRecoveryState.delete(producerId);
+    }
+    
+    _resetAllRecoveryState() {
+        this._clearAllRecoveryTimers();
+        for (const [producerId, state] of this.consumerRecoveryState.entries()) {
+            if (state.nextRetryTimer) {
+                clearTimeout(state.nextRetryTimer);
+            }
+        }
+        this.consumerRecoveryState.clear();
+        this.iceRestartState.clear();
+        this.transportRecoveryState.clear();
+        this._producersPendingConsume = [];
+        this._transportReadyForConsume = false;
+    }
+
+    _scheduleConsumerRetry(producerId, producerData, errorReason = 'unknown') {
+        let state = this.consumerRecoveryState.get(producerId);
+        if (!state) {
+            state = {
+                attempts: 0,
+                nextRetryTimer: null,
+                lastError: errorReason,
+                producerData: producerData
+            };
+        } else {
+            state.attempts++;
+            state.lastError = errorReason;
+        }
+        if (state.attempts >= CONSUMER_RETRY_CONFIG.MAX_ATTEMPTS) {
+            state.exhausted = true;
+            this.consumerRecoveryState.set(producerId, state);
+            if (this.diagnosticActive) {
+                this._notifyDiagnosticUpdate();
+            }
+            return;
+        }
+        if (state.nextRetryTimer) {
+            clearTimeout(state.nextRetryTimer);
+        }
+        const delay = this._calculateBackoffDelay(
+            state.attempts,
+            CONSUMER_RETRY_CONFIG.BASE_DELAY,
+            CONSUMER_RETRY_CONFIG.MAX_DELAY,
+            CONSUMER_RETRY_CONFIG.JITTER_FACTOR
+        );
+        state.nextRetryTimer = this._safeSetTimeout(() => {
+            if (this.consumedProducerIdsRef.has(producerId)) {
+                this._resetConsumerRecoveryState(producerId);
+                return;
+            }
+            if (!this.recvTransport || this.recvTransport.closed) {
+                this._producersPendingConsume.push({
+                    producerId,
+                    producerData,
+                    addedAt: Date.now()
+                });
+                return;
+            }
+            this._attemptConsumeWithRetry(producerId, producerData);
+        }, delay, `consumer-retry-${producerId.substring(0, 8)}`);
+        this.consumerRecoveryState.set(producerId, state);
+        if (this.diagnosticActive) {
+            this._notifyDiagnosticUpdate();
+        }
+    }
+    
+    _attemptConsumeWithRetry(producerId, producerData) {
+        if (!this.socket || !this.socket.connected) {
+            this._scheduleConsumerRetry(producerId, producerData, 'socket_disconnected');
+            return;
+        }
+        if (!this.recvTransport || this.recvTransport.closed || this.recvTransport.connectionState === 'failed') {
+            this._scheduleConsumerRetry(producerId, producerData, 'transport_not_ready');
+            return;
+        }
+        this.socket.emit('consume', {
+            producerId,
+            rtpCapabilities: this.device.rtpCapabilities,
+            transportId: this.recvTransport.id,
+            clientId: this.clientID
+        }, async (response) => {
+            if (!response?.success) {
+                const errorMsg = response?.error || 'unknown_error';
+                this._scheduleConsumerRetry(producerId, producerData, errorMsg);
+                return;
+            }
+            if (!response.consumerParameters) {
+                this._scheduleConsumerRetry(producerId, producerData, 'no_parameters');
+                return;
+            }
+            try {
+                const { consumer, audioElement } = await MediaManager.createConsumer(this, response.consumerParameters);
+                this._resetConsumerRecoveryState(producerId);
+                this.consumerState.set(response.consumerParameters.producerId, {
+                    status: 'active',
+                    consumer,
+                    audioElement,
+                    lastError: null,
+                    recoveryAttempts: 0
+                });
+                this.consumedProducerIdsRef.add(response.consumerParameters.producerId);
+                const members = MembersManager.getMembers();
+                const member = members.find(
+                    (m) => m.clientId === response.consumerParameters.peerId || m.userId === response.consumerParameters.peerId
+                );
+                const userId = member?.userId || response.consumerParameters.peerId;
+                if (userId) {
+                    if (!window.producerUserMap) window.producerUserMap = new Map();
+                    window.producerUserMap.set(response.consumerParameters.producerId, userId);
+                    UIManager.showVolumeSliderByUserId(response.consumerParameters.producerId, userId);
+                    VolumeBoostManager.attachToAudioElement(audioElement, userId, 1.0).catch(() => {});
+                }
+                if (this.diagnosticActive) {
+                    this._notifyDiagnosticUpdate();
+                }
+            } catch (error) {
+                this._scheduleConsumerRetry(producerId, producerData, error.message);
+            }
+        });
+    }
+    
+    _processPendingConsumeQueue() {
+        if (!this._transportReadyForConsume) return;
+        if (this._producersPendingConsume.length === 0) return;
+        const toProcess = [...this._producersPendingConsume];
+        this._producersPendingConsume = [];
+        for (const item of toProcess) {
+            if (Date.now() - item.addedAt > 30000) continue;
+            if (this.consumedProducerIdsRef.has(item.producerId)) continue;
+            this._attemptConsumeWithRetry(item.producerId, item.producerData);
+        }
+    }
+
+    _scheduleIceRestart(transport, transportType) {
+        const transportId = transport.id;
+        let state = this.iceRestartState.get(transportId);
+        if (!state) {
+            state = { attempts: 0, lastAttempt: 0, state: 'pending' };
+        } else {
+            state.attempts++;
+        }
+        if (state.attempts >= ICE_RESTART_CONFIG.MAX_ATTEMPTS) {
+            this.iceRestartState.delete(transportId);
+            this._scheduleTransportReconnect(transportType);
+            return;
+        }
+        const delay = this._calculateBackoffDelay(
+            state.attempts,
+            ICE_RESTART_CONFIG.BASE_DELAY,
+            ICE_RESTART_CONFIG.MAX_DELAY,
+            ICE_RESTART_CONFIG.JITTER_FACTOR
+        );
+        state.lastAttempt = Date.now();
+        state.nextRetryTimer = this._safeSetTimeout(async () => {
+            try {
+                if (!transport || transport.closed) {
+                    this.iceRestartState.delete(transportId);
+                    this._scheduleTransportReconnect(transportType);
+                    return;
+                }
+                const iceParameters = await this._requestIceRestart(transportId);
+                if (iceParameters) {
+                    await transport.restartIce({ iceParameters });
+                    this.iceRestartState.delete(transportId);
+                    if (transportType === 'recv') {
+                        this._transportReadyForConsume = true;
+                        this._processPendingConsumeQueue();
+                    }
+                } else {
+                    throw new Error('Не удалось получить ICE параметры');
+                }
+            } catch (error) {
+                const currentState = this.iceRestartState.get(transportId);
+                if (currentState) {
+                    this._scheduleIceRestart(transport, transportType);
+                }
+            }
+        }, delay, `ice-restart-${transportType}`);
+        this.iceRestartState.set(transportId, state);
+    }
+    
+    async _requestIceRestart(transportId) {
+        return new Promise((resolve, reject) => {
+            if (!this.socket || !this.socket.connected) {
+                reject(new Error('Socket not connected'));
+                return;
+            }
+            const timeout = setTimeout(() => {
+                reject(new Error('ICE restart timeout'));
+            }, 5000);
+            this.socket.emit('restart-ice', {
+                transportId,
+                roomId: this.currentRoom
+            }, (response) => {
+                clearTimeout(timeout);
+                if (response?.success && response.iceParameters) {
+                    resolve(response.iceParameters);
+                } else {
+                    reject(new Error(response?.error || 'ICE restart failed'));
+                }
+            });
+        });
+    }
+    
+    _scheduleTransportReconnect(transportType) {
+        let state = this.transportRecoveryState.get(transportType);
+        if (!state) {
+            state = { attempts: 0, timer: null };
+        } else {
+            state.attempts++;
+        }
+        if (state.attempts >= TRANSPORT_RECONNECT_CONFIG.MAX_ATTEMPTS) {
+            this.transportRecoveryState.delete(transportType);
+            if (this.currentRoom && !this.isReconnecting) {
+                this.reconnectToRoom(this.currentRoom);
+            }
+            return;
+        }
+        const delay = this._calculateBackoffDelay(
+            state.attempts,
+            TRANSPORT_RECONNECT_CONFIG.BASE_DELAY,
+            TRANSPORT_RECONNECT_CONFIG.MAX_DELAY,
+            TRANSPORT_RECONNECT_CONFIG.JITTER_FACTOR
+        );
+        if (state.timer) {
+            clearTimeout(state.timer);
+        }
+        state.timer = this._safeSetTimeout(async () => {
+            try {
+                if (transportType === 'recv' && this.mediaData) {
+                    await this._recreateRecvTransport();
+                } else if (transportType === 'send' && this.mediaData) {
+                    await this._recreateSendTransport();
+                }
+                this.transportRecoveryState.delete(transportType);
+            } catch (error) {
+                const currentState = this.transportRecoveryState.get(transportType);
+                if (currentState) {
+                    this._scheduleTransportReconnect(transportType);
+                }
+            }
+        }, delay, `transport-reconnect-${transportType}`);
+        this.transportRecoveryState.set(transportType, state);
+    }
+    
+    async _recreateRecvTransport() {
+        if (!this.mediaData || !this.device) {
+            throw new Error('No media data or device');
+        }
+        if (this.recvTransport && !this.recvTransport.closed) {
+            try {
+                this.recvTransport.close();
+            } catch (e) {}
+        }
+        const recvOptions = {
+            id: this.mediaData.recvTransport.id,
+            iceParameters: this.mediaData.recvTransport.iceParameters,
+            iceCandidates: this.mediaData.recvTransport.iceCandidates,
+            dtlsParameters: this.mediaData.recvTransport.dtlsParameters,
+            iceServers: this.mediaData.iceServers || []
+        };
+        this.recvTransport = this.device.createRecvTransport(recvOptions);
+        MediaManager.setupTransportConnectHandler(this, this.recvTransport);
+        MediaManager.setupTransportStateChangeHandler(this, this.recvTransport);
+        await this._waitForTransportReady(this.recvTransport, 'recv');
+        this._transportReadyForConsume = true;
+        this._reconnectAllProducers();
+    }
+    
+    async _recreateSendTransport() {
+        if (!this.mediaData || !this.device) {
+            throw new Error('No media data or device');
+        }
+        if (this.sendTransport && !this.sendTransport.closed) {
+            try {
+                this.sendTransport.close();
+            } catch (e) {}
+        }
+        const sendOptions = {
+            id: this.mediaData.sendTransport.id,
+            iceParameters: this.mediaData.sendTransport.iceParameters,
+            iceCandidates: this.mediaData.sendTransport.iceCandidates,
+            dtlsParameters: this.mediaData.sendTransport.dtlsParameters,
+            iceServers: this.mediaData.iceServers || []
+        };
+        this.sendTransport = this.device.createSendTransport(sendOptions);
+        MediaManager.setupTransportConnectHandler(this, this.sendTransport);
+        MediaManager.setupTransportStateChangeHandler(this, this.sendTransport);
+        MediaManager.setupSendTransportHandlers(this);
+        await this._waitForTransportReady(this.sendTransport, 'send');
+        if (this.isMicActive && this.stream) {
+            await MediaManager.initMicrophone(this);
+        }
+    }
+    
+    _waitForTransportReady(transport, type, timeoutMs = 10000) {
+        return new Promise((resolve, reject) => {
+            if (transport.connectionState === 'connected') {
+                resolve();
+                return;
+            }
+            const timeout = setTimeout(() => {
+                cleanup();
+                reject(new Error(`Transport ${type} ready timeout`));
+            }, timeoutMs);
+            const onStateChange = (state) => {
+                if (state === 'connected') {
+                    cleanup();
+                    resolve();
+                } else if (state === 'failed' || state === 'closed') {
+                    cleanup();
+                    reject(new Error(`Transport ${type} entered ${state}`));
+                }
+            };
+            const cleanup = () => {
+                clearTimeout(timeout);
+                transport.off('connectionstatechange', onStateChange);
+            };
+            transport.on('connectionstatechange', onStateChange);
+        });
+    }
+    
+    _reconnectAllProducers() {
+        const producersToReconnect = new Set();
+        for (const p of this.pendingProducersRef) {
+            producersToReconnect.add(p.id || p.producerId);
+        }
+        for (const [producerId, state] of this.consumerState.entries()) {
+            if (state.status === 'active') {
+                producersToReconnect.add(producerId);
+            }
+        }
+        for (const [producerId] of this.consumerRecoveryState.entries()) {
+            producersToReconnect.add(producerId);
+        }
+        this.consumedProducerIdsRef.clear();
+        this.consumerState.clear();
+        this.pendingProducersRef = [];
+        if (this.socket && this.socket.connected) {
+            this.socket.emit('request-room-snapshot', { roomId: this.currentRoom }, (response) => {
+                if (response?.success && response.producers) {
+                    for (const producer of response.producers) {
+                        if (producer.clientID !== this.clientID) {
+                            this.pendingProducersRef.push(producer);
+                        }
+                    }
+                    this._processPendingProducers();
+                }
+            });
+        }
+    }
+
+    _notifyDiagnosticUpdate() {
+        if (!this.diagnosticActive) return;
+        const recoveryInfo = {
+            consumers: [],
+            transports: {
+                recv: {
+                    state: this.recvTransport?.connectionState || 'none',
+                    recoveryAttempts: this.transportRecoveryState.get('recv')?.attempts || 0
+                },
+                send: {
+                    state: this.sendTransport?.connectionState || 'none',
+                    recoveryAttempts: this.transportRecoveryState.get('send')?.attempts || 0
+                }
+            },
+            pendingConsumeQueue: this._producersPendingConsume.length,
+            transportReadyForConsume: this._transportReadyForConsume
+        };
+        for (const [producerId, state] of this.consumerRecoveryState.entries()) {
+            recoveryInfo.consumers.push({
+                producerId: producerId.substring(0, 8),
+                attempts: state.attempts,
+                exhausted: state.exhausted || false,
+                lastError: state.lastError
+            });
+        }
+        DiagnosticPanel.updateRecoveryInfo?.(recoveryInfo);
     }
 
     _abortMediaRequests() {
@@ -153,7 +595,6 @@ class VoiceChatClient {
         this.connectionState = state;
         if (previousState !== state) {
             const stateMessages = {
-                [CONNECTION_STATE.DISCONNECTED]: '🔴 Отключен',
                 [CONNECTION_STATE.ERROR]: '❌ Ошибка подключения'
             };
             const message = stateMessages[state];
@@ -168,6 +609,20 @@ class VoiceChatClient {
     }
 
     playSound(soundName) {
+        if (window.ELECTRON_CUSTOM_SOUNDS_ENABLED) {
+            if (window.ipcRenderer) {
+                try {
+                    window.ipcRenderer.sendToHost('play-sound', soundName);
+                    return;
+                } catch (e) {}
+            }
+            window.postMessage({
+                type: 'ELECTRON_PLAY_SOUND',
+                soundType: soundName,
+                source: 'webview'
+            }, '*');
+            return;
+        }
         if (typeof Audio === 'undefined') return;
         const audio = new Audio(`/sounds/${soundName}.mp3`);
         audio.volume = 1.0;
@@ -179,6 +634,7 @@ class VoiceChatClient {
         this.initEventListeners();
         this.setupElectronBridge();
         UIManager.setClient(this);
+        SoundManager.init(this);
         InviteManager.init(this);
         await this.initAutoConnect();
     }
@@ -210,6 +666,7 @@ class VoiceChatClient {
         this.elements.clearSearchBtn = document.querySelector('#clearSearchBtn');
         this.elements.backBtn = document.querySelector('.back-btn');
         this.elements.splitToggleBtn = document.querySelector('.split-toggle-btn');
+        this.elements.pollCreateBtn = document.querySelector('.poll-create-btn');
         
         if (!this.elements.splitToggleBtn) {
             const headerControls = document.querySelector('.header-controls');
@@ -226,19 +683,32 @@ class VoiceChatClient {
             }
         }
         
-        // 🔥 Инициализация Sentinel
+        if (!this.elements.pollCreateBtn) {
+            const headerControls = document.querySelector('.header-controls');
+            if (headerControls) {
+                const pollBtn = document.createElement('button');
+                pollBtn.className = 'poll-create-btn';
+                pollBtn.innerHTML = '📊';
+                pollBtn.title = 'Создать опрос';
+                pollBtn.id = 'pollCreateBtn';
+                const splitBtn = headerControls.querySelector('.split-toggle-btn');
+                if (splitBtn) headerControls.insertBefore(pollBtn, splitBtn);
+                else headerControls.appendChild(pollBtn);
+                this.elements.pollCreateBtn = pollBtn;
+            }
+        }
+        
         if (this.elements.messagesContainer) {
             let sentinel = this.elements.messagesContainer.querySelector('.history-sentinel');
             if (!sentinel) {
-                console.log('[History] 🛠️ Создание нового DOM-элемента history-sentinel');
                 sentinel = document.createElement('div');
                 sentinel.className = 'history-sentinel';
                 sentinel.style.cssText = 'height: 1px; width: 1px; margin: 0; padding: 0; overflow: hidden; visibility: hidden;';
                 this.elements.messagesContainer.prepend(sentinel);
+                this.elements.historySentinel = sentinel;
             }
-            this.elements.historySentinel = sentinel;
         }
-
+        
         if (this.elements.clearSearchBtn) {
             this.elements.clearSearchBtn.addEventListener('click', () => ServerManager.clearSearchAndShowAllServers(this));
         }
@@ -249,7 +719,6 @@ class VoiceChatClient {
     }
 
     resetHistoryState() {
-        console.log('[History] 🔄 resetHistoryState вызван');
         this.removeHistorySentinel();
         this.hasMoreHistory = true;
         this.isHistoryLoading = false;
@@ -260,8 +729,61 @@ class VoiceChatClient {
             sentinel.style.cssText = 'height: 1px; width: 1px; margin: 0; padding: 0; overflow: hidden; visibility: hidden;';
             this.elements.messagesContainer.prepend(sentinel);
             this.elements.historySentinel = sentinel;
-            console.log('[History] 🛠️ Sentinel пересоздан в resetHistoryState');
         }
+    }
+
+    _initSwipeGestures() {
+        const SWIPE_THRESHOLD = 50;
+        const ANGLE_THRESHOLD = 30;
+        document.addEventListener('touchstart', (e) => {
+            this._touchStartX = e.touches[0].clientX;
+            this._touchStartY = e.touches[0].clientY;
+        }, { passive: true });
+        document.addEventListener('touchend', (e) => {
+            if (!this._touchStartX || !this._touchStartY) return;
+            const touchEndX = e.changedTouches[0].clientX;
+            const touchEndY = e.changedTouches[0].clientY;
+            const diffX = touchEndX - this._touchStartX;
+            const diffY = touchEndY - this._touchStartY;
+            const absDiffX = Math.abs(diffX);
+            const absDiffY = Math.abs(diffY);
+            if (absDiffX < SWIPE_THRESHOLD) {
+                this._touchStartX = 0;
+                this._touchStartY = 0;
+                return;
+            }
+            const angle = Math.abs(Math.atan2(diffY, diffX) * 180 / Math.PI);
+            if (angle > ANGLE_THRESHOLD && angle < 180 - ANGLE_THRESHOLD) {
+                this._touchStartX = 0;
+                this._touchStartY = 0;
+                return;
+            }
+            const isSwipeRight = diffX > 0;
+            const isSwipeLeft = diffX < 0;
+            const leftPanelOpen = this.elements.sidebar.classList.contains('open');
+            const rightPanelOpen = this.elements.membersPanel.classList.contains('open');
+            if (!leftPanelOpen && !rightPanelOpen) {
+                if (isSwipeRight) {
+                    this.elements.sidebar.classList.add('open');
+                } else if (isSwipeLeft) {
+                    this.elements.membersPanel.classList.add('open');
+                }
+            } else if (leftPanelOpen) {
+                if (isSwipeLeft) {
+                    this.elements.sidebar.classList.remove('open');
+                }
+            } else if (rightPanelOpen) {
+                if (isSwipeRight) {
+                    this.elements.membersPanel.classList.remove('open');
+                }
+            }
+            this._touchStartX = 0;
+            this._touchStartY = 0;
+        }, { passive: true });
+        document.addEventListener('touchcancel', () => {
+            this._touchStartX = 0;
+            this._touchStartY = 0;
+        }, { passive: true });
     }
 
     initEventListeners() {
@@ -275,6 +797,7 @@ class VoiceChatClient {
         };
         document.addEventListener('click', userGestureHandler, { once: true });
         document.addEventListener('touchstart', userGestureHandler, { once: true });
+        this._initSwipeGestures();
         
         const micHandler = async () => await this.toggleMicrophone();
         if (this.elements.micButton) {
@@ -285,13 +808,18 @@ class VoiceChatClient {
             this.elements.micToggleBtn.addEventListener('click', micHandler);
             this.elements.micToggleBtn.title = 'Микрофон (быстрый)';
         }
+        
         if (this.elements.messageInput) {
             this.elements.messageInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     const text = this.elements.messageInput.value.trim();
                     if (text) {
-                        this.sendMessage(text);
+                        if (text.startsWith('/poll')) {
+                            this.handlePollCommand(text);
+                        } else {
+                            this.sendMessage(text);
+                        }
                         this.elements.messageInput.value = '';
                         this.elements.messageInput.style.height = '40px';
                     }
@@ -303,12 +831,21 @@ class VoiceChatClient {
                 el.style.height = Math.min(el.scrollHeight, 120) + 'px';
             });
         }
+        
         if (this.elements.sendButton) {
             this.elements.sendButton.addEventListener('click', () => {
-                this.sendMessage(this.elements.messageInput.value);
-                this.elements.messageInput.value = '';
+                const text = this.elements.messageInput.value.trim();
+                if (text) {
+                    if (text.startsWith('/poll')) {
+                        this.handlePollCommand(text);
+                    } else {
+                        this.sendMessage(text);
+                    }
+                    this.elements.messageInput.value = '';
+                }
             });
         }
+        
         if (this.elements.toggleSidebarBtn) {
             this.elements.toggleSidebarBtn.addEventListener('click', () => this.elements.sidebar.classList.toggle('open'));
         }
@@ -333,6 +870,12 @@ class VoiceChatClient {
                 ModalManager.openCreateRoomModal(this, (name) => RoomManager.createRoom(this, this.currentServerId, name));
             });
         }
+        if (this.elements.pollCreateBtn) {
+            this.elements.pollCreateBtn.addEventListener('click', () => {
+                if (!this.currentRoom) return UIManager.showError('Сначала займите гнездо');
+                CreatePollModal.open(this, this.currentRoom);
+            });
+        }
         if (this.elements.serversToggleBtn) {
             this.elements.serversToggleBtn.addEventListener('click', () => {
                 ServerManager.clearSearchAndShowAllServers(this);
@@ -348,8 +891,7 @@ class VoiceChatClient {
         if (this.elements.splitToggleBtn) {
             this.elements.splitToggleBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                const direction = SecondaryChatManager.getDirection();
-                await SecondaryChatManager.toggle(this, direction);
+                SecondaryChatManager.showDirectionPopup(this, e);
             });
         }
         
@@ -379,11 +921,11 @@ class VoiceChatClient {
         fileInput.style.display = 'none';
         fileInput.id = 'image-upload-input';
         document.body.appendChild(fileInput);
-        
         const attachBtn = document.querySelector('.attach-btn');
+        
         if (mainContent) {
             mainContent.addEventListener('click', (e) => {
-                if (!e.target.closest('.message-input, .send-btn, .mic-toggle-btn, .settings-btn, .toggle-members-btn, .current-room-title, .toggle-sidebar-btn, .attach-btn, .split-toggle-btn')) {
+                if (!e.target.closest('.message-input, .send-btn, .mic-toggle-btn, .settings-btn, .toggle-members-btn, .current-room-title, .toggle-sidebar-btn, .attach-btn, .split-toggle-btn, .poll-create-btn')) {
                     this.elements.sidebar.classList.remove('open');
                     this.elements.membersPanel.classList.remove('open');
                 }
@@ -489,65 +1031,77 @@ class VoiceChatClient {
         }
     }
 
-    initHistoryObserver() {
-        console.log('[History] 🕵️‍♂️ initHistoryObserver вызван');
-        if (this.historyObserver) this.historyObserver.disconnect();
-        
-        const sentinel = this.elements.historySentinel || this.elements.messagesContainer?.querySelector('.history-sentinel');
-        if (!sentinel || !this.elements.messagesContainer) {
-            console.error('[History] ❌ Sentinel или messagesContainer не найдены. Observer не запущен.');
+    handlePollCommand(text) {
+        const currentRoomData = this.rooms?.find(r => r.id === this.currentRoom);
+        if (currentRoomData?.imagesOnly && this.userId !== currentRoomData?.ownerId) {
+            UIManager.showError('📷 В этом гнезде разрешены только картинки, опросы недоступны');
             return;
         }
-        console.log('[History] ✅ Sentinel найден в DOM');
-        
+        const args = text.slice(5).trim();
+        if (!args) {
+            UIManager.showError('Использование: /poll "Вопрос" "Вариант 1" "Вариант 2" ...');
+            return;
+        }
+        const matches = args.match(/"([^"]*)"/g);
+        if (!matches || matches.length < 3) {
+            UIManager.showError('Требуется вопрос и минимум два варианта в кавычках');
+            return;
+        }
+        const parsed = matches.map(m => m.replace(/"/g, '').trim());
+        const question = parsed[0];
+        const options = parsed.slice(1);
+        if (question.length < 1 || question.length > 256) {
+            UIManager.showError('Вопрос должен быть от 1 до 256 символов');
+            return;
+        }
+        if (options.length < 2 || options.length > 10) {
+            UIManager.showError('Нужно от 2 до 10 вариантов ответа');
+            return;
+        }
+        for (const opt of options) {
+            if (opt.length < 1 || opt.length > 100) {
+                UIManager.showError('Каждый вариант должен быть от 1 до 100 символов');
+                return;
+            }
+        }
+        this.createPoll(this.currentRoom, question, options, { multiple: false });
+    }
+
+    initHistoryObserver() {
+        if (this.historyObserver) this.historyObserver.disconnect();
+        const sentinel = this.elements.historySentinel || this.elements.messagesContainer?.querySelector('.history-sentinel');
+        if (!sentinel || !this.elements.messagesContainer) return;
         this.historyObserver = new IntersectionObserver(
             (entries) => {
-                const entry = entries[0];
-                console.log(`[History] 👁️ Intersection: isIntersecting=${entry.isIntersecting}, hasMore=${this.hasMoreHistory}, isLoading=${this.isHistoryLoading}`);
-                if (entry.isIntersecting && this.hasMoreHistory && !this.isHistoryLoading) {
-                    console.log('[History] 🔥 Sentinel в зоне видимости -> вызов loadHistory()');
+                if (entries[0].isIntersecting && this.hasMoreHistory && !this.isHistoryLoading) {
                     this.loadHistory();
                 }
             },
             { root: this.elements.messagesContainer, rootMargin: '150px 0px 0px 0px', threshold: 0.01 }
         );
         this.historyObserver.observe(sentinel);
-        console.log('[History] 👁️ Observer успешно запущен');
     }
 
     async loadHistory() {
-        console.log(`[History] 📦 loadHistory: loading=${this.isHistoryLoading}, hasMore=${this.hasMoreHistory}, oldestId=${this.oldestMessageId}, room=${this.currentRoom}`);
-        if (this.isHistoryLoading || !this.hasMoreHistory || !this.currentRoom) {
-            console.log('[History] 🛑 Загрузка отменена (условия не выполнены)');
-            return;
-        }
-        
+        if (this.isHistoryLoading || !this.hasMoreHistory || !this.currentRoom) return;
         this.isHistoryLoading = true;
         this.updateHistorySentinel(true);
         try {
-            console.log(`[History] 🌐 Запрос к серверу: loadMoreMessages(room=${this.currentRoom}, before=${this.oldestMessageId})`);
             const result = await TextChatManager.loadMoreMessages(this, this.currentRoom, this.oldestMessageId);
-            
             if (result && result.messages && result.messages.length > 0) {
                 this.oldestMessageId = result.messages[0].id;
                 this.hasMoreHistory = result.hasMore;
-                console.log(`[History] ✅ Получено ${result.messages.length} сообщений. hasMore=${this.hasMoreHistory}, новый oldestId=${this.oldestMessageId}`);
             } else {
-                console.log('[History] ⚠️ Сервер вернул 0 сообщений или пустой результат.');
                 this.hasMoreHistory = false;
             }
-            
             if (!this.hasMoreHistory) {
-                console.log('[History] 🚫 История исчерпана, удаляем sentinel.');
                 this.removeHistorySentinel();
             }
         } catch (error) {
-            console.error('[History] ❌ Ошибка загрузки истории:', error);
-            this.hasMoreHistory = true; // Разрешаем повторную попытку при ошибке
+            this.hasMoreHistory = true;
         } finally {
             this.isHistoryLoading = false;
             this.updateHistorySentinel(false);
-            console.log('[History] 🏁 loadHistory завершен, isHistoryLoading=false');
         }
     }
 
@@ -559,7 +1113,6 @@ class VoiceChatClient {
     }
 
     removeHistorySentinel() {
-        console.log('[History] 🗑️ removeHistorySentinel вызван');
         if (this.historyObserver) {
             this.historyObserver.disconnect();
             this.historyObserver = null;
@@ -606,68 +1159,43 @@ class VoiceChatClient {
             return false;
         }
         if (!this.recvTransport || this.recvTransport.closed || this.recvTransport.connectionState === 'failed') {
-            this.pendingProducersRef.push(producerData);
-            return false;
-        }
-        try {
-            this.socket.emit(
-                'consume',
-                {
+            const recoveryState = this.consumerRecoveryState.get(producerId);
+            if (!recoveryState || !recoveryState.exhausted) {
+                this.pendingProducersRef.push(producerData);
+                this._producersPendingConsume.push({
                     producerId,
-                    rtpCapabilities: this.device.rtpCapabilities,
-                    transportId: this.recvTransport.id,
-                    clientId: this.clientID
-                },
-                async (response) => {
-                    if (!response?.success || !response.consumerParameters) return;
-                    try {
-                        const { consumer, audioElement } = await MediaManager.createConsumer(this, response.consumerParameters);
-                        this.consumerState.set(response.consumerParameters.producerId, {
-                            status: 'active',
-                            consumer,
-                            audioElement,
-                            lastError: null
-                        });
-                        this.consumedProducerIdsRef.add(response.consumerParameters.producerId);
-                        const members = MembersManager.getMembers();
-                        const member = members.find(
-                            (m) => m.clientId === response.consumerParameters.peerId || m.userId === response.consumerParameters.peerId
-                        );
-                        const userId = member?.userId || response.consumerParameters.peerId;
-                        if (userId) {
-                            if (!window.producerUserMap) window.producerUserMap = new Map();
-                            window.producerUserMap.set(response.consumerParameters.producerId, userId);
-                            UIManager.showVolumeSliderByUserId(response.consumerParameters.producerId, userId);
-                            VolumeBoostManager.attachToAudioElement(audioElement, userId, 1.0).catch(() => {});
-                        }
-                    } catch (error) {
-                        console.error('Критическая ошибка создания консьюмера:', error);
-                    }
-                }
-            );
-            return true;
-        } catch (error) {
-            console.error('Критическая ошибка запроса consume:', error);
-            this.pendingProducersRef.push(producerData);
+                    producerData,
+                    addedAt: Date.now()
+                });
+            }
             return false;
         }
+        this._attemptConsumeWithRetry(producerId, producerData);
+        return true;
     }
 
     _processPendingProducers() {
         if (this._isProcessingConsumers) return;
         this._isProcessingConsumers = true;
+        this._transportReadyForConsume = true;
         if (!this.recvTransport || this.recvTransport.closed || this.recvTransport.connectionState === 'failed') {
             this._isProcessingConsumers = false;
+            this._transportReadyForConsume = false;
             return;
         }
         const toProcess = [...this.pendingProducersRef];
         this.pendingProducersRef = [];
         const promises = toProcess.map((p) =>
-            this.ensureConsumer(p.id || p.producerId, p).catch((e) => console.error('Критическая ошибка обработки продюсера:', e))
+            this.ensureConsumer(p.id || p.producerId, p).catch((e) => {
+                this._scheduleConsumerRetry(p.id || p.producerId, p, e.message);
+            })
         );
         Promise.allSettled(promises).finally(() => {
             this._isProcessingConsumers = false;
-            if (this.pendingProducersRef.length > 0) setTimeout(() => this._processPendingProducers(), 200);
+            this._processPendingConsumeQueue();
+            if (this.pendingProducersRef.length > 0) {
+                setTimeout(() => this._processPendingProducers(), 200);
+            }
         });
     }
 
@@ -708,7 +1236,6 @@ class VoiceChatClient {
             }
             AuthManager.showAuthModal(this);
         } catch (err) {
-            console.error('Критическая ошибка автоподключения:', err);
             UIManager.showError('Критическая ошибка: не удалось загрузить систему авторизации');
         }
     }
@@ -760,9 +1287,7 @@ class VoiceChatClient {
                 body: JSON.stringify({ serverId })
             });
             if (response.ok) UIManager.clearUnreadForRoom(serverId, this.currentRoom);
-        } catch (error) {
-            console.error('Критическая ошибка очистки непрочитанных:', error);
-        }
+        } catch (error) {}
     }
 
     setupSocketConnection() {
@@ -787,9 +1312,9 @@ class VoiceChatClient {
                     tokenVersion: this.tokenVersion
                 },
                 reconnection: true,
-                reconnectionAttempts: 5,
+                reconnectionAttempts: 10,
                 reconnectionDelay: 1000,
-                reconnectionDelayMax: 5000,
+                reconnectionDelayMax: 30000,
                 timeout: 20000
             });
             this.socketRoom = this.currentRoom;
@@ -799,63 +1324,27 @@ class VoiceChatClient {
                 if (data.success) this.setConnectionState(CONNECTION_STATE.CONNECTED, this.currentRoom);
                 else this.setConnectionState(CONNECTION_STATE.ERROR, this.currentRoom);
             });
+            
             socket.on('user-speaking-state', (data) => {
                 const { userId, speaking, timestamp } = data;
                 MembersManager.updateMember(userId, { isMicActive: speaking, lastSpeakingUpdate: timestamp });
                 UIManager.updateMemberMicState(userId, speaking);
                 if (userId === this.userId) this.sendMicStateToElectron();
             });
+            
             socket.on('user-presence-change', (data) => {
-                const { userId, state, timestamp } = data;
+                const { userId, state } = data;
                 const connectionState = {
-                    connected: 'connected', suspect: 'connecting', offline: 'disconnected', disconnected: 'disconnected'
+                    connected: 'connected',
+                    suspect: 'connecting',
+                    offline: 'disconnected',
+                    disconnected: 'disconnected'
                 }[state] || 'unknown';
                 MembersManager.setConnectionState(userId, connectionState);
                 if (state === 'offline' && userId === this.userId) this._reconcileOfflineState();
             });
-            socket.on('consumerParameters', async (data) => {
-                if (!this.consumedProducerIdsRef.has(data.producerId)) {
-                    try {
-                        const { consumer, audioElement } = await MediaManager.createConsumer(this, data);
-                        this.consumerState.set(data.producerId, { status: 'active', consumer, audioElement, lastError: null });
-                        const members = MembersManager.getMembers();
-                        const member = members.find((m) => m.clientId === data.peerId || m.userId === data.peerId);
-                        const userId = member?.userId || data.peerId;
-                        if (userId) {
-                            if (!window.producerUserMap) window.producerUserMap = new Map();
-                            window.producerUserMap.set(data.producerId, userId);
-                            UIManager.showVolumeSliderByUserId(data.producerId, userId);
-                            VolumeBoostManager.attachToAudioElement(audioElement, userId, 1.0).catch(() => {});
-                        }
-                    } catch (error) {
-                        console.error('Критическая ошибка consumerParameters:', error);
-                        this.consumerState.set(data.producerId, { status: 'error', consumer: null, lastError: error });
-                    }
-                }
-            });
-            socket.on('producerPaused', (data) => {
-                const { producerId, peerId } = data;
-                const state = this.consumerState.get(producerId);
-                if (state?.audioElement) state.audioElement.muted = true;
-                if (peerId) MembersManager.updateMember(peerId, { isMicActive: false });
-                UIManager.updateMemberMicState(peerId, false);
-            });
-            socket.on('producerResumed', (data) => {
-                const { producerId, peerId } = data;
-                const state = this.consumerState.get(producerId);
-                if (state?.audioElement) state.audioElement.muted = false;
-                if (peerId) MembersManager.updateMember(peerId, { isMicActive: true });
-                UIManager.updateMemberMicState(peerId, true);
-            });
-            socket.on('new-producer', async (data) => {
-                if (data.clientID !== this.clientID && !this.consumedProducerIdsRef.has(data.producerId)) {
-                    this.pendingProducersRef.push(data);
-                    this._processPendingProducers();
-                } else {
-                    this.consumedProducerIdsRef.add(data.producerId);
-                }
-            });
-            socket.on('current-producers', async (data) => {
+            
+            socket.on('existing-producers', (data) => {
                 if (!data?.producers || !Array.isArray(data.producers)) return;
                 for (const producer of data.producers) {
                     if (producer.clientID !== this.clientID && !this.consumedProducerIdsRef.has(producer.id)) {
@@ -866,25 +1355,124 @@ class VoiceChatClient {
                 }
                 this._processPendingProducers();
             });
+            
+            socket.on('consumerParameters', async (data) => {
+                if (!this.consumedProducerIdsRef.has(data.producerId)) {
+                    try {
+                        const { consumer, audioElement } = await MediaManager.createConsumer(this, data);
+                        this._resetConsumerRecoveryState(data.producerId);
+                        this.consumerState.set(data.producerId, {
+                            status: 'active',
+                            consumer,
+                            audioElement,
+                            lastError: null
+                        });
+                        this.consumedProducerIdsRef.add(data.producerId);
+                        const members = MembersManager.getMembers();
+                        const member = members.find((m) => m.clientId === data.peerId || m.userId === data.peerId);
+                        const userId = member?.userId || data.peerId;
+                        if (userId) {
+                            if (!window.producerUserMap) window.producerUserMap = new Map();
+                            window.producerUserMap.set(data.producerId, userId);
+                            UIManager.showVolumeSliderByUserId(data.producerId, userId);
+                            VolumeBoostManager.attachToAudioElement(audioElement, userId, 1.0).catch(() => {});
+                        }
+                        if (this.diagnosticActive) {
+                            this._notifyDiagnosticUpdate();
+                        }
+                    } catch (error) {
+                        this.consumerState.set(data.producerId, { status: 'error', consumer: null, lastError: error });
+                        this._scheduleConsumerRetry(data.producerId, { producerId: data.producerId }, error.message);
+                    }
+                }
+            });
+            
+            socket.on('room-mode-updated', (data) => {
+                const { roomId, imagesOnly, readOnly } = data;
+                const roomIndex = this.rooms?.findIndex(r => r.id === roomId);
+                if (roomIndex !== -1 && this.rooms[roomIndex]) {
+                    if (imagesOnly !== undefined) this.rooms[roomIndex].imagesOnly = imagesOnly;
+                    if (readOnly !== undefined) this.rooms[roomIndex].readOnly = readOnly;
+                    if (roomId === this.currentRoom) {
+                        if (imagesOnly) {
+                            UIManager.addMessage('System', `📷 Режим "только картинки" ${imagesOnly ? 'включён' : 'выключен'}`, null, 'system');
+                        }
+                    }
+                }
+            });
+            
+            socket.on('producerPaused', (data) => {
+                const { producerId, peerId } = data;
+                const state = this.consumerState.get(producerId);
+                if (state?.audioElement) state.audioElement.muted = true;
+                if (peerId) MembersManager.updateMember(peerId, { isMicActive: false });
+                UIManager.updateMemberMicState(peerId, false);
+            });
+            
+            socket.on('producerResumed', (data) => {
+                const { producerId, peerId } = data;
+                const state = this.consumerState.get(producerId);
+                if (state?.audioElement) state.audioElement.muted = false;
+                if (peerId) MembersManager.updateMember(peerId, { isMicActive: true });
+                UIManager.updateMemberMicState(peerId, true);
+            });
+            
+            socket.on('new-producer', async (data) => {
+                if (data.clientID !== this.clientID && !this.consumedProducerIdsRef.has(data.producerId)) {
+                    this.pendingProducersRef.push(data);
+                    this._processPendingProducers();
+                } else {
+                    this.consumedProducerIdsRef.add(data.producerId);
+                }
+            });
+            
+            socket.on('producer-closed', (data) => {
+                const { producerId } = data;
+                this._resetConsumerRecoveryState(producerId);
+                const state = this.consumerState.get(producerId);
+                if (state) {
+                    if (state.audioElement) {
+                        state.audioElement.remove();
+                    }
+                    if (state.consumer && !state.consumer.closed) {
+                        try { state.consumer.close(); } catch (e) {}
+                    }
+                    this.consumerState.delete(producerId);
+                }
+                this.consumedProducerIdsRef.delete(producerId);
+            });
+            
             socket.on('room-participants-updated', (data) => {
                 MembersManager.updateAllMembersWithStatus(data.online || [], data.offline || []);
                 this._reconcileParticipantsState(data);
             });
+            
             socket.on('room-participants', (participants) => {
                 const processed = participants.map((p) => (p.userId === this.userId ? { ...p, isOnline: true } : p));
                 MembersManager.updateAllMembers(processed);
             });
-            socket.on('user-joined', () => this.playSound('user-join'));
+            
+socket.on('user-joined', () => {
+    SoundManager.playSound(SoundManager.SoundTypes.SOUND_USER_JOIN);
+});
+            
             socket.on('user-left', async (data) => {
                 const memberElement = document.querySelector(`.member-item[data-user-id="${data.userId}"]`);
                 if (memberElement) {
                     const slider = memberElement.querySelector('.member-volume-slider');
-                    if (slider) { slider.style.display = 'none'; slider.dataset.producerId = ''; }
+                    if (slider) {
+                        slider.style.display = 'none';
+                        slider.dataset.producerId = '';
+                    }
                     const micIndicator = memberElement.querySelector('.mic-indicator');
-                    if (micIndicator) { micIndicator.className = 'mic-indicator'; micIndicator.title = 'Микрофон выключен'; }
+                    if (micIndicator) {
+                        micIndicator.className = 'mic-indicator';
+                        micIndicator.title = 'Микрофон выключен';
+                    }
                 }
-                this.playSound('user-leave');
+SoundManager.playSound(SoundManager.SoundTypes.SOUND_USER_LEAVE);
             });
+            
             socket.on('mic-indicator-update', (data) => {
                 const { userId, isActive } = data;
                 const member = MembersManager.getMember(userId);
@@ -893,89 +1481,568 @@ class VoiceChatClient {
                     UIManager.updateMemberMicState(userId, isActive);
                 }
             });
+            
             socket.on('unread-update', (data) => {
                 UIManager.setUnreadCount(data.serverId, data.roomId, data.count, data.hasMention, data.personalCount || 0);
             });
+            
             socket.on('message-deleted', (data) => {
                 UIManager.removeMessageFromUI(data.messageId);
             });
+            
             socket.on('message-reaction-updated', (data) => {
-                if (data?.messageId && data?.reactions) UIManager.updateMessageReactions(data.messageId, data.reactions);
+                if (data?.messageId && data?.reactions) {
+                    UIManager.updateMessageReactions(data.messageId, data.reactions);
+                }
             });
+            
+            socket.on('message-updated', (data) => {
+                if (data?.messageId && data?.updatedMessage) {
+                    const msg = data.updatedMessage;
+                    const updateWithRetry = (retries = 5) => {
+                        const msgEl = document.querySelector(`.message[data-message-id="${data.messageId}"]`);
+                        if (msgEl) {
+                            if (msg.embed) {
+                                MessageRenderer.updateMessageEmbed(data.messageId, msg.embed);
+                            }
+                            if (msg.reactions) {
+                                UIManager.updateMessageReactions(data.messageId, msg.reactions);
+                            }
+                            if (msg.text) {
+                                const textEl = msgEl.querySelector('.message-text');
+                                if (textEl) {
+                                    textEl.innerHTML = MessageRenderer.escapeHtmlAndFormat(msg.text);
+                                }
+                            }
+                        } else if (retries > 0) {
+                            setTimeout(() => updateWithRetry(retries - 1), 100);
+                        }
+                    };
+                    updateWithRetry();
+                }
+            });
+            
             socket.on('init-secondary-chat', async (data) => {
                 if (data?.roomId && !this.secondaryChat.enabled) {
-                    await SecondaryChatManager.toggle(this, 'side');
+                    const direction = SecondaryChatManager.getDirection();
+                    await SecondaryChatManager.toggle(this, direction);
                     setTimeout(() => {
-                        if (SecondaryChatManager.secondaryChat.enabled) SecondaryChatManager.joinRoom(this, data.roomId);
+                        if (SecondaryChatManager.secondaryChat.enabled) {
+                            SecondaryChatManager.joinRoom(this, data.roomId);
+                        }
                     }, 150);
                 }
             });
-            socket.on('live-notification', (payload) => { UIManager.showLiveNotification(this, payload); });
+            
+            socket.on('live-notification', (payload) => {
+SoundManager.playSound(SoundManager.SoundTypes.SOUND_POPUP);
+    UIManager.showLiveNotification(this, payload);
+
+            });
+            
+socket.on('personal-notification', (payload) => {
+    let shouldShowBanner = false;
+    let soundType = null;
+    
+    if (payload.type === 'reply') {
+        shouldShowBanner = SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_REPLY);
+        soundType = SoundManager.SoundTypes.SOUND_REPLY;
+    } else if (payload.type === 'mention' || payload.type === 'name_mention') {
+        shouldShowBanner = SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_MENTION);
+        soundType = SoundManager.SoundTypes.SOUND_MENTION;
+    } else if (payload.isDirectMessage) {
+        shouldShowBanner = SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_DM);
+        soundType = SoundManager.SoundTypes.SOUND_DM;
+    }
+    
+    if (shouldShowBanner) {
+        UIManager.showLiveNotification(this, payload);
+    }
+    
+    if (soundType) {
+        SoundManager.playSound(soundType);
+    }
+});
+            
             socket.on('new-message', (message) => {
                 if (!message || !message.roomId) return;
                 if (message.isForSecondary) {
-                    if (SecondaryChatManager.secondaryChat.enabled && SecondaryChatManager.secondaryChat.roomId === message.roomId) {
-                        SecondaryChatManager.addMessage(
-                            message.username, message.text, message.timestamp, message.type || 'text',
-                            message.imageUrl, message.id, message.readBy || [], message.userId, false, message.thumbnailUrl, message.replyTo, message.reactions || {}
-                        );
-                        if (message.type !== 'image' && message.username !== this.username) this.playSound('message');
-                    }
-                    return;
-                }
-                if (message.roomId === this.currentRoom) {
-                    UIManager.addMessage(
+                    SecondaryChatManager.addMessage(
                         message.username, message.text, message.timestamp, message.type || 'text',
                         message.imageUrl, message.id, message.readBy || [], message.userId,
-                        message.broadcast || false, message.thumbnailUrl, null, message.replyTo, message.reactions || {}
+                        message.broadcast || false, message.thumbnailUrl, message.replyTo,
+                        message.reactions || {}, message.poll, message.forwardedFrom, message.pollRef
                     );
-                    if (message.type !== 'image' && message.username !== this.username) this.playSound('message');
+                    return;
                 }
+
+if (message.roomId === this.currentRoom) {
+    UIManager.addMessage(
+        message.username, message.text, message.timestamp, message.type || 'text',
+        message.imageUrl, message.id, message.readBy || [], message.userId,
+        message.broadcast || false, message.thumbnailUrl, null, message.replyTo,
+        message.reactions || {}, message.poll, message.forwardedFrom, message.pollRef, message.embed
+    );
+    
+    if (message.username !== this.username) {
+        if (message.isDirectMessage) {
+            SoundManager.playSound(SoundManager.SoundTypes.SOUND_DM);
+            if (SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_DM)) {
+                // Уведомление для DM уже показывается через personal-notification
+            }
+        } else {
+            const events = SoundManager.analyzePersonalEvents(message, this.userId, this.username);
+            
+            if (events.hasReply) {
+                SoundManager.playSound(SoundManager.SoundTypes.SOUND_CURRENT_REPLY);
+                if (SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_CURRENT_REPLY)) {
+                    UIManager.showLiveNotification(this, {
+                        ...message,
+                        type: 'reply',
+                        sender: message.username,
+                        roomName: this.currentRoomData?.name || 'текущий чат'
+                    });
+                }
+            } else if (events.hasMention) {
+                SoundManager.playSound(SoundManager.SoundTypes.SOUND_CURRENT_MENTION);
+                if (SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_CURRENT_MENTION)) {
+                    UIManager.showLiveNotification(this, {
+                        ...message,
+                        type: 'mention',
+                        sender: message.username,
+                        roomName: this.currentRoomData?.name || 'текущий чат'
+                    });
+                }
+            } else if (events.hasNameMention) {
+                SoundManager.playSound(SoundManager.SoundTypes.SOUND_CURRENT_NAME);
+                if (SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_CURRENT_NAME)) {
+                    UIManager.showLiveNotification(this, {
+                        ...message,
+                        type: 'name_mention',
+                        sender: message.username,
+                        roomName: this.currentRoomData?.name || 'текущий чат'
+                    });
+                }
+            }
+        }
+    }
+}
+
             });
+            
             socket.on('messages-read-status', (updates) => {
                 if (updates && Array.isArray(updates)) {
                     for (const { id, readBy } of updates) {
                         const msgEl = document.querySelector(`.message[data-message-id="${id}"]`);
-                        if (msgEl && msgEl.dataset.userId === this.userId) UIManager.updateMessageReadStatus(id, readBy || []);
+                        if (msgEl && msgEl.dataset.userId === this.userId) {
+                            UIManager.updateMessageReadStatus(id, readBy || []);
+                        }
                     }
                 }
             });
-            socket.on('request-client-diagnostic', async ({ roomId, requestId }) => {
+            
+            socket.on('message-pinned', (data) => {
+                const { roomId, pinnedMessage } = data;
+                if (!roomId || !pinnedMessage) return;
+                if (!this.pinnedMessages.has(roomId)) {
+                    this.pinnedMessages.set(roomId, []);
+                }
+                const roomPinned = this.pinnedMessages.get(roomId);
+                const existingIndex = roomPinned.findIndex(p => p.id === pinnedMessage.id);
+                if (existingIndex === -1) {
+                    roomPinned.push(pinnedMessage);
+                    roomPinned.sort((a, b) => new Date(b.pinnedAt) - new Date(a.pinnedAt));
+                }
+                this.pinnedMessages.set(roomId, roomPinned);
+                this.currentPinnedIndex.set(roomId, 0);
+                if (roomId === this.currentRoom) {
+                    UIManager.renderPinnedMessagesBar(this);
+                    UIManager.addMessage('System', `📌 Сообщение от ${pinnedMessage.username} закреплено`, null, 'system');
+                }
+            });
+            
+            socket.on('message-unpinned', (data) => {
+                const { roomId, messageId } = data;
+                if (!roomId || !messageId) return;
+                if (this.pinnedMessages.has(roomId)) {
+                    const roomPinned = this.pinnedMessages.get(roomId);
+                    const filtered = roomPinned.filter(p => p.id !== messageId);
+                    this.pinnedMessages.set(roomId, filtered);
+                    if (this.currentPinnedIndex.has(roomId)) {
+                        const idx = this.currentPinnedIndex.get(roomId);
+                        if (idx >= filtered.length) {
+                            this.currentPinnedIndex.set(roomId, 0);
+                        }
+                    }
+                }
+                if (roomId === this.currentRoom) {
+                    if (this.pinnedMessages.get(roomId)?.length === 0) {
+                        UIManager.hidePinnedMessagesBar();
+                    } else {
+                        UIManager.renderPinnedMessagesBar(this);
+                    }
+                    UIManager.addMessage('System', `📌 Сообщение откреплено`, null, 'system');
+                }
+            });
+            
+            socket.on('pinned-messages-list', (data) => {
+                const { roomId, pinnedMessages } = data;
+                if (!roomId) return;
+                const sorted = (pinnedMessages || []).sort((a, b) => new Date(b.pinnedAt) - new Date(a.pinnedAt));
+                this.pinnedMessages.set(roomId, sorted);
+                this.currentPinnedIndex.set(roomId, 0);
+                if (roomId === this.currentRoom) {
+                    if (sorted.length > 0) {
+                        UIManager.renderPinnedMessagesBar(this);
+                    } else {
+                        UIManager.hidePinnedMessagesBar();
+                    }
+                }
+            });
+            
+            socket.on('poll:updated', (data) => {
+                const { originalRoomId, pollId, poll, isForSecondary } = data;
+                if (isForSecondary) {
+                    SecondaryChatManager.updatePollInSecondary(originalRoomId, poll);
+                    return;
+                }
+                const updateElement = (msgEl, msgPollId, msgPollRef) => {
+                    if (!msgEl) return;
+                    const container = msgEl.querySelector('.poll-container');
+                    if (!container) return;
+                    const pollData = {
+                        poll: poll,
+                        messageId: msgPollId,
+                        roomId: this.currentRoom,
+                        pollRef: msgPollRef
+                    };
+                    msgEl.dataset.pollData = JSON.stringify(pollData);
+                    import('./PollWidget.js').then(m => {
+                        m.default.render(container, pollData, this);
+                    });
+                };
+                const originalMsg = document.querySelector(`.message[data-message-id="${pollId}"]`);
+                if (originalMsg) {
+                    updateElement(originalMsg, pollId, null);
+                }
+                const allMessages = document.querySelectorAll('.message.poll-message');
+                allMessages.forEach(msgEl => {
+                    const msgId = msgEl.dataset.messageId;
+                    if (msgId === pollId) return;
+                    try {
+                        const existingData = JSON.parse(msgEl.dataset.pollData || '{}');
+                        if (existingData.pollRef && existingData.pollRef.originalPollId === pollId) {
+                            updateElement(msgEl, msgId, existingData.pollRef);
+                        }
+                    } catch (e) {
+                        const pollRefAttr = msgEl.dataset.pollRef;
+                        if (pollRefAttr) {
+                            try {
+                                const pollRef = JSON.parse(pollRefAttr);
+                                if (pollRef.originalPollId === pollId) {
+                                    updateElement(msgEl, msgId, pollRef);
+                                }
+                            } catch (e2) {}
+                        }
+                    }
+                });
+            });
+            
+            socket.on('poll:closed', (data) => {
+                const { roomId, pollId } = data;
+                if (roomId === this.currentRoom) {
+                    const msgEl = document.querySelector(`.message[data-message-id="${pollId}"]`);
+                    if (msgEl) {
+                        const container = msgEl.querySelector('.poll-container');
+                        if (container) {
+                            container.classList.add('poll-closed');
+                            const voteBtn = container.querySelector('.poll-vote-btn');
+                            if (voteBtn) voteBtn.style.display = 'none';
+                        }
+                    }
+                }
+            });
+            
+            socket.on('room-snapshot', (data) => {
+                if (data?.producers && Array.isArray(data.producers)) {
+                    for (const producer of data.producers) {
+                        if (producer.clientID !== this.clientID && !this.consumedProducerIdsRef.has(producer.id)) {
+                            this.pendingProducersRef.push(producer);
+                        }
+                    }
+                    this._processPendingProducers();
+                }
+            });
+            
+            socket.on('ice-restart-result', (data) => {});
+            
+            socket.on('request-client-diagnostic', async ({ roomId }) => {
                 if (roomId !== this.currentRoom) return;
                 try {
                     const state = await this.gatherClientDiagnosticState();
+                    state.recoveryInfo = {
+                        consumerRecovery: Array.from(this.consumerRecoveryState.entries()).map(([id, s]) => ({
+                            producerId: id.substring(0, 8),
+                            attempts: s.attempts,
+                            exhausted: s.exhausted || false
+                        })),
+                        iceRestart: Array.from(this.iceRestartState.entries()).map(([id, s]) => ({
+                            transportId: id.substring(0, 8),
+                            attempts: s.attempts
+                        })),
+                        pendingConsumeQueue: this._producersPendingConsume.length,
+                        transportReady: this._transportReadyForConsume
+                    };
                     socket.emit('client-diagnostic-response', { roomId, data: state });
-                } catch (err) { console.error('Критическая ошибка диагностики:', err); }
+                } catch (err) {}
             });
+            
             socket.on('diagnostic-update', (snapshot) => {
-                if (this.diagnosticActive) UIManager.renderDiagnosticSnapshot(snapshot);
+                if (this.diagnosticActive) {
+                    UIManager.renderDiagnosticSnapshot(snapshot);
+                }
             });
+            
             socket.on('error', (error) => UIManager.showError('Ошибка соединения: ' + (error.message || 'неизвестная ошибка')));
+            
             socket.on('connect', () => {
                 UIManager.updateStatus('Подключено', 'connected');
                 this.setConnectionState(CONNECTION_STATE.CONNECTED, this.currentRoom);
                 if (this.currentRoom) {
                     socket.emit('join-room', { roomId: this.currentRoom });
                     socket.emit('request-mic-states', { roomId: this.currentRoom });
+                    this.fetchPinnedMessages(this.currentRoom);
                 }
                 this.loadUnreadCounts();
                 this.startPingInterval();
             });
+            
             socket.on('disconnect', (reason) => {
                 UIManager.updateStatus('Отключено', 'disconnected');
                 this.setConnectionState(CONNECTION_STATE.DISCONNECTED, this.currentRoom);
                 this.stopPingInterval();
+                this._transportReadyForConsume = false;
                 if (reason !== 'io client disconnect' && this.currentRoom && !this.isReconnecting) {
-                    setTimeout(() => {
-                        if (this.currentRoom && !this.isReconnecting && !this._reconnectInProgress) this.reconnectToRoom(this.currentRoom);
-                    }, 2000);
+                    this._scheduleSocketReconnect(reason);
                 }
             });
         } catch (error) {
-            console.error('Критическая ошибка подключения сокета:', error);
             UIManager.showError('Ошибка подключения к серверу');
             this.setConnectionState(CONNECTION_STATE.ERROR, this.currentRoom);
         }
+    }
+
+    _scheduleSocketReconnect(reason) {
+        const key = 'socket';
+        let state = this.transportRecoveryState.get(key);
+        if (!state) {
+            state = { attempts: 0, timer: null };
+        } else {
+            state.attempts++;
+        }
+        if (state.attempts >= 5) {
+            this.transportRecoveryState.delete(key);
+            return;
+        }
+        const delay = this._calculateBackoffDelay(state.attempts, 2000, 30000, 0.2);
+        if (state.timer) {
+            clearTimeout(state.timer);
+        }
+        state.timer = this._safeSetTimeout(() => {
+            if (this.currentRoom && !this.isReconnecting) {
+                this.reconnectToRoom(this.currentRoom);
+            }
+        }, delay, `socket-reconnect`);
+        this.transportRecoveryState.set(key, state);
+    }
+
+    _isMessageDirectedToMe(message) {
+        if (!message || !this.userId) return false;
+        if (message.directedToUsers && Array.isArray(message.directedToUsers)) {
+            return message.directedToUsers.includes(this.userId);
+        }
+        const events = SoundManager.analyzePersonalEvents(message, this.userId, this.username);
+        return events.hasMention || events.hasReply || events.hasNameMention;
+    }
+
+    createPoll(roomId, question, options, settings = {}) {
+        if (!this.socket || !this.socket.connected) {
+            UIManager.showError('Нет подключения к серверу');
+            return;
+        }
+        if (!roomId) {
+            UIManager.showError('Не указана комната');
+            return;
+        }
+        this.socket.emit('create-poll', { roomId, question, options, settings });
+    }
+
+    votePoll(roomId, pollId, optionIds) {
+        if (!this.socket || !this.socket.connected) {
+            UIManager.showError('Нет подключения к серверу');
+            return;
+        }
+        if (!roomId || !pollId || !optionIds) {
+            UIManager.showError('Неверные данные для голосования');
+            return;
+        }
+        this.socket.emit('poll:vote', { roomId, pollId, optionIds });
+    }
+
+    closePoll(roomId, pollId) {
+        if (!this.socket || !this.socket.connected) {
+            UIManager.showError('Нет подключения к серверу');
+            return;
+        }
+        if (!roomId || !pollId) {
+            UIManager.showError('Неверные данные для закрытия опроса');
+            return;
+        }
+        this.socket.emit('poll:close', { roomId, pollId });
+    }
+
+    forwardMessage(messageId, targetRoomId) {
+        if (!this.socket || !this.socket.connected) {
+            UIManager.showError('Нет подключения к серверу');
+            return;
+        }
+        if (!messageId || !targetRoomId || !this.currentRoom) {
+            UIManager.showError('Неверные данные для пересылки');
+            return;
+        }
+        this.socket.emit('forward-message', {
+            messageId,
+            sourceRoomId: this.currentRoom,
+            targetRoomId
+        });
+    }
+
+    async jumpToForwardSource(forwardedFrom) {
+        if (!forwardedFrom) return;
+        const { serverId, roomId, messageId } = forwardedFrom;
+        try {
+            const serverExists = this.servers.some(s => s.id === serverId);
+            if (!serverExists) {
+                const res = await fetch(`${this.API_SERVER_URL}/api/servers/${serverId}/join`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+                    body: JSON.stringify({ userId: this.userId, token: this.token })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (!this.servers.some(s => s.id === data.server.id)) {
+                        this.servers.push(data.server);
+                    }
+                }
+            }
+            this.currentServerId = serverId;
+            this.currentServer = this.servers.find(s => s.id === serverId);
+            localStorage.setItem('lastServerId', serverId);
+            await RoomManager.loadRoomsForServer(this, serverId);
+            const roomExists = this.rooms?.some(r => r.id === roomId);
+            if (roomExists) {
+                await this.joinRoom(roomId, false);
+                setTimeout(() => {
+                    UIManager.scrollToMessage(messageId, null, true);
+                }, 500);
+            } else {
+                UIManager.showError('У вас нет доступа к этому гнезду');
+            }
+        } catch (error) {
+            UIManager.showError('Не удалось перейти к исходному сообщению');
+        }
+    }
+
+    pinMessage(roomId, messageId) {
+        if (!this.socket || !this.socket.connected) {
+            UIManager.showError('Нет подключения к серверу');
+            return;
+        }
+        if (!roomId || !messageId) {
+            UIManager.showError('Не указана комната или сообщение');
+            return;
+        }
+        this.socket.emit('pin-message', { roomId, messageId }, (response) => {
+            if (!response?.success) {
+                UIManager.showError(response?.error || 'Не удалось закрепить сообщение');
+            }
+        });
+    }
+
+    unpinMessage(roomId, messageId) {
+        if (!this.socket || !this.socket.connected) {
+            UIManager.showError('Нет подключения к серверу');
+            return;
+        }
+        if (!roomId || !messageId) {
+            UIManager.showError('Не указана комната или сообщение');
+            return;
+        }
+        this.socket.emit('unpin-message', { roomId, messageId }, (response) => {
+            if (!response?.success) {
+                UIManager.showError(response?.error || 'Не удалось открепить сообщение');
+            }
+        });
+    }
+
+    fetchPinnedMessages(roomId) {
+        if (!this.socket || !this.socket.connected) return;
+        this.socket.emit('get-pinned-messages', { roomId }, (response) => {
+            if (response?.success) {
+                const sorted = (response.pinnedMessages || []).sort((a, b) => new Date(b.pinnedAt) - new Date(a.pinnedAt));
+                this.pinnedMessages.set(roomId, sorted);
+                this.currentPinnedIndex.set(roomId, 0);
+                if (roomId === this.currentRoom) {
+                    if (sorted.length > 0) {
+                        UIManager.renderPinnedMessagesBar(this);
+                    } else {
+                        UIManager.hidePinnedMessagesBar();
+                    }
+                }
+            }
+        });
+    }
+
+    scrollToNextPinnedMessage() {
+        const roomId = this.currentRoom;
+        if (!roomId) return;
+        const pinned = this.pinnedMessages.get(roomId) || [];
+        if (pinned.length === 0) return;
+        let currentIndex = this.currentPinnedIndex.get(roomId) || 0;
+        if (currentIndex >= pinned.length) {
+            currentIndex = 0;
+        }
+        const targetMessage = pinned[currentIndex];
+        if (targetMessage) {
+            const found = UIManager.scrollToMessage(targetMessage.id, null, true);
+            if (found) {
+                const nextIndex = (currentIndex + 1) % pinned.length;
+                this.currentPinnedIndex.set(roomId, nextIndex);
+                UIManager.renderPinnedMessagesBar(this);
+            } else {
+                TextChatManager.loadMessagesAround(this, roomId, targetMessage.id, 50).then(() => {
+                    setTimeout(() => {
+                        const retryFound = UIManager.scrollToMessage(targetMessage.id, null, true);
+                        if (retryFound) {
+                            const nextIndex = (currentIndex + 1) % pinned.length;
+                            this.currentPinnedIndex.set(roomId, nextIndex);
+                            UIManager.renderPinnedMessagesBar(this);
+                        }
+                    }, 300);
+                }).catch(err => {});
+            }
+        }
+    }
+
+    getCurrentPinnedMessage(roomId) {
+        const pinned = this.pinnedMessages.get(roomId) || [];
+        if (pinned.length === 0) return null;
+        let currentIndex = this.currentPinnedIndex.get(roomId) || 0;
+        if (currentIndex >= pinned.length) {
+            currentIndex = 0;
+            this.currentPinnedIndex.set(roomId, 0);
+        }
+        return pinned[currentIndex] || null;
     }
 
     async openSecondaryFromNotification(roomId) {
@@ -984,7 +2051,13 @@ class VoiceChatClient {
             await SecondaryChatManager.joinRoom(this, roomId);
             return;
         }
-        await SecondaryChatManager.openDirect(this, roomId);
+        const direction = SecondaryChatManager.getDirection();
+        await SecondaryChatManager.toggle(this, direction);
+        setTimeout(async () => {
+            if (SecondaryChatManager.secondaryChat.enabled) {
+                await SecondaryChatManager.joinRoom(this, roomId);
+            }
+        }, 200);
     }
 
     async _reconcileOfflineState() {
@@ -998,29 +2071,27 @@ class VoiceChatClient {
             }
             if (hasActiveMedia || (this.audioProducer && !this.audioProducer.closed)) {
                 if (this.socket && this.currentRoom) {
-                    this.socket.emit('request-room-snapshot', { roomId: this.currentRoom }, (response) => {
-                        if (response?.success && response.participants) {
-                            MembersManager.updateMember(this.userId, { isOnline: true, connectionState: 'connected' });
-                            UIManager.updateMembersListWithStatus(
-                                response.participants.filter((p) => p.isOnline),
-                                response.participants.filter((p) => !p.isOnline)
-                            );
+                    this.socket.emit(
+                        'request-room-snapshot',
+                        { roomId: this.currentRoom },
+                        (response) => {
+                            if (response?.success && response.participants) {
+                                MembersManager.updateMember(this.userId, { isOnline: true, connectionState: 'connected' });
+                                UIManager.updateMembersListWithStatus(
+                                    response.participants.filter((p) => p.isOnline),
+                                    response.participants.filter((p) => !p.isOnline)
+                                );
+                            }
                         }
-                    });
+                    );
                 }
             }
         }
     }
 
     _reconcileParticipantsState(serverData) {
-        const { online = [], offline = [] } = serverData;
+        const { online = [] } = serverData;
         const serverOnlineIds = new Set(online.map((p) => p.userId));
-        for (const [producerId, state] of this.consumerState) {
-            if (state.status === 'active') {
-                const userId = window.producerUserMap?.get(producerId);
-                if (userId && !serverOnlineIds.has(userId)) {}
-            }
-        }
         if (!serverOnlineIds.has(this.userId)) this._reconcileOfflineState();
     }
 
@@ -1032,7 +2103,10 @@ class VoiceChatClient {
     }
 
     stopPingInterval() {
-        if (this.pingInterval) { clearInterval(this.pingInterval); this.pingInterval = null; }
+        if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+            this.pingInterval = null;
+        }
     }
 
     async loadUnreadCounts() {
@@ -1044,13 +2118,14 @@ class VoiceChatClient {
                 const data = await response.json();
                 if (data.unread) UIManager.syncUnreadCounts(data.unread);
             }
-        } catch (error) {
-            console.error('Критическая ошибка загрузки непрочитанных:', error);
-        }
+        } catch (error) {}
     }
 
     destroySocket() {
-        if (this.socket) { this.socket.disconnect(); this.socket = null; }
+        if (this.socket) {
+            this.socket.disconnect();
+            this.socket = null;
+        }
         this.socketRoom = null;
         this.stopPingInterval();
     }
@@ -1066,16 +2141,25 @@ class VoiceChatClient {
 
     async toggleMicrophone() {
         if (this._micToggleDebounce) return;
-        this._micToggleDebounce = setTimeout(() => { this._micToggleDebounce = null; }, 500);
+        this._micToggleDebounce = setTimeout(() => {
+            this._micToggleDebounce = null;
+        }, 500);
         try {
-            if (!this.currentRoom) { UIManager.showError('Микрофон доступен только в гнёздах'); return; }
+            if (!this.currentRoom) {
+                UIManager.showError('Микрофон доступен только в гнёздах');
+                return;
+            }
             await MediaManager.toggleMicrophone(this);
             this.updateMicButtonState();
-            if (this.isMicActive && !this.isMicPaused) this.playSound('mic-on');
-            else if (this.isMicPaused) this.playSound('mic-off');
+            if (this.isMicActive && !this.isMicPaused) {
+    SoundManager.playSound(SoundManager.SoundTypes.SOUND_MIC_ON);
+
+            } else if (this.isMicPaused) {
+    SoundManager.playSound(SoundManager.SoundTypes.SOUND_MIC_OFF);
+
+            }
             this.sendMicStateToElectron();
         } catch (error) {
-            console.error('Критическая ошибка микрофона:', error);
             UIManager.showError('Ошибка микрофона: ' + error.message);
             this.updateMicButtonState();
         }
@@ -1083,10 +2167,17 @@ class VoiceChatClient {
 
     sendMessage(text) {
         if (!text.trim() || !this.currentRoom) return;
+        const currentRoomData = this.rooms?.find(r => r.id === this.currentRoom);
+        if (currentRoomData?.imagesOnly && this.userId !== currentRoomData?.ownerId) {
+            UIManager.showError('📷 В этом гнезде разрешены только картинки');
+            return;
+        }
         const trimmedText = text.trim();
         const replyTarget = UIManager.replyTarget ? {
-            id: UIManager.replyTarget.id, userId: UIManager.replyTarget.userId,
-            username: UIManager.replyTarget.username, text: UIManager.replyTarget.text
+            id: UIManager.replyTarget.id,
+            userId: UIManager.replyTarget.userId,
+            username: UIManager.replyTarget.username,
+            text: UIManager.replyTarget.text
         } : null;
         UIManager.clearReplyTarget();
         if (this.socket) {
@@ -1099,6 +2190,11 @@ class VoiceChatClient {
     async sendSecondaryMessage(text, targetRoomId, replyTo = null) {
         const roomId = targetRoomId || SecondaryChatManager.secondaryChat.roomId;
         if (!roomId || !text.trim()) return;
+        const targetRoomData = this.rooms?.find(r => r.id === roomId);
+        if (targetRoomData?.imagesOnly && this.userId !== targetRoomData?.ownerId) {
+            UIManager.showError('📷 В этом гнезде разрешены только картинки');
+            return;
+        }
         const tempId = `temp_sec_${Date.now()}`;
         SecondaryChatManager.addMessage(this.username, text.trim(), null, 'text', null, tempId, [], this.userId, false, null, replyTo, {});
         const payloadReplyTo = replyTo ? { id: replyTo.id, username: replyTo.username } : null;
@@ -1113,11 +2209,12 @@ class VoiceChatClient {
                 if (tempEl) {
                     tempEl.dataset.messageId = result.message.id;
                     const timeEl = tempEl.querySelector('.message-time');
-                    if (timeEl && result.message.timestamp) timeEl.textContent = new Date(result.message.timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+                    if (timeEl && result.message.timestamp) {
+                        timeEl.textContent = new Date(result.message.timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+                    }
                 }
             }
         } catch (error) {
-            console.error('Критическая ошибка отправки во второй чат:', error);
             UIManager.showError('Не удалось отправить сообщение');
             const tempEl = document.querySelector(`[data-message-id="${tempId}"]`);
             if (tempEl) tempEl.remove();
@@ -1133,7 +2230,6 @@ class VoiceChatClient {
                 await this.sendReactionFallback(messageId, emoji);
             }
         } catch (error) {
-            console.error('Ошибка отправки реакции:', error);
             UIManager.showError('Не удалось отправить реакцию');
         }
     }
@@ -1142,175 +2238,147 @@ class VoiceChatClient {
         try {
             const response = await fetch(`${this.API_SERVER_URL}/api/messages/${messageId}/reaction`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${this.token}`
+                },
                 body: JSON.stringify({ emoji })
             });
-            if (!response.ok) throw new Error('Fallback reaction failed');
-        } catch (error) {
-            console.error('Критическая ошибка фоллбэка реакции:', error);
-        }
+            if (!response.ok) {
+                throw new Error('Fallback reaction failed');
+            }
+        } catch (error) {}
     }
 
-async joinRoom(roomId, clearUnread = true) {
-    if (this.currentRoom === roomId && this.isConnected && this.socket?.connected) {
-        this._processPendingProducers();
-        return true;
-    }
-    
-    this._abortMediaRequests();
-    this.setConnectionState(CONNECTION_STATE.CONNECTING, roomId);
-    this._joinRoomInProgress = true;
-    this.pendingProducersRef = [];
-    this.consumedProducerIdsRef.clear();
-    this.consumerState.clear();
-    this._isProcessingConsumers = false;
-    
-    try {
-        if (this.currentRoom && this.currentRoom !== roomId) {
-            if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
-        }
-        
-        await this.disconnectFromRoom();
-        
-        const joinRes = await this._fetchWithTimeout(
-            this.CHAT_API_URL,
-            { method: 'POST', body: JSON.stringify({ roomId, userId: this.userId, token: this.token, clientId: this.clientID }) }
-        );
-        const joinData = await joinRes.json();
-        if (!joinData.success) throw new Error(joinData.error || 'Join failed');
-        if (!joinData.mediaData) throw new Error('No media data received');
-        
-        this.clientID = joinData.clientId;
-        this.mediaData = joinData.mediaData;
-        this.currentRoom = roomId;
-        this.roomType = 'voice';
-        localStorage.setItem('lastServerId', this.currentServerId);
-        localStorage.setItem('lastRoomId', this.currentRoom);
-        this.audioProducer = null;
-        
-        this.setupSocketConnection();
-        
-        let attempts = 0;
-        while (!this.socket?.connected && attempts < 50) {
-            await new Promise((resolve) => setTimeout(resolve, 100));
-            attempts++;
-        }
-        if (!this.socket?.connected) throw new Error('WebSocket не подключился после 5 секунд');
-        
-        await new Promise((resolve) => {
-            const timeout = setTimeout(() => resolve(), 2000);
-            const joinHandler = () => { clearTimeout(timeout); resolve(); };
-            this.socket.once('join-ack', joinHandler);
-            this.socket.emit('join-room', { roomId });
-        });
-        
-        await MediaManager.connect(this, roomId, joinData.mediaData);
-        
-        if (this.recvTransport?.connectionState === 'connected') {
+    async joinRoom(roomId, clearUnread = true) {
+        if (this.currentRoom === roomId && this.isConnected && this.socket?.connected) {
             this._processPendingProducers();
-        } else if (this.recvTransport) {
-            this.recvTransport.once('connectionstatechange', (state) => {
-                if (state === 'connected') this._processPendingProducers();
-            });
+            return true;
         }
-        
-        this.updateMicButtonState();
-        if (this.socket) this.socket.emit('request-mic-states', { roomId });
-        await UIManager.updateRoomUI(this);
-        TextChatManager.joinTextRoom(this, roomId);
-        this.resetHistoryState();
-        
-        // ====================================================================
-        // 🔥 ИСПРАВЛЕННАЯ ЛОГИКА ЗАГРУЗКИ ИСТОРИИ
-        // ====================================================================
-        
-        if (!this.token) throw new Error('Токен отсутствует');
-        
-        // 1. Получаем сохранённую позицию скролла
-        let savedMessageId = null;
+        this._resetAllRecoveryState();
+        this._abortMediaRequests();
+        this.setConnectionState(CONNECTION_STATE.CONNECTING, roomId);
+        this._joinRoomInProgress = true;
+        this.pendingProducersRef = [];
+        this.consumedProducerIdsRef.clear();
+        this.consumerState.clear();
+        this._isProcessingConsumers = false;
+        this._transportReadyForConsume = false;
+        this._producersPendingConsume = [];
         try {
-            const response = await fetch(`${this.API_SERVER_URL}/api/messages/${roomId}/view-position`, {
-                headers: { Authorization: `Bearer ${this.token}` }
-            });
-            if (response.ok) {
-                const data = await response.json();
-                savedMessageId = data.messageId;
-                console.log(`[VoiceChatClient] Найдена сохранённая позиция: ${savedMessageId}`);
+            if (this.currentRoom && this.currentRoom !== roomId) {
+                if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
             }
-        } catch (e) {
-            console.error('[VoiceChatClient] Ошибка загрузки позиции скролла:', e);
-        }
-        
-        // 2. ВСЕГДА сначала загружаем последние 100 сообщений
-        console.log('[VoiceChatClient] Загружаем последние 100 сообщений...');
-        const result = await TextChatManager.loadMessages(this, roomId, 100);
-        
-        if (result && result.messages?.length > 0) {
-            this.oldestMessageId = result.messages[0].id;
-            this.hasMoreHistory = result.hasMore;
-            console.log(`[VoiceChatClient] Загружено ${result.messages.length} сообщений, hasMore: ${result.hasMore}`);
-        } else {
-            console.log('[VoiceChatClient] Нет сообщений в комнате');
-            this.hasMoreHistory = false;
-        }
-        
-        // 3. Если есть сохранённая позиция, скроллим к ней
-        if (savedMessageId) {
-            setTimeout(() => {
-                const found = UIManager.scrollToMessage(savedMessageId, null, true);
-                if (found) {
-                    console.log(`[VoiceChatClient] Скролл к сохранённому сообщению: ${savedMessageId}`);
-                } else {
-                    console.log(`[VoiceChatClient] Сохранённое сообщение ${savedMessageId} не найдено в загруженных`);
-                    // Опционально: можно догрузить вокруг этого сообщения
-                    TextChatManager.loadMessagesAround(this, roomId, savedMessageId, 50).then(() => {
-                        UIManager.scrollToMessage(savedMessageId, null, true);
-                    }).catch(err => {
-                        console.error('[VoiceChatClient] Ошибка дозагрузки вокруг:', err);
-                        UIManager.scrollToBottom();
-                    });
+            await this.disconnectFromRoom();
+            const joinRes = await this._fetchWithTimeout(
+                this.CHAT_API_URL,
+                { method: 'POST', body: JSON.stringify({ roomId, userId: this.userId, token: this.token, clientId: this.clientID }) }
+            );
+            const joinData = await joinRes.json();
+            if (!joinData.success) throw new Error(joinData.error || 'Join failed');
+            if (!joinData.mediaData) throw new Error('No media data received');
+            this.clientID = joinData.clientId;
+            this.mediaData = joinData.mediaData;
+            this.currentRoom = roomId;
+            this.roomType = 'voice';
+            localStorage.setItem('lastServerId', this.currentServerId);
+            localStorage.setItem('lastRoomId', this.currentRoom);
+            this.audioProducer = null;
+            this.setupSocketConnection();
+            let attempts = 0;
+            while (!this.socket?.connected && attempts < 50) {
+                await new Promise((resolve) => setTimeout(resolve, 100));
+                attempts++;
+            }
+            if (!this.socket?.connected) throw new Error('WebSocket не подключился после 5 секунд');
+            await new Promise((resolve) => {
+                const timeout = setTimeout(() => resolve(), 2000);
+                const joinHandler = () => { clearTimeout(timeout); resolve(); };
+                this.socket.once('join-ack', joinHandler);
+                this.socket.emit('join-room', { roomId });
+            });
+            await MediaManager.connect(this, roomId, joinData.mediaData);
+            if (this.recvTransport) {
+                this._transportReadyForConsume = true;
+                this.recvTransport.once('connectionstatechange', (state) => {
+                    if (state === 'connected') {
+                        this._transportReadyForConsume = true;
+                        this._processPendingConsumeQueue();
+                    }
+                });
+            }
+            if (this.recvTransport?.connectionState === 'connected') {
+                this._processPendingProducers();
+            } else if (this.recvTransport) {
+                this.recvTransport.once('connectionstatechange', (state) => {
+                    if (state === 'connected') this._processPendingProducers();
+                });
+            }
+            this.updateMicButtonState();
+            if (this.socket) this.socket.emit('request-mic-states', { roomId });
+            await UIManager.updateRoomUI(this);
+            TextChatManager.joinTextRoom(this, roomId);
+            this.resetHistoryState();
+            if (!this.token) throw new Error('Токен отсутствует');
+            let savedMessageId = null;
+            try {
+                const response = await fetch(`${this.API_SERVER_URL}/api/messages/${roomId}/view-position`, {
+                    headers: { Authorization: `Bearer ${this.token}` }
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    savedMessageId = data.messageId;
                 }
-            }, 200);
-        } else {
-            // Нет сохранённой позиции - скроллим вниз
-            setTimeout(() => UIManager.scrollToBottom(), 200);
+            } catch (e) {}
+            const result = await TextChatManager.loadMessages(this, roomId, 100);
+            if (result && result.messages?.length > 0) {
+                this.oldestMessageId = result.messages[0].id;
+                this.hasMoreHistory = result.hasMore;
+            } else {
+                this.hasMoreHistory = false;
+            }
+            if (savedMessageId) {
+                setTimeout(() => {
+                    const found = UIManager.scrollToMessage(savedMessageId, null, true);
+                    if (!found) {
+                        TextChatManager.loadMessagesAround(this, roomId, savedMessageId, 50).then(() => {
+                            UIManager.scrollToMessage(savedMessageId, null, true);
+                        }).catch(err => {
+                            UIManager.scrollToBottom();
+                        });
+                    }
+                }, 200);
+            } else {
+                setTimeout(() => UIManager.scrollToBottom(), 200);
+            }
+            UIManager.initScrollTracker(roomId);
+            if (this.hasMoreHistory) {
+                this.initHistoryObserver();
+            } else {
+                this.removeHistorySentinel();
+            }
+            this.fetchPinnedMessages(roomId);
+            if (clearUnread) {
+                await this.clearUnreadForCurrentRoom();
+            }
+            this.setConnectionState(CONNECTION_STATE.CONNECTED, roomId);
+            this.isConnected = true;
+            this.sendMicStateToElectron();
+            return true;
+        } catch (error) {
+            this._joinRoomInProgress = false;
+            this.setConnectionState(CONNECTION_STATE.ERROR, roomId);
+            UIManager.updateStatus('Ошибка: ' + error.message, 'disconnected');
+            UIManager.showError('Не удалось занять гнездо: ' + error.message);
+            throw error;
+        } finally {
+            this._joinRoomInProgress = false;
         }
-        
-        // 4. Инициализируем отслеживание скролла
-        UIManager.initScrollTracker(roomId);
-        
-        // 5. Настраиваем Observer для подгрузки истории при скролле вверх
-        if (this.hasMoreHistory) {
-            this.initHistoryObserver();
-        } else {
-            this.removeHistorySentinel();
-        }
-        
-        // 6. Очищаем непрочитанные
-        if (clearUnread) {
-            await this.clearUnreadForCurrentRoom();
-        }
-        
-        this.setConnectionState(CONNECTION_STATE.CONNECTED, roomId);
-        this.isConnected = true;
-        this.sendMicStateToElectron();
-        return true;
-        
-    } catch (error) {
-        console.error('Критическая ошибка входа в комнату:', error);
-        this._joinRoomInProgress = false;
-        this.setConnectionState(CONNECTION_STATE.ERROR, roomId);
-        UIManager.updateStatus('Ошибка: ' + error.message, 'disconnected');
-        UIManager.showError('Не удалось занять гнездо: ' + error.message);
-        throw error;
-    } finally {
-        this._joinRoomInProgress = false;
     }
-}
 
     async disconnectFromRoom() {
         if (this.currentRoom) {
-            console.log('[History] 🚪 disconnectFromRoom: очистка состояния истории');
+            this._resetAllRecoveryState();
             if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
             MediaManager.disconnect(this);
             TextChatManager.leaveTextRoom(this, this.currentRoom);
@@ -1328,6 +2396,8 @@ async joinRoom(roomId, clearUnread = true) {
             this.pendingProducersRef = [];
             this.consumedProducerIdsRef.clear();
             this.consumerState.clear();
+            this._transportReadyForConsume = false;
+            this._producersPendingConsume = [];
             this.updateMicButtonState();
             this.setConnectionState(CONNECTION_STATE.DISCONNECTED);
             this.sendMicStateToElectron();
@@ -1337,6 +2407,7 @@ async joinRoom(roomId, clearUnread = true) {
                 delete container._scrollSaveTimeout;
                 delete container._readCheckTimeout;
             }
+            UIManager.hidePinnedMessagesBar();
         }
     }
 
@@ -1350,9 +2421,15 @@ async joinRoom(roomId, clearUnread = true) {
         if (this.isMicActive && this.mediaData) await MediaManager.stopMicrophone(this);
         await this.leaveRoom();
         this.isReconnecting = true;
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
             try {
-                await new Promise((r) => setTimeout(r, attempt === 1 ? 500 : retryDelay));
+                const delay = attempt === 0 ? 500 : this._calculateBackoffDelay(
+                    attempt - 1,
+                    TRANSPORT_RECONNECT_CONFIG.BASE_DELAY,
+                    TRANSPORT_RECONNECT_CONFIG.MAX_DELAY,
+                    TRANSPORT_RECONNECT_CONFIG.JITTER_FACTOR
+                );
+                await new Promise((r) => setTimeout(r, delay));
                 const result = await this.joinRoom(roomId, clearUnread);
                 this.isReconnecting = false;
                 if (this.wasMicActiveBeforeReconnect && this.mediaData) {
@@ -1360,19 +2437,19 @@ async joinRoom(roomId, clearUnread = true) {
                         try {
                             await MediaManager.resumeMicrophone(this);
                             this.updateMicButtonState();
-                        } catch (e) {
-                            console.error('Критическая ошибка возобновления микрофона:', e);
-                        }
+                        } catch (e) {}
                     }, 3000);
                 }
                 return result;
             } catch (error) {
                 const isTransient =
-                    error.message.includes('404') || error.message.includes('502') ||
-                    error.message.includes('503') || error.message.includes('504') ||
-                    error.message.includes('Abort') || error.message.includes('Failed to fetch');
-                if (!isTransient || attempt === maxRetries) {
-                    console.error('Критическая ошибка переподключения:', error);
+                    error.message.includes('404') ||
+                    error.message.includes('502') ||
+                    error.message.includes('503') ||
+                    error.message.includes('504') ||
+                    error.message.includes('Abort') ||
+                    error.message.includes('Failed to fetch');
+                if (!isTransient || attempt === maxRetries - 1) {
                     this.isReconnecting = false;
                     UIManager.addMessage('System', '❌ Не удалось подключиться к гнезду');
                     this.currentRoom = null;
@@ -1386,6 +2463,7 @@ async joinRoom(roomId, clearUnread = true) {
     async leaveRoom() {
         if (!this.currentRoom) return;
         try {
+            this._resetAllRecoveryState();
             if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
             if (this.isConnected) MediaManager.disconnect(this);
             await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.currentRoom}/leave`, {
@@ -1402,9 +2480,9 @@ async joinRoom(roomId, clearUnread = true) {
             UIManager.updateRoomUI(this);
             this.setConnectionState(CONNECTION_STATE.DISCONNECTED);
             this.sendMicStateToElectron();
+            UIManager.hidePinnedMessagesBar();
             return true;
         } catch (error) {
-            console.error('Критическая ошибка выхода из комнаты:', error);
             UIManager.showError('Ошибка при покидании гнезда: ' + error.message);
             return false;
         }
@@ -1484,6 +2562,7 @@ async joinRoom(roomId, clearUnread = true) {
         this.diagnosticActive = true;
         this.socket.emit('start-room-diagnostic', { roomId: this.currentRoom });
         DiagnosticPanel.open(this);
+        setTimeout(() => this._notifyDiagnosticUpdate(), 100);
     }
 
     stopDiagnostic() {
@@ -1505,6 +2584,14 @@ async joinRoom(roomId, clearUnread = true) {
                 }
             }
         }
+        const recoverySummary = {
+            activeRecoveries: this.consumerRecoveryState.size,
+            exhaustedRecoveries: Array.from(this.consumerRecoveryState.values()).filter(s => s.exhausted).length,
+            pendingConsumeQueue: this._producersPendingConsume.length,
+            transportReady: this._transportReadyForConsume,
+            iceRestartActive: this.iceRestartState.size > 0,
+            socketReconnectAttempts: this.transportRecoveryState.get('socket')?.attempts || 0
+        };
         return {
             userId: this.userId,
             username: this.username,
@@ -1513,7 +2600,8 @@ async joinRoom(roomId, clearUnread = true) {
             isTabHidden: document.hidden,
             consumersPlaying,
             consumersTotal,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            recoverySummary
         };
     }
 }

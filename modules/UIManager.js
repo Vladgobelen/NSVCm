@@ -39,67 +39,61 @@ class UIManager {
         this._initReactionTooltips();
     }
 
-static _initReactionTooltips() {
-    if (this._tooltipsInitialized) return;
-    this._tooltipsInitialized = true;
+    static _initReactionTooltips() {
+        if (this._tooltipsInitialized) return;
+        this._tooltipsInitialized = true;
 
-    if (!document.getElementById('reaction-tooltip-global')) {
-        const tooltip = document.createElement('div');
-        tooltip.id = 'reaction-tooltip-global';
-        tooltip.className = 'reaction-tooltip';
-        document.body.appendChild(tooltip);
-    }
+        if (!document.getElementById('reaction-tooltip-global')) {
+            const tooltip = document.createElement('div');
+            tooltip.id = 'reaction-tooltip-global';
+            tooltip.className = 'reaction-tooltip';
+            document.body.appendChild(tooltip);
+        }
 
-    const container = document.querySelector('.messages-container');
-    if (!container) return;
+        const container = document.querySelector('.messages-container');
+        if (!container) return;
 
-    container.addEventListener('mouseenter', async (e) => {
-        const pill = e.target.closest('.reaction-pill');
-        if (!pill) return;
+        container.addEventListener('mouseenter', async (e) => {
+            const pill = e.target.closest('.reaction-pill');
+            if (!pill) return;
 
-        const tooltip = document.getElementById('reaction-tooltip-global');
-        if (!tooltip) return;
+            const tooltip = document.getElementById('reaction-tooltip-global');
+            if (!tooltip) return;
 
-        const userIds = pill.dataset.userIds || '';
-        if (!userIds) return;
+            const userIds = pill.dataset.userIds || '';
+            if (!userIds) return;
 
-        const ids = userIds.split(',');
-        
-        // 🔥 ПРОВЕРЯЕМ КЭШ И ЗАГРУЖАЕМ НЕДОСТАЮЩИЕ ИМЕНА
-        const missingIds = ids.filter(uid => !this.usernameCache.has(uid));
-        
-        if (missingIds.length > 0) {
-            tooltip.textContent = 'Загрузка...';
+            const ids = userIds.split(',');
+            const missingIds = ids.filter(uid => !this.usernameCache.has(uid));
+            
+            if (missingIds.length > 0) {
+                tooltip.textContent = 'Загрузка...';
+                tooltip.style.display = 'block';
+                const rect = pill.getBoundingClientRect();
+                tooltip.style.left = `${rect.left}px`;
+                tooltip.style.top = `${rect.top - 35}px`;
+                await this.fetchUsernames(missingIds);
+            }
+            
+            const names = ids.map(uid => {
+                const name = this.usernameCache.get(uid);
+                return name || 'Пользователь';
+            }).join(', ');
+            
+            tooltip.textContent = names;
             tooltip.style.display = 'block';
             const rect = pill.getBoundingClientRect();
             tooltip.style.left = `${rect.left}px`;
             tooltip.style.top = `${rect.top - 35}px`;
-            
-            // Загружаем имена
-            await this.fetchUsernames(missingIds);
-        }
-        
-        // 🔥 ФОРМИРУЕМ ИМЕНА ТОЛЬКО ИЗ КЭША
-        const names = ids.map(uid => {
-            const name = this.usernameCache.get(uid);
-            // Если имени нет даже после загрузки, показываем "Пользователь"
-            return name || 'Пользователь';
-        }).join(', ');
-        
-        tooltip.textContent = names;
-        tooltip.style.display = 'block';
-        const rect = pill.getBoundingClientRect();
-        tooltip.style.left = `${rect.left}px`;
-        tooltip.style.top = `${rect.top - 35}px`;
-    }, true);
+        }, true);
 
-    container.addEventListener('mouseleave', (e) => {
-        const pill = e.target.closest('.reaction-pill');
-        if (!pill) return;
-        const tooltip = document.getElementById('reaction-tooltip-global');
-        if (tooltip) tooltip.style.display = 'none';
-    }, true);
-}
+        container.addEventListener('mouseleave', (e) => {
+            const pill = e.target.closest('.reaction-pill');
+            if (!pill) return;
+            const tooltip = document.getElementById('reaction-tooltip-global');
+            if (tooltip) tooltip.style.display = 'none';
+        }, true);
+    }
 
     static setupScrollToBottomButton() {
         ScrollTracker.setupScrollToBottomButton();
@@ -114,7 +108,7 @@ static _initReactionTooltips() {
     }
 
     static scrollToMessage(messageId, container = null, highlight = true) {
-        ScrollTracker.scrollToMessage(messageId, container, highlight);
+        return ScrollTracker.scrollToMessage(messageId, container, highlight);
     }
 
     static initScrollTracker(roomId, container = null) {
@@ -157,16 +151,16 @@ static _initReactionTooltips() {
         ContextMenuManager.hideContextMenu();
     }
 
-    static addMessage(...args) {
-        return MessageRenderer.addMessage(...args);
+    static addMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readState = 0, userId = null, broadcast = false, thumbnailUrl = null, targetContainer = null, replyTo = null, reactions = {}, poll = null, forwardedFrom = null, pollRef = null, embed = null) {
+        return MessageRenderer.addMessage(user, text, timestamp, type, imageUrl, messageId, readState, userId, broadcast, thumbnailUrl, targetContainer, replyTo, reactions, poll, forwardedFrom, pollRef, embed);
     }
 
-    static prependMessage(...args) {
-        return MessageRenderer.prependMessage(...args);
+    static prependMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readState = 0, userId = null, broadcast = false, thumbnailUrl = null, replyTo = null, reactions = {}, poll = null, forwardedFrom = null, pollRef = null, embed = null) {
+        return MessageRenderer.prependMessage(user, text, timestamp, type, imageUrl, messageId, readState, userId, broadcast, thumbnailUrl, replyTo, reactions, poll, forwardedFrom, pollRef, embed);
     }
 
     static prependMessageToContainer(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readState = 0, userId = null, broadcast = false, thumbnailUrl = null, container = null, replyTo = null) {
-        return MessageRenderer.prependMessage(user, text, timestamp, type, imageUrl, messageId, readState, userId, broadcast, thumbnailUrl, replyTo);
+        return MessageRenderer.prependMessage(user, text, timestamp, type, imageUrl, messageId, readState, userId, broadcast, thumbnailUrl, replyTo, {}, null, null);
     }
 
     static prependMessagesBatch(messages) {
@@ -220,6 +214,25 @@ static _initReactionTooltips() {
             modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); display: flex; justify-content: center; align-items: center; z-index: 10001;';
             const content = document.createElement('div');
             content.style.cssText = 'background: #2d2d44; border-radius: 12px; padding: 24px; max-width: 500px; width: 90%; border: 1px solid #404060;';
+            
+            let forwardedInfo = '';
+            if (message.forwardedFrom) {
+                forwardedInfo = `
+                    <div style="margin-top: 12px;"><strong>Переслано из:</strong> ${this.escapeHtml(message.forwardedFrom.serverName)} / ${this.escapeHtml(message.forwardedFrom.roomName)}</div>
+                    <div style="margin-top: 4px;"><strong>Автор оригинала:</strong> ${this.escapeHtml(message.forwardedFrom.username)}</div>
+                `;
+            }
+            
+            let pollInfo = '';
+            if (message.type === 'poll' && message.poll) {
+                pollInfo = `
+                    <div style="margin-top: 16px; padding: 12px; background: #1a1a2e; border-radius: 8px;">
+                        <strong>📊 Опрос:</strong> ${this.escapeHtml(message.poll.question)}<br>
+                        <span style="font-size: 12px; color: #888;">Вариантов: ${message.poll.options.length} | Голосов: ${message.poll.totalVotes}</span>
+                    </div>
+                `;
+            }
+            
             content.innerHTML = `
                 <h3 style="margin: 0 0 20px 0; color: #e0e0e0;">📋 Информация о сообщении</h3>
                 <div style="color: #b0b0c0; line-height: 1.8;">
@@ -229,6 +242,8 @@ static _initReactionTooltips() {
                     <div style="margin-top: 8px;"><strong>Время:</strong> ${new Date(message.timestamp).toLocaleString('ru-RU')}</div>
                     <div style="margin-top: 8px;"><strong>Тип:</strong> ${message.type || 'text'}</div>
                     <div style="margin-top: 8px;"><strong>Гнездо:</strong> <code style="background: #1a1a2e; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${message.roomId}</code></div>
+                    ${forwardedInfo}
+                    ${pollInfo}
                     ${message.text ? `<div style="margin-top: 16px; padding: 12px; background: #1a1a2e; border-radius: 8px;"><strong>Текст:</strong><br><span style="color: #e0e0e0;">${this.escapeHtml(message.text)}</span></div>` : ''}
                 </div>
                 <button id="closeInfoModal" style="margin-top: 20px; padding: 10px 24px; background: #5865f2; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">Закрыть</button>
@@ -356,8 +371,8 @@ static _initReactionTooltips() {
         return SecondaryChatManager.joinRoom(client, roomId);
     }
 
-    static addSecondaryMessage(...args) {
-        SecondaryChatManager.addMessage(...args);
+    static addSecondaryMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readState = 0, userId = null, broadcast = false, thumbnailUrl = null, replyTo = null) {
+        SecondaryChatManager.addMessage(user, text, timestamp, type, imageUrl, messageId, readState, userId, broadcast, thumbnailUrl, replyTo);
     }
 
     static openCreateRoomModal(client, onSubmit) {
@@ -392,13 +407,8 @@ static _initReactionTooltips() {
             unknown: '#606070', connecting: '#f1c40f', connected: '#2ecc71', success: '#2ecc71',
             error: '#e74c3c', info: '#3498db', disconnected: '#e74c3c'
         };
-        const TITLES = {
-            connecting: 'Подключение...', connected: 'Подключен', success: 'Подключен',
-            error: 'Ошибка подключения', disconnected: 'Отключен', unknown: 'Неизвестно'
-        };
         const icon = ICONS[status] || ICONS.unknown;
         const color = COLORS[status] || COLORS.unknown;
-        const title = TITLES[status] || 'Неизвестно';
         let statusElement = memberElement.querySelector('.connection-status-icon');
         if (!statusElement) {
             statusElement = document.createElement('span');
@@ -409,7 +419,6 @@ static _initReactionTooltips() {
         }
         statusElement.textContent = icon;
         statusElement.style.color = color;
-        statusElement.title = title;
     }
 
     static getConnectionStatus(userId) {
@@ -515,12 +524,50 @@ static _initReactionTooltips() {
         banner.id = 'live-notification-banner';
         banner.style.cssText = 'position: sticky; top: 0; background: #2d2d44; border-bottom: 1px solid #404060; padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; z-index: 1000; font-size: 13px; color: #e0e0e0;';
         const time = payload.timestamp ? new Date(payload.timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
-        banner.innerHTML = `<div style="overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1; margin-right: 10px;"><strong style="color: #5865f2;">${this.escapeHtml(payload.username)}</strong> <span style="opacity: 0.7;">(${this.escapeHtml(payload.roomName)})</span>: ${this.escapeHtml(payload.text)} <span style="opacity: 0.5; margin-left: 5px; font-size: 11px;">${time}</span></div><button id="notif-close" style="background: none; border: none; color: #e0e0e0; cursor: pointer; font-size: 16px; padding: 0 8px;">✕</button>`;
+        
+        let icon = '📨';
+        let actionText = '';
+        let senderColor = '#e0e0e0';
+        
+        if (payload.type === 'mention' || payload.type === 'name_mention') {
+            icon = '🔔';
+            actionText = 'упомянул вас';
+            senderColor = '#faa61a';
+        } else if (payload.type === 'reply') {
+            icon = '↩️';
+            actionText = 'ответил на ваше сообщение';
+            senderColor = '#00b0f4';
+        } else if (payload.isDirectMessage) {
+            icon = '💬';
+            actionText = 'прислал личное сообщение';
+            senderColor = '#2ecc71';
+        } else {
+            icon = '📨';
+            actionText = 'написал';
+        }
+        
+        const roomDisplayName = payload.roomName || 'чат';
+        
+        banner.innerHTML = `
+            <div style="overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1; margin-right: 10px;">
+                ${icon} <strong style="color: ${senderColor};">${this.escapeHtml(payload.sender)}</strong> 
+                <span style="opacity: 0.8;">${actionText} в <strong>${this.escapeHtml(roomDisplayName)}</strong></span>
+                <span style="opacity: 0.5; margin-left: 8px; font-size: 11px;">${time}</span>
+            </div>
+            <button id="notif-close" style="background: none; border: none; color: #e0e0e0; cursor: pointer; font-size: 16px; padding: 0 8px;">✕</button>
+        `;
+        
         const chatArea = document.querySelector('.primary-frame') || document.querySelector('.chat-area');
         if (chatArea) chatArea.prepend(banner);
         this.notificationTimer = setTimeout(() => this.hideLiveNotification(), 10000);
-        banner.querySelector('#notif-close').addEventListener('click', (e) => { e.stopPropagation(); this.hideLiveNotification(); });
-        banner.addEventListener('click', () => { this.hideLiveNotification(); if (client) client.openSecondaryFromNotification(payload.roomId); });
+        banner.querySelector('#notif-close').addEventListener('click', (e) => { 
+            e.stopPropagation(); 
+            this.hideLiveNotification(); 
+        });
+        banner.addEventListener('click', () => { 
+            this.hideLiveNotification(); 
+            if (client) client.openSecondaryFromNotification(payload.roomId); 
+        });
     }
 
     static hideLiveNotification() {
@@ -538,7 +585,7 @@ static _initReactionTooltips() {
     }
 
     static async fetchUsername(userId) {
-        if (!userId) return 'Unknown';
+        if (!userId) return 'Пользователь';
         if (this.usernameCache.has(userId)) return this.usernameCache.get(userId);
         try {
             const response = await fetch(`${this.client.API_SERVER_URL}/api/users/${userId}`, {
@@ -546,33 +593,166 @@ static _initReactionTooltips() {
             });
             if (response.ok) {
                 const data = await response.json();
-                const username = data.username || userId.replace('user_', '');
+                const username = data.username || 'Пользователь';
                 this.usernameCache.set(userId, username);
                 return username;
             }
-        } catch (error) {
-            console.error('Ошибка получения имени пользователя:', error);
-        }
-        const fallback = userId.replace('user_', '');
+        } catch (error) {}
+        const fallback = 'Пользователь';
         this.usernameCache.set(userId, fallback);
         return fallback;
     }
 
-static async fetchUsernames(userIds) {
-    if (!Array.isArray(userIds) || userIds.length === 0) return;
-    
-    const missing = userIds.filter((id) => !this.usernameCache.has(id));
-    if (missing.length === 0) return;
-    
-    console.log(`[UIManager] Загружаем имена для ${missing.length} пользователей через одиночные запросы`);
-    
-    // Загружаем параллельно, но не более 5 одновременно
-    const batchSize = 5;
-    for (let i = 0; i < missing.length; i += batchSize) {
-        const batch = missing.slice(i, i + batchSize);
-        await Promise.all(batch.map(uid => this.fetchUsername(uid)));
+    static async fetchUsernames(userIds) {
+        if (!Array.isArray(userIds) || userIds.length === 0) return;
+        const missing = userIds.filter((id) => !this.usernameCache.has(id));
+        if (missing.length === 0) return;
+        const batchSize = 5;
+        for (let i = 0; i < missing.length; i += batchSize) {
+            const batch = missing.slice(i, i + batchSize);
+            await Promise.all(batch.map(uid => this.fetchUsername(uid)));
+        }
     }
-}
+
+    static renderPinnedMessagesBar(client) {
+        if (!client || !client.currentRoom) return;
+        const roomId = client.currentRoom;
+        const pinned = client.pinnedMessages.get(roomId) || [];
+        let bar = document.getElementById('pinned-messages-bar');
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.id = 'pinned-messages-bar';
+            bar.className = 'pinned-messages-bar';
+            const chatArea = document.querySelector('.chat-area');
+            const messagesContainer = document.querySelector('.messages-container');
+            if (chatArea && messagesContainer) {
+                chatArea.insertBefore(bar, messagesContainer);
+            } else {
+                return;
+            }
+        }
+        if (pinned.length === 0) {
+            this.hidePinnedMessagesBar();
+            return;
+        }
+        const currentMessage = client.getCurrentPinnedMessage(roomId);
+        if (!currentMessage) {
+            this.hidePinnedMessagesBar();
+            return;
+        }
+        const displayText = currentMessage.text && currentMessage.text.length > 50 
+            ? currentMessage.text.substring(0, 50) + '...' 
+            : (currentMessage.text || 'Изображение');
+        bar.style.display = 'flex';
+        bar.innerHTML = `
+            <div class="pinned-message-content">
+                <span class="pinned-icon">📌</span>
+                <span class="pinned-author">${this.escapeHtml(currentMessage.username)}:</span>
+                <span class="pinned-text">${this.escapeHtml(displayText)}</span>
+            </div>
+            <div class="pinned-actions">
+                <span class="pinned-counter">${pinned.length}</span>
+                <button class="pinned-expand-btn" title="Показать все закрепленные">📋</button>
+                <button class="pinned-close-btn" title="Скрыть" style="display: none;">✕</button>
+            </div>
+        `;
+        bar.querySelector('.pinned-message-content').addEventListener('click', () => {
+            if (client && typeof client.scrollToNextPinnedMessage === 'function') {
+                client.scrollToNextPinnedMessage();
+            }
+        });
+        bar.querySelector('.pinned-expand-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.openPinnedMessagesModal(client);
+        });
+    }
+
+    static hidePinnedMessagesBar() {
+        const bar = document.getElementById('pinned-messages-bar');
+        if (bar) {
+            bar.style.display = 'none';
+        }
+    }
+
+    static openPinnedMessagesModal(client) {
+        if (!client || !client.currentRoom) return;
+        const roomId = client.currentRoom;
+        const pinned = client.pinnedMessages.get(roomId) || [];
+        const room = client.rooms?.find(r => r.id === roomId);
+        const roomName = room ? room.name : 'Гнездо';
+        const canManage = room && (room.ownerId === client.userId || 
+            (client.currentServer && client.currentServer.ownerId === client.userId));
+        const existingModal = document.querySelector('.pinned-messages-modal');
+        if (existingModal) existingModal.remove();
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay pinned-messages-modal';
+        modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); display: flex; justify-content: center; align-items: center; z-index: 10002;';
+        const content = document.createElement('div');
+        content.style.cssText = 'background: #2d2d44; border-radius: 12px; padding: 0; max-width: 600px; width: 90%; max-height: 80vh; border: 1px solid #404060; display: flex; flex-direction: column; overflow: hidden;';
+        let itemsHtml = '';
+        if (pinned.length === 0) {
+            itemsHtml = '<div class="pinned-empty" style="padding: 40px; text-align: center; color: #888;">Нет закрепленных сообщений</div>';
+        } else {
+            pinned.forEach((msg, index) => {
+                const time = msg.timestamp ? new Date(msg.timestamp).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
+                const pinnedBy = msg.pinnedBy ? msg.pinnedBy.replace('user_', '').substring(0, 8) : '';
+                const pinnedTime = msg.pinnedAt ? new Date(msg.pinnedAt).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+                itemsHtml += `
+                    <div class="pinned-message-item" data-message-id="${msg.id}" data-index="${index}">
+                        <div class="pinned-item-header">
+                            <span class="pinned-item-author">${this.escapeHtml(msg.username)}</span>
+                            <span class="pinned-item-time">${time}</span>
+                        </div>
+                        <div class="pinned-item-text">${this.escapeHtml(msg.text || '[Изображение]')}</div>
+                        <div class="pinned-item-meta">
+                            <span>📌 закрепил ${pinnedBy} в ${pinnedTime}</span>
+                            ${canManage ? `<button class="pinned-item-unpin" data-message-id="${msg.id}" title="Открепить">✕</button>` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+        }
+        content.innerHTML = `
+            <div class="pinned-modal-header" style="padding: 16px 20px; border-bottom: 1px solid #404060; display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="margin: 0; color: #e0e0e0; font-size: 16px;">📌 Закрепленные сообщения — ${this.escapeHtml(roomName)}</h3>
+                <button class="pinned-modal-close" style="background: none; border: none; color: #888; font-size: 20px; cursor: pointer; padding: 4px 8px;">✕</button>
+            </div>
+            <div class="pinned-modal-body" style="padding: 16px 20px; overflow-y: auto; flex: 1;">
+                ${itemsHtml}
+            </div>
+        `;
+        modal.appendChild(content);
+        document.body.appendChild(modal);
+        const closeBtn = content.querySelector('.pinned-modal-close');
+        closeBtn.addEventListener('click', () => modal.remove());
+        modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+        content.querySelectorAll('.pinned-message-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                if (e.target.closest('.pinned-item-unpin')) return;
+                const messageId = item.dataset.messageId;
+                modal.remove();
+                UIManager.scrollToMessage(messageId, null, true);
+            });
+        });
+        if (canManage) {
+            content.querySelectorAll('.pinned-item-unpin').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const messageId = btn.dataset.messageId;
+                    if (client && typeof client.unpinMessage === 'function') {
+                        client.unpinMessage(roomId, messageId);
+                    }
+                    btn.closest('.pinned-message-item')?.remove();
+                    if (content.querySelectorAll('.pinned-message-item').length === 0) {
+                        const body = content.querySelector('.pinned-modal-body');
+                        if (body) {
+                            body.innerHTML = '<div class="pinned-empty" style="padding: 40px; text-align: center; color: #888;">Нет закрепленных сообщений</div>';
+                        }
+                    }
+                });
+            });
+        }
+    }
 }
 
 export default UIManager;

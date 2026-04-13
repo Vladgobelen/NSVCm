@@ -5,13 +5,15 @@ class DiagnosticPanel {
         move: null,
         up: null
     };
+    static _recoveryInfo = null;
+    static _recoverySection = null;
 
     static _injectStyles() {
         if (document.getElementById('diag-panel-styles')) return;
         const style = document.createElement('style');
         style.id = 'diag-panel-styles';
         style.textContent = `
-            .diagnostic-floating-panel { position: fixed; top: 20px; right: 20px; width: 750px; max-width: calc(100vw - 40px); max-height: calc(100vh - 40px); background: #1a1a2e; border: 1px solid #404060; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.6); display: flex; flex-direction: column; z-index: 10000; pointer-events: auto; resize: both; overflow: hidden; }
+            .diagnostic-floating-panel { position: fixed; top: 20px; right: 20px; width: 800px; max-width: calc(100vw - 40px); max-height: calc(100vh - 40px); background: #1a1a2e; border: 1px solid #404060; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.6); display: flex; flex-direction: column; z-index: 10000; pointer-events: auto; resize: both; overflow: hidden; }
             .diagnostic-header { padding: 12px 16px; border-bottom: 1px solid #2d2d44; display: flex; justify-content: space-between; align-items: center; cursor: move; user-select: none; background: #2d2d44; border-radius: 12px 12px 0 0; }
             .diagnostic-header h3 { margin: 0; color: #e0e0e0; font-size: 15px; }
             #diag-close-btn { background: #ed4245; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
@@ -25,12 +27,28 @@ class DiagnosticPanel {
             .status-ok { background: #2ecc71; }
             .status-warn { background: #f1c40f; }
             .status-err { background: #e74c3c; }
+            .status-exhausted { background: #e74c3c; animation: pulse-red 1.5s infinite; }
+            .status-recovering { background: #f39c12; animation: pulse-orange 1s infinite; }
             .route-details { display: none; background: #2d2d44; }
             .route-details.active { display: table-row; }
             .route-details td { padding: 8px 12px; font-size: 12px; color: #888; }
             .route-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
             .route-chip { background: #1a1a2e; padding: 2px 6px; border-radius: 4px; border: 1px solid #404060; }
             .diagnostic-footer { padding: 8px 16px; font-size: 11px; color: #606070; text-align: center; border-top: 1px solid #2d2d44; background: #1a1a2e; }
+            .recovery-section { padding: 12px 16px; border-bottom: 1px solid #2d2d44; background: #222238; }
+            .recovery-title { color: #e0e0e0; font-size: 13px; font-weight: bold; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+            .recovery-stats { display: flex; flex-wrap: wrap; gap: 16px; }
+            .recovery-stat { display: flex; align-items: center; gap: 6px; }
+            .recovery-stat-label { color: #808090; font-size: 12px; }
+            .recovery-stat-value { color: #e0e0e0; font-size: 13px; font-weight: 500; }
+            .recovery-consumers { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+            .recovery-chip { background: #2d2d44; padding: 4px 8px; border-radius: 4px; font-size: 11px; display: flex; align-items: center; gap: 4px; }
+            .recovery-chip.exhausted { background: #4a2525; border-left: 3px solid #e74c3c; }
+            .recovery-chip.recovering { background: #4a3a1a; border-left: 3px solid #f39c12; }
+            .transport-status { display: flex; gap: 16px; margin-top: 4px; }
+            .transport-item { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+            @keyframes pulse-red { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+            @keyframes pulse-orange { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
         `;
         document.head.appendChild(style);
     }
@@ -46,6 +64,15 @@ class DiagnosticPanel {
             <div class="diagnostic-header" id="diag-drag-handle">
                 <h3>📊 Диагностика комнаты</h3>
                 <button id="diag-close-btn">✕ Закрыть</button>
+            </div>
+            <div id="diag-recovery-section" class="recovery-section" style="display: none;">
+                <div class="recovery-title">
+                    <span>🔄 Восстановление соединений</span>
+                    <span id="recovery-summary" style="font-size: 11px; color: #808090;"></span>
+                </div>
+                <div class="recovery-stats" id="recovery-stats"></div>
+                <div class="recovery-consumers" id="recovery-consumers"></div>
+                <div class="transport-status" id="transport-status"></div>
             </div>
             <div class="diagnostic-table-wrapper">
                 <table class="diagnostic-table">
@@ -67,11 +94,12 @@ class DiagnosticPanel {
         `;
         document.body.appendChild(this._modal);
 
+        this._recoverySection = this._modal.querySelector('#diag-recovery-section');
+
         this._modal.querySelector('#diag-close-btn').addEventListener('click', () => {
             client?.stopDiagnostic?.();
         });
 
-        // Drag & Drop setup
         const dragHandle = this._modal.querySelector('#diag-drag-handle');
         let isDragging = false;
         let startX = 0, startY = 0, initialX = 0, initialY = 0;
@@ -108,7 +136,6 @@ class DiagnosticPanel {
         window.addEventListener('mousemove', this._dragHandlers.move);
         window.addEventListener('mouseup', this._dragHandlers.up);
 
-        // Accordion delegation
         this._modal.addEventListener('click', (e) => {
             const userCell = e.target.closest('.diag-user');
             if (userCell) {
@@ -129,11 +156,92 @@ class DiagnosticPanel {
         this._modal.remove();
         this._modal = null;
         this._expandedUsers.clear();
+        this._recoveryInfo = null;
+        this._recoverySection = null;
 
         window.removeEventListener('mousemove', this._dragHandlers.move);
         window.removeEventListener('mouseup', this._dragHandlers.up);
         this._dragHandlers.move = null;
         this._dragHandlers.up = null;
+    }
+
+    static updateRecoveryInfo(recoveryInfo) {
+        this._recoveryInfo = recoveryInfo;
+        if (!this._modal || !this._recoverySection) return;
+
+        if (!recoveryInfo || (!recoveryInfo.consumers?.length && !recoveryInfo.pendingConsumeQueue && !recoveryInfo.transports)) {
+            this._recoverySection.style.display = 'none';
+            return;
+        }
+
+        this._recoverySection.style.display = 'block';
+
+        const summaryEl = this._modal.querySelector('#recovery-summary');
+        const statsEl = this._modal.querySelector('#recovery-stats');
+        const consumersEl = this._modal.querySelector('#recovery-consumers');
+        const transportEl = this._modal.querySelector('#transport-status');
+
+        const activeRecoveries = recoveryInfo.consumers?.filter(c => !c.exhausted).length || 0;
+        const exhaustedRecoveries = recoveryInfo.consumers?.filter(c => c.exhausted).length || 0;
+
+        if (summaryEl) {
+            summaryEl.textContent = `${activeRecoveries} активных, ${exhaustedRecoveries} безнадежных`;
+        }
+
+        if (statsEl) {
+            statsEl.innerHTML = `
+                <div class="recovery-stat">
+                    <span class="recovery-stat-label">Очередь:</span>
+                    <span class="recovery-stat-value">${recoveryInfo.pendingConsumeQueue || 0}</span>
+                </div>
+                <div class="recovery-stat">
+                    <span class="recovery-stat-label">Транспорт готов:</span>
+                    <span class="recovery-stat-value" style="color: ${recoveryInfo.transportReadyForConsume ? '#2ecc71' : '#e74c3c'}">
+                        ${recoveryInfo.transportReadyForConsume ? '✅ Да' : '❌ Нет'}
+                    </span>
+                </div>
+            `;
+        }
+
+        if (consumersEl && recoveryInfo.consumers?.length) {
+            consumersEl.innerHTML = recoveryInfo.consumers.map(c => {
+                const chipClass = c.exhausted ? 'exhausted' : 'recovering';
+                const statusIcon = c.exhausted ? '❌' : '🔄';
+                return `
+                    <div class="recovery-chip ${chipClass}" title="Последняя ошибка: ${c.lastError || 'неизвестно'}">
+                        ${statusIcon} ${c.producerId} (${c.attempts}/8)
+                    </div>
+                `;
+            }).join('');
+        } else if (consumersEl) {
+            consumersEl.innerHTML = '<span style="color: #606070; font-size: 12px;">Нет активных восстановлений</span>';
+        }
+
+        if (transportEl && recoveryInfo.transports) {
+            const recvState = recoveryInfo.transports.recv?.state || 'none';
+            const sendState = recoveryInfo.transports.send?.state || 'none';
+            const recvAttempts = recoveryInfo.transports.recv?.recoveryAttempts || 0;
+            const sendAttempts = recoveryInfo.transports.send?.recoveryAttempts || 0;
+
+            const getStateColor = (state) => {
+                if (state === 'connected') return '#2ecc71';
+                if (state === 'connecting' || state === 'new') return '#f1c40f';
+                return '#e74c3c';
+            };
+
+            transportEl.innerHTML = `
+                <div class="transport-item">
+                    <span style="color: #808090;">Recv:</span>
+                    <span style="color: ${getStateColor(recvState)};">${recvState}</span>
+                    ${recvAttempts > 0 ? `<span style="color: #f39c12;">(${recvAttempts})</span>` : ''}
+                </div>
+                <div class="transport-item">
+                    <span style="color: #808090;">Send:</span>
+                    <span style="color: ${getStateColor(sendState)};">${sendState}</span>
+                    ${sendAttempts > 0 ? `<span style="color: #f39c12;">(${sendAttempts})</span>` : ''}
+                </div>
+            `;
+        }
     }
 
     static renderSnapshot(snapshot) {
