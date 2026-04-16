@@ -1,3 +1,5 @@
+'use strict';
+
 import TextChatManager from './TextChatManager.js';
 import MembersManager from './MembersManager.js';
 import RoomManager from './RoomManager.js';
@@ -11,6 +13,10 @@ import SecondaryChatManager from './SecondaryChatManager.js';
 import MemberListRenderer from './MemberListRenderer.js';
 import DiagnosticPanel from './DiagnosticPanel.js';
 import ModalManager from './ModalManager.js';
+import NoteStateManager from './NoteStateManager.js';
+import NoteUIManager from './NoteUIManager.js';
+
+window.ScrollTracker = ScrollTracker;
 
 class UIManager {
     static client = null;
@@ -42,30 +48,23 @@ class UIManager {
     static _initReactionTooltips() {
         if (this._tooltipsInitialized) return;
         this._tooltipsInitialized = true;
-
         if (!document.getElementById('reaction-tooltip-global')) {
             const tooltip = document.createElement('div');
             tooltip.id = 'reaction-tooltip-global';
             tooltip.className = 'reaction-tooltip';
             document.body.appendChild(tooltip);
         }
-
         const container = document.querySelector('.messages-container');
         if (!container) return;
-
         container.addEventListener('mouseenter', async (e) => {
             const pill = e.target.closest('.reaction-pill');
             if (!pill) return;
-
             const tooltip = document.getElementById('reaction-tooltip-global');
             if (!tooltip) return;
-
             const userIds = pill.dataset.userIds || '';
             if (!userIds) return;
-
             const ids = userIds.split(',');
             const missingIds = ids.filter(uid => !this.usernameCache.has(uid));
-            
             if (missingIds.length > 0) {
                 tooltip.textContent = 'Загрузка...';
                 tooltip.style.display = 'block';
@@ -74,19 +73,16 @@ class UIManager {
                 tooltip.style.top = `${rect.top - 35}px`;
                 await this.fetchUsernames(missingIds);
             }
-            
             const names = ids.map(uid => {
                 const name = this.usernameCache.get(uid);
                 return name || 'Пользователь';
             }).join(', ');
-            
             tooltip.textContent = names;
             tooltip.style.display = 'block';
             const rect = pill.getBoundingClientRect();
             tooltip.style.left = `${rect.left}px`;
             tooltip.style.top = `${rect.top - 35}px`;
         }, true);
-
         container.addEventListener('mouseleave', (e) => {
             const pill = e.target.closest('.reaction-pill');
             if (!pill) return;
@@ -108,7 +104,40 @@ class UIManager {
     }
 
     static scrollToMessage(messageId, container = null, highlight = true) {
-        return ScrollTracker.scrollToMessage(messageId, container, highlight);
+        const target = container || document.querySelector('.messages-container');
+        if (!target) return false;
+        if (!messageId) {
+            ScrollTracker.scrollToBottom(target);
+            return false;
+        }
+        const found = ScrollTracker.scrollToMessage(messageId, target, highlight);
+        if (!found) {
+            this._findAndScrollToClosestMessage(messageId, target);
+        }
+        return found;
+    }
+
+    static async _findAndScrollToClosestMessage(targetId, container) {
+        const client = this.client || window.voiceClient;
+        const roomId = client?.currentRoom;
+        if (!roomId || !client) return;
+        try {
+            const response = await fetch(
+                `${client.API_SERVER_URL}/api/messages/${roomId}/messages/closest?targetId=${targetId}&direction=newer`,
+                { headers: { Authorization: `Bearer ${client.token}` } }
+            );
+            if (!response.ok) return;
+            const data = await response.json();
+            if (data.closestId) {
+                TextChatManager.loadMessagesAround(client, roomId, data.closestId, 50).then(() => {
+                    setTimeout(() => {
+                        ScrollTracker.scrollToMessage(data.closestId, container, true);
+                    }, 300);
+                }).catch(() => {});
+            } else {
+                ScrollTracker.scrollToBottom(container);
+            }
+        } catch (error) {}
     }
 
     static initScrollTracker(roomId, container = null) {
@@ -123,8 +152,47 @@ class UIManager {
         return ScrollTracker.getLastViewedMessage(roomId);
     }
 
+    static getMaxSeenMessageId(roomId) {
+        return ScrollTracker.getMaxSeenMessageId(roomId);
+    }
+
+    static getFirstUnreadId(roomId) {
+        return ScrollTracker.getFirstUnreadId(roomId);
+    }
+
+    static setMaxSeenMessageId(roomId, messageId) {
+        ScrollTracker.setMaxSeenMessageId(roomId, messageId);
+    }
+
+    static setFirstUnreadId(roomId, messageId) {
+        ScrollTracker.setFirstUnreadId(roomId, messageId);
+    }
+
     static clearLastViewedMessage(roomId) {
         ScrollTracker.clearLastViewedMessage(roomId);
+    }
+
+    static refreshUnreadScan(roomId) {
+        ScrollTracker.refreshUnreadScan(roomId);
+    }
+
+    static updateScrollButtonCounter(roomId) {
+        const unreadData = UnreadBadgeManager.getRoomUnreadData(roomId);
+        if (!unreadData) return;
+        const btn = document.getElementById('scroll-to-bottom-btn');
+        if (!btn) return;
+        const existingCounter = btn.querySelector('.scroll-btn-counter');
+        if (existingCounter) existingCounter.remove();
+        const total = unreadData.count || 0;
+        const personal = unreadData.personalCount || 0;
+        if (total > 0) {
+            const counter = document.createElement('span');
+            counter.className = 'scroll-btn-counter';
+            counter.style.cssText = 'position: absolute; top: -8px; right: -8px; background: #ed4245; color: white; font-size: 10px; font-weight: bold; padding: 2px 5px; border-radius: 10px; min-width: 18px; text-align: center; line-height: 1.2; border: 1px solid #2d2d44;';
+            counter.textContent = personal > 0 ? `${total}@${personal}` : `${total}`;
+            btn.style.position = 'relative';
+            btn.appendChild(counter);
+        }
     }
 
     static setReplyTarget(msg) {
@@ -151,8 +219,8 @@ class UIManager {
         ContextMenuManager.hideContextMenu();
     }
 
-    static addMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readState = 0, userId = null, broadcast = false, thumbnailUrl = null, targetContainer = null, replyTo = null, reactions = {}, poll = null, forwardedFrom = null, pollRef = null, embed = null) {
-        return MessageRenderer.addMessage(user, text, timestamp, type, imageUrl, messageId, readState, userId, broadcast, thumbnailUrl, targetContainer, replyTo, reactions, poll, forwardedFrom, pollRef, embed);
+    static addMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = [], userId = null, broadcast = false, thumbnailUrl = null, targetContainer = null, replyTo = null, reactions = {}, poll = null, forwardedFrom = null, pollRef = null, embed = null) {
+        return MessageRenderer.addMessage(user, text, timestamp, type, imageUrl, messageId, readBy, userId, broadcast, thumbnailUrl, targetContainer, replyTo, reactions, poll, forwardedFrom, pollRef, embed);
     }
 
     static prependMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readState = 0, userId = null, broadcast = false, thumbnailUrl = null, replyTo = null, reactions = {}, poll = null, forwardedFrom = null, pollRef = null, embed = null) {
@@ -214,40 +282,37 @@ class UIManager {
             modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); display: flex; justify-content: center; align-items: center; z-index: 10001;';
             const content = document.createElement('div');
             content.style.cssText = 'background: #2d2d44; border-radius: 12px; padding: 24px; max-width: 500px; width: 90%; border: 1px solid #404060;';
-            
             let forwardedInfo = '';
             if (message.forwardedFrom) {
                 forwardedInfo = `
-                    <div style="margin-top: 12px;"><strong>Переслано из:</strong> ${this.escapeHtml(message.forwardedFrom.serverName)} / ${this.escapeHtml(message.forwardedFrom.roomName)}</div>
-                    <div style="margin-top: 4px;"><strong>Автор оригинала:</strong> ${this.escapeHtml(message.forwardedFrom.username)}</div>
-                `;
+<div style="margin-top: 12px;"><strong>Переслано из:</strong> ${this.escapeHtml(message.forwardedFrom.serverName)} / ${this.escapeHtml(message.forwardedFrom.roomName)}</div>
+<div style="margin-top: 4px;"><strong>Автор оригинала:</strong> ${this.escapeHtml(message.forwardedFrom.username)}</div>
+`;
             }
-            
             let pollInfo = '';
             if (message.type === 'poll' && message.poll) {
                 pollInfo = `
-                    <div style="margin-top: 16px; padding: 12px; background: #1a1a2e; border-radius: 8px;">
-                        <strong>📊 Опрос:</strong> ${this.escapeHtml(message.poll.question)}<br>
-                        <span style="font-size: 12px; color: #888;">Вариантов: ${message.poll.options.length} | Голосов: ${message.poll.totalVotes}</span>
-                    </div>
-                `;
+<div style="margin-top: 16px; padding: 12px; background: #1a1a2e; border-radius: 8px;">
+<strong>📊 Опрос:</strong> ${this.escapeHtml(message.poll.question)}<br>
+<span style="font-size: 12px; color: #888;">Вариантов: ${message.poll.options.length} | Голосов: ${message.poll.totalVotes}</span>
+</div>
+`;
             }
-            
             content.innerHTML = `
-                <h3 style="margin: 0 0 20px 0; color: #e0e0e0;">📋 Информация о сообщении</h3>
-                <div style="color: #b0b0c0; line-height: 1.8;">
-                    <div><strong>ID:</strong> <code style="background: #1a1a2e; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${message.id}</code></div>
-                    <div style="margin-top: 12px;"><strong>Автор:</strong> ${this.escapeHtml(message.username)}</div>
-                    <div style="margin-top: 8px;"><strong>ID автора:</strong> <code style="background: #1a1a2e; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${message.userId}</code></div>
-                    <div style="margin-top: 8px;"><strong>Время:</strong> ${new Date(message.timestamp).toLocaleString('ru-RU')}</div>
-                    <div style="margin-top: 8px;"><strong>Тип:</strong> ${message.type || 'text'}</div>
-                    <div style="margin-top: 8px;"><strong>Гнездо:</strong> <code style="background: #1a1a2e; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${message.roomId}</code></div>
-                    ${forwardedInfo}
-                    ${pollInfo}
-                    ${message.text ? `<div style="margin-top: 16px; padding: 12px; background: #1a1a2e; border-radius: 8px;"><strong>Текст:</strong><br><span style="color: #e0e0e0;">${this.escapeHtml(message.text)}</span></div>` : ''}
-                </div>
-                <button id="closeInfoModal" style="margin-top: 20px; padding: 10px 24px; background: #5865f2; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">Закрыть</button>
-            `;
+<h3 style="margin: 0 0 20px 0; color: #e0e0e0;">📋 Информация о сообщении</h3>
+<div style="color: #b0b0c0; line-height: 1.8;">
+<div><strong>ID:</strong> <code style="background: #1a1a2e; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${message.id}</code></div>
+<div style="margin-top: 12px;"><strong>Автор:</strong> ${this.escapeHtml(message.username)}</div>
+<div style="margin-top: 8px;"><strong>ID автора:</strong> <code style="background: #1a1a2e; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${message.userId}</code></div>
+<div style="margin-top: 8px;"><strong>Время:</strong> ${new Date(message.timestamp).toLocaleString('ru-RU')}</div>
+<div style="margin-top: 8px;"><strong>Тип:</strong> ${message.type || 'text'}</div>
+<div style="margin-top: 8px;"><strong>Гнездо:</strong> <code style="background: #1a1a2e; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${message.roomId}</code></div>
+${forwardedInfo}
+${pollInfo}
+${message.text ? `<div style="margin-top: 16px; padding: 12px; background: #1a1a2e; border-radius: 8px;"><strong>Текст:</strong><br><span style="color: #e0e0e0;">${this.escapeHtml(message.text)}</span></div>` : ''}
+</div>
+<button id="closeInfoModal" style="margin-top: 20px; padding: 10px 24px; background: #5865f2; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">Закрыть</button>
+`;
             modal.appendChild(content);
             document.body.appendChild(modal);
             const closeBtn = content.querySelector('#closeInfoModal');
@@ -524,11 +589,9 @@ class UIManager {
         banner.id = 'live-notification-banner';
         banner.style.cssText = 'position: sticky; top: 0; background: #2d2d44; border-bottom: 1px solid #404060; padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; z-index: 1000; font-size: 13px; color: #e0e0e0;';
         const time = payload.timestamp ? new Date(payload.timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
-        
         let icon = '📨';
         let actionText = '';
         let senderColor = '#e0e0e0';
-        
         if (payload.type === 'mention' || payload.type === 'name_mention') {
             icon = '🔔';
             actionText = 'упомянул вас';
@@ -545,28 +608,25 @@ class UIManager {
             icon = '📨';
             actionText = 'написал';
         }
-        
         const roomDisplayName = payload.roomName || 'чат';
-        
         banner.innerHTML = `
-            <div style="overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1; margin-right: 10px;">
-                ${icon} <strong style="color: ${senderColor};">${this.escapeHtml(payload.sender)}</strong> 
-                <span style="opacity: 0.8;">${actionText} в <strong>${this.escapeHtml(roomDisplayName)}</strong></span>
-                <span style="opacity: 0.5; margin-left: 8px; font-size: 11px;">${time}</span>
-            </div>
-            <button id="notif-close" style="background: none; border: none; color: #e0e0e0; cursor: pointer; font-size: 16px; padding: 0 8px;">✕</button>
-        `;
-        
+<div style="overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1; margin-right: 10px;">
+${icon} <strong style="color: ${senderColor};">${this.escapeHtml(payload.sender)}</strong>
+<span style="opacity: 0.8;">${actionText} в <strong>${this.escapeHtml(roomDisplayName)}</strong></span>
+<span style="opacity: 0.5; margin-left: 8px; font-size: 11px;">${time}</span>
+</div>
+<button id="notif-close" style="background: none; border: none; color: #e0e0e0; cursor: pointer; font-size: 16px; padding: 0 8px;">✕</button>
+`;
         const chatArea = document.querySelector('.primary-frame') || document.querySelector('.chat-area');
         if (chatArea) chatArea.prepend(banner);
         this.notificationTimer = setTimeout(() => this.hideLiveNotification(), 10000);
-        banner.querySelector('#notif-close').addEventListener('click', (e) => { 
-            e.stopPropagation(); 
-            this.hideLiveNotification(); 
+        banner.querySelector('#notif-close').addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.hideLiveNotification();
         });
-        banner.addEventListener('click', () => { 
-            this.hideLiveNotification(); 
-            if (client) client.openSecondaryFromNotification(payload.roomId); 
+        banner.addEventListener('click', () => {
+            this.hideLiveNotification();
+            if (client) client.openSecondaryFromNotification(payload.roomId);
         });
     }
 
@@ -640,22 +700,22 @@ class UIManager {
             this.hidePinnedMessagesBar();
             return;
         }
-        const displayText = currentMessage.text && currentMessage.text.length > 50 
-            ? currentMessage.text.substring(0, 50) + '...' 
+        const displayText = currentMessage.text && currentMessage.text.length > 50
+            ? currentMessage.text.substring(0, 50) + '...'
             : (currentMessage.text || 'Изображение');
         bar.style.display = 'flex';
         bar.innerHTML = `
-            <div class="pinned-message-content">
-                <span class="pinned-icon">📌</span>
-                <span class="pinned-author">${this.escapeHtml(currentMessage.username)}:</span>
-                <span class="pinned-text">${this.escapeHtml(displayText)}</span>
-            </div>
-            <div class="pinned-actions">
-                <span class="pinned-counter">${pinned.length}</span>
-                <button class="pinned-expand-btn" title="Показать все закрепленные">📋</button>
-                <button class="pinned-close-btn" title="Скрыть" style="display: none;">✕</button>
-            </div>
-        `;
+<div class="pinned-message-content">
+<span class="pinned-icon">📌</span>
+<span class="pinned-author">${this.escapeHtml(currentMessage.username)}:</span>
+<span class="pinned-text">${this.escapeHtml(displayText)}</span>
+</div>
+<div class="pinned-actions">
+<span class="pinned-counter">${pinned.length}</span>
+<button class="pinned-expand-btn" title="Показать все закрепленные">📋</button>
+<button class="pinned-close-btn" title="Скрыть" style="display: none;">✕</button>
+</div>
+`;
         bar.querySelector('.pinned-message-content').addEventListener('click', () => {
             if (client && typeof client.scrollToNextPinnedMessage === 'function') {
                 client.scrollToNextPinnedMessage();
@@ -680,7 +740,7 @@ class UIManager {
         const pinned = client.pinnedMessages.get(roomId) || [];
         const room = client.rooms?.find(r => r.id === roomId);
         const roomName = room ? room.name : 'Гнездо';
-        const canManage = room && (room.ownerId === client.userId || 
+        const canManage = room && (room.ownerId === client.userId ||
             (client.currentServer && client.currentServer.ownerId === client.userId));
         const existingModal = document.querySelector('.pinned-messages-modal');
         if (existingModal) existingModal.remove();
@@ -698,29 +758,29 @@ class UIManager {
                 const pinnedBy = msg.pinnedBy ? msg.pinnedBy.replace('user_', '').substring(0, 8) : '';
                 const pinnedTime = msg.pinnedAt ? new Date(msg.pinnedAt).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
                 itemsHtml += `
-                    <div class="pinned-message-item" data-message-id="${msg.id}" data-index="${index}">
-                        <div class="pinned-item-header">
-                            <span class="pinned-item-author">${this.escapeHtml(msg.username)}</span>
-                            <span class="pinned-item-time">${time}</span>
-                        </div>
-                        <div class="pinned-item-text">${this.escapeHtml(msg.text || '[Изображение]')}</div>
-                        <div class="pinned-item-meta">
-                            <span>📌 закрепил ${pinnedBy} в ${pinnedTime}</span>
-                            ${canManage ? `<button class="pinned-item-unpin" data-message-id="${msg.id}" title="Открепить">✕</button>` : ''}
-                        </div>
-                    </div>
-                `;
+<div class="pinned-message-item" data-message-id="${msg.id}" data-index="${index}">
+<div class="pinned-item-header">
+<span class="pinned-item-author">${this.escapeHtml(msg.username)}</span>
+<span class="pinned-item-time">${time}</span>
+</div>
+<div class="pinned-item-text">${this.escapeHtml(msg.text || '[Изображение]')}</div>
+<div class="pinned-item-meta">
+<span>📌 закрепил ${pinnedBy} в ${pinnedTime}</span>
+${canManage ? `<button class="pinned-item-unpin" data-message-id="${msg.id}" title="Открепить">✕</button>` : ''}
+</div>
+</div>
+`;
             });
         }
         content.innerHTML = `
-            <div class="pinned-modal-header" style="padding: 16px 20px; border-bottom: 1px solid #404060; display: flex; justify-content: space-between; align-items: center;">
-                <h3 style="margin: 0; color: #e0e0e0; font-size: 16px;">📌 Закрепленные сообщения — ${this.escapeHtml(roomName)}</h3>
-                <button class="pinned-modal-close" style="background: none; border: none; color: #888; font-size: 20px; cursor: pointer; padding: 4px 8px;">✕</button>
-            </div>
-            <div class="pinned-modal-body" style="padding: 16px 20px; overflow-y: auto; flex: 1;">
-                ${itemsHtml}
-            </div>
-        `;
+<div class="pinned-modal-header" style="padding: 16px 20px; border-bottom: 1px solid #404060; display: flex; justify-content: space-between; align-items: center;">
+<h3 style="margin: 0; color: #e0e0e0; font-size: 16px;">📌 Закрепленные сообщения — ${this.escapeHtml(roomName)}</h3>
+<button class="pinned-modal-close" style="background: none; border: none; color: #888; font-size: 20px; cursor: pointer; padding: 4px 8px;">✕</button>
+</div>
+<div class="pinned-modal-body" style="padding: 16px 20px; overflow-y: auto; flex: 1;">
+${itemsHtml}
+</div>
+`;
         modal.appendChild(content);
         document.body.appendChild(modal);
         const closeBtn = content.querySelector('.pinned-modal-close');
@@ -752,6 +812,124 @@ class UIManager {
                 });
             });
         }
+    }
+
+    static switchToNotesView(mode, targetId) {
+        NoteUIManager.switchView(mode, targetId);
+        this._updateNotesHeader(mode, targetId);
+        this._togglePanelsForNotes(true);
+    }
+
+    static returnToChatView() {
+        NoteUIManager.returnToChat();
+        this._togglePanelsForNotes(false);
+        if (this.client?.currentRoom) {
+            this.updateRoomTitle(`Гнездо: ${this.client.rooms?.find(r => r.id === this.client.currentRoom)?.name || this.client.currentRoom}`);
+        }
+    }
+
+    static _updateNotesHeader(mode, targetId) {
+        const titleEl = document.querySelector('.current-room-title');
+        if (!titleEl) return;
+        if (mode === 'personal') {
+            titleEl.textContent = '🔐 Личные заметки';
+        } else if (mode === 'public') {
+            const username = this.usernameCache.get(targetId) || targetId?.replace('user_', '').substring(0, 8) || 'Пользователь';
+            titleEl.textContent = `🌐 Заметки ${username}`;
+        } else if (mode === 'thread') {
+            titleEl.textContent = '💬 Тред заметки';
+        }
+    }
+
+static _togglePanelsForNotes(isNotesView) {
+    const chatArea = document.querySelector('.chat-area');
+    const chatHeader = document.querySelector('.chat-header');
+    const messagesContainer = document.querySelector('.messages-container');
+    const notesViewContainer = document.getElementById('notes-view-container');
+    const noteThreadContainer = document.getElementById('note-thread-container');
+    const inputArea = document.querySelector('.input-area');
+    const membersPanel = document.querySelector('.members-panel');
+    const notesListPanel = membersPanel?.querySelector('.notes-list-panel');
+    
+    // ✅ Гарантируем, что основные контейнеры видимы
+    if (chatArea) chatArea.style.display = 'flex';
+    if (chatHeader) chatHeader.style.display = 'flex';
+
+    if (isNotesView) {
+        if (messagesContainer) messagesContainer.style.display = 'none';
+        if (inputArea) inputArea.style.display = 'none';
+        if (membersPanel) membersPanel.style.display = 'none';
+        if (notesListPanel) notesListPanel.style.display = 'block';
+        if (notesViewContainer) {
+            notesViewContainer.style.display = 'flex';
+            notesViewContainer.style.flex = '1';
+        }
+        if (noteThreadContainer) noteThreadContainer.style.display = 'none';
+    } else {
+        if (messagesContainer) messagesContainer.style.display = 'block';
+        if (inputArea) inputArea.style.display = 'flex';
+        if (membersPanel) membersPanel.style.display = 'flex';
+        if (notesListPanel) notesListPanel.style.display = 'none';
+        if (notesViewContainer) notesViewContainer.style.display = 'none';
+        if (noteThreadContainer) noteThreadContainer.style.display = 'none';
+    }
+}
+
+    static openUserPublicNotes(userId) {
+        if (!userId) return;
+        this.switchToNotesView('public', userId);
+    }
+
+    static openNoteThread(noteId, roomId) {
+        if (!noteId || !roomId) return;
+        NoteUIManager.openNoteThread(noteId, roomId);
+        const notesViewContainer = document.getElementById('notes-view-container');
+        const noteThreadContainer = document.getElementById('note-thread-container');
+        if (notesViewContainer) notesViewContainer.style.display = 'none';
+        if (noteThreadContainer) noteThreadContainer.style.display = 'flex';
+    }
+
+    static updateNotesListPanel(notes) {
+        const notesListPanel = document.querySelector('.notes-list-panel .notes-list-content');
+        if (!notesListPanel) return;
+        NoteUIManager.renderNotesList(notesListPanel, notes);
+    }
+
+    static updateThreadMessages(messages) {
+        const threadContainer = document.getElementById('note-thread-container');
+        if (!threadContainer) return;
+        const messagesEl = threadContainer.querySelector('.note-thread-messages');
+        if (messagesEl) {
+            NoteUIManager.renderThreadMessages(messagesEl, messages);
+        }
+    }
+
+    static showNotesLoading(containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const loadingEl = container.querySelector('.notes-loading');
+        if (loadingEl) loadingEl.style.display = 'block';
+    }
+
+    static hideNotesLoading(containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const loadingEl = container.querySelector('.notes-loading');
+        if (loadingEl) loadingEl.style.display = 'none';
+    }
+
+    static showNotesEmpty(containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const emptyEl = container.querySelector('.notes-empty');
+        if (emptyEl) emptyEl.style.display = 'block';
+    }
+
+    static hideNotesEmpty(containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const emptyEl = container.querySelector('.notes-empty');
+        if (emptyEl) emptyEl.style.display = 'none';
     }
 }
 

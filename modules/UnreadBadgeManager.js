@@ -32,7 +32,12 @@ class UnreadBadgeManager {
         this.updateServerBadges();
         this.updateRoomBadges();
         this.updateTotalBadge();
-        if (this.client) this.updateRoomTitleBadge(this.client);
+        if (this.client) {
+            this.updateRoomTitleBadge(this.client);
+            if (this.client.currentRoom) {
+                this.updateScrollButtonCounter(this.client.currentRoom);
+            }
+        }
     }
 
     static updateServerBadges() {
@@ -127,22 +132,43 @@ class UnreadBadgeManager {
         if (existingBadge) existingBadge.remove();
         if (!client || !client.currentRoom) return;
 
-        let roomUnreadData = null;
-        for (const serverId in this.unreadCounts) {
-            if (this.unreadCounts[serverId].rooms?.[client.currentRoom]) {
-                roomUnreadData = this.unreadCounts[serverId].rooms[client.currentRoom];
-                break;
-            }
-        }
-
-        if (roomUnreadData && roomUnreadData.count > 0) {
+        const roomData = this.getRoomUnreadData(client.currentRoom);
+        if (roomData && roomData.count > 0) {
             const badge = document.createElement('span');
             badge.className = 'room-unread-badge';
-            badge.textContent = roomUnreadData.personalCount > 0
-                ? `${roomUnreadData.count}@${roomUnreadData.personalCount}`
-                : roomUnreadData.count;
+            badge.textContent = roomData.personalCount > 0
+                ? `${roomData.count}@${roomData.personalCount}`
+                : roomData.count;
             titleElement.appendChild(badge);
         }
+    }
+
+    static updateScrollButtonCounter(roomId) {
+        if (!roomId) return;
+        const roomData = this.getRoomUnreadData(roomId);
+        const btn = document.getElementById('scroll-to-bottom-btn');
+        if (!btn) return;
+        const existingCounter = btn.querySelector('.scroll-btn-counter');
+        if (existingCounter) existingCounter.remove();
+        const total = roomData?.count || 0;
+        const personal = roomData?.personalCount || 0;
+        if (total > 0) {
+            const counter = document.createElement('span');
+            counter.className = 'scroll-btn-counter';
+            counter.style.cssText = 'position: absolute; top: -8px; right: -8px; background: #ed4245; color: white; font-size: 10px; font-weight: bold; padding: 2px 5px; border-radius: 10px; min-width: 18px; text-align: center; line-height: 1.2; border: 1px solid #2d2d44;';
+            counter.textContent = personal > 0 ? `${total}@${personal}` : `${total}`;
+            btn.style.position = 'relative';
+            btn.appendChild(counter);
+        }
+    }
+
+    static getRoomUnreadData(roomId) {
+        if (!roomId) return null;
+        for (const serverId in this.unreadCounts) {
+            const roomData = this.unreadCounts[serverId].rooms?.[roomId];
+            if (roomData) return roomData;
+        }
+        return null;
     }
 
     static setUnreadCount(serverId, roomId, count, hasMention, personalCount = 0) {
@@ -173,6 +199,9 @@ class UnreadBadgeManager {
         this.updateRoomBadges();
         this.updateTotalBadge();
         this.updateRoomTitleBadge(this.client);
+        if (roomId === this.client?.currentRoom) {
+            this.updateScrollButtonCounter(roomId);
+        }
     }
 
     static clearUnreadForServer(serverId) {
@@ -213,6 +242,9 @@ class UnreadBadgeManager {
             this.updateRoomBadges();
             this.updateTotalBadge();
             this.updateRoomTitleBadge(this.client);
+            if (roomId === this.client?.currentRoom) {
+                this.updateScrollButtonCounter(roomId);
+            }
         }
     }
 
@@ -221,6 +253,9 @@ class UnreadBadgeManager {
         this.updateServerBadges();
         this.updateRoomBadges();
         this.updateTotalBadge();
+        if (this.client?.currentRoom) {
+            this.updateScrollButtonCounter(this.client.currentRoom);
+        }
     }
 
     static getSyncStatus() {

@@ -18,17 +18,25 @@
     --border-color: var(--bg-tertiary);
 }
 
+html, body {
+    max-width: 100vw;
+    overflow-x: hidden;
+}
+
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     background: var(--bg-primary);
     color: var(--text-normal);
+    height: 100vh;
     height: 100dvh;
+    position: fixed;
+    width: 100%;
     overflow: hidden;
 }
 
 .app {
     display: flex;
-    height: 100dvh;
+    height: 100%;
     position: relative;
     width: 100%;
 }
@@ -1240,9 +1248,11 @@ pre, .code-block {
     border-radius: 8px;
     padding: 20px;
     min-width: 300px;
-    max-width: 500px;
+    max-width: min(500px, 95vw);
     width: 90%;
     color: var(--text-normal);
+    margin: 0 auto;
+    box-sizing: border-box;
 }
 
 .modal-content h2 {
@@ -1294,6 +1304,7 @@ pre, .code-block {
     border: 1px solid var(--bg-tertiary);
     border-radius: 4px;
     color: var(--text-normal);
+    box-sizing: border-box;
 }
 
 #authSubmitBtn,
@@ -1786,71 +1797,6 @@ pre, .code-block {
 
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
-}
-
-@media (max-width: 768px) {
-    .sidebar {
-        position: fixed;
-        left: 0;
-        top: 0;
-        bottom: 0;
-        z-index: 100;
-        transform: translateX(-100%);
-        width: 280px;
-        display: flex !important;
-        flex-direction: column;
-        transition: transform 0.3s ease;
-    }
-
-    .sidebar.open {
-        transform: translateX(0);
-    }
-
-    .members-panel {
-        position: fixed;
-        right: 0;
-        top: 0;
-        bottom: 0;
-        z-index: 100;
-        transform: translateX(100%);
-        display: flex !important;
-        flex-direction: column;
-        transition: transform 0.3s ease;
-    }
-
-    .members-panel.open {
-        transform: translateX(0);
-    }
-
-    .toggle-sidebar-btn {
-        display: flex;
-        z-index: 101;
-        position: relative;
-    }
-
-    .mic-button {
-        display: none;
-    }
-
-    .mic-toggle-btn {
-        display: flex;
-    }
-
-    .server-actions,
-    .room-actions {
-        flex-direction: column;
-        gap: 2px;
-    }
-
-    .server-action-btn,
-    .room-action-btn {
-        padding: 4px;
-        font-size: 14px;
-    }
-
-    .invite-link-container {
-        flex-direction: column;
-    }
 }
 
 .poll-container {
@@ -2729,7 +2675,6 @@ pre, .code-block {
     box-shadow: 0 0 0 1px rgba(88, 101, 242, 0.4), 0 4px 8px rgba(0, 0, 0, 0.4) !important;
 }
 
-/* Подсветка текста упоминания внутри сообщения */
 .message-text .mention-highlight {
     background: rgba(250, 166, 26, 0.2);
     color: #faa61a;
@@ -2742,4 +2687,871 @@ pre, .code-block {
     background: rgba(0, 176, 244, 0.15);
     color: #00b0f4;
     padding: 1px 0;
+}
+
+/* ============================================================================
+   МОБИЛЬНЫЕ ИСПРАВЛЕНИЯ (iOS Safari и Android)
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    html, body {
+        max-width: 100vw;
+        overflow-x: hidden;
+        position: fixed;
+        width: 100%;
+    }
+
+    body {
+        position: fixed;
+        width: 100%;
+        overflow: hidden;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .app {
+        height: 100%;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+    }
+
+    /* Фикс для iOS Safari при открытой клавиатуре */
+    @supports (-webkit-touch-callout: none) {
+        body {
+            height: -webkit-fill-available;
+        }
+        
+        .app {
+            min-height: -webkit-fill-available;
+        }
+    }
+
+    /* Предотвращаем сдвиг интерфейса при фокусе на инпуте */
+    .input-area {
+        position: sticky;
+        bottom: 0;
+        background: var(--bg-primary);
+        z-index: 10;
+        padding: 12px 8px;
+    }
+
+    .chat-header {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: var(--bg-secondary);
+    }
+
+    .chat-area {
+        position: relative;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .messages-container {
+        flex: 1 1 auto;
+        min-height: 0;
+        padding: 8px;
+    }
+
+    .input-area {
+        flex: 0 0 auto;
+    }
+
+    /* Фикс для модальных окон */
+    .modal-content {
+        max-width: 95vw;
+        width: 95%;
+        margin: 0 auto;
+        overflow-x: hidden;
+        padding: 16px;
+    }
+
+    /* Фикс для инпутов в модалках */
+    #usernameInput,
+    #passwordInput,
+    #roomNameInput,
+    .search-input,
+    .message-input {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+        font-size: 16px; /* Предотвращает зум на iOS */
+    }
+
+    /* Убираем tap highlight */
+    * {
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    /* Фикс для панелей на мобилках */
+    .sidebar,
+    .members-panel {
+        max-width: 85vw;
+    }
+
+    .sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        z-index: 100;
+        transform: translateX(-100%);
+        width: 280px;
+        display: flex !important;
+        flex-direction: column;
+        transition: transform 0.3s ease;
+    }
+
+    .sidebar.open {
+        transform: translateX(0);
+    }
+
+    .members-panel {
+        position: fixed;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        z-index: 100;
+        transform: translateX(100%);
+        display: flex !important;
+        flex-direction: column;
+        transition: transform 0.3s ease;
+    }
+
+    .members-panel.open {
+        transform: translateX(0);
+    }
+
+    .toggle-sidebar-btn {
+        display: flex;
+        z-index: 101;
+        position: relative;
+    }
+
+    .mic-button {
+        display: none;
+    }
+
+    .mic-toggle-btn {
+        display: flex;
+    }
+
+    .server-actions,
+    .room-actions {
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .server-action-btn,
+    .room-action-btn {
+        padding: 4px;
+        font-size: 14px;
+    }
+
+    .invite-link-container {
+        flex-direction: column;
+    }
+
+    /* Уменьшаем отступы на мобилках */
+    .chat-header {
+        padding: 0 8px;
+    }
+
+    .current-room-title {
+        font-size: 14px;
+    }
+
+    .message-avatar {
+        width: 32px;
+        height: 32px;
+        font-size: 12px;
+    }
+
+    .message-content {
+        max-width: calc(100% - 44px);
+        padding: 6px 10px;
+    }
+
+    /* Фикс для split-режима на мобилках */
+    .chat-split-container.split-side {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 1fr;
+    }
+
+    .split-side .primary-frame {
+        grid-column: 1;
+        grid-row: 2;
+        border-right: none;
+        border-top: 1px solid var(--bg-tertiary);
+    }
+
+    .split-side .secondary-frame {
+        grid-column: 1;
+        grid-row: 1;
+        border-left: none;
+        border-bottom: 1px solid var(--bg-tertiary);
+    }
+
+    /* Увеличиваем область нажатия для кнопок */
+    .mic-toggle-btn,
+    .settings-btn,
+    .toggle-members-btn,
+    .attach-btn,
+    .send-btn,
+    .poll-create-btn,
+    .split-toggle-btn {
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    /* Исправление для ползунков громкости */
+    .member-volume-slider {
+        width: 60px;
+    }
+
+    /* Уменьшаем максимальный размер изображений */
+    .image-thumbnail img {
+        max-width: 200px;
+        max-height: 150px;
+    }
+
+    .embed-thumbnail {
+        width: 80px;
+        min-width: 80px;
+        height: 60px;
+    }
+
+    /* Контекстное меню на мобилках */
+    .message-context-menu {
+        min-width: 180px;
+    }
+
+    .context-menu-item {
+        padding: 12px 16px;
+        font-size: 14px;
+    }
+
+    /* Фикс для реакций */
+    .reaction-picker-inline {
+        max-width: 100%;
+        overflow-x: auto;
+    }
+
+    /* Фикс для панели поиска */
+    .search-container {
+        padding: 8px;
+    }
+
+    /* Убираем ховер-эффекты на мобилках */
+    .server-item:hover,
+    .room-item:hover,
+    .message:hover {
+        background: transparent;
+    }
+
+    .server-item:active,
+    .room-item:active {
+        background: var(--bg-modifier);
+    }
+
+    /* Фикс для ошибок */
+    .error-message {
+        max-width: 90vw;
+        top: 10px;
+        right: 10px;
+        left: 10px;
+    }
+}
+
+/* Дополнительные фиксы для очень маленьких экранов */
+@media (max-width: 480px) {
+    .sidebar {
+        width: 260px;
+    }
+
+    .members-panel {
+        width: 220px;
+    }
+
+    .message-input {
+        padding: 8px;
+        font-size: 14px;
+    }
+
+    .send-btn {
+        padding: 0 12px;
+    }
+
+    .header-controls {
+        gap: 0;
+    }
+
+    .member-item {
+        padding: 6px 8px;
+    }
+
+    .member-avatar {
+        width: 28px;
+        height: 28px;
+    }
+}
+
+/* ============================================================================
+СИСТЕМА ЗАМЕТОК (NOTES)
+============================================================================ */
+
+/* Dropdown-меню заметок */
+#notes-dropdown-menu {
+    position: absolute;
+    background: #2d2d44;
+    border: 1px solid #404060;
+    border-radius: 8px;
+    padding: 4px 0;
+    min-width: 180px;
+    z-index: 10000;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    animation: fadeIn 0.15s ease;
+}
+
+.notes-dropdown-item {
+    width: 100%;
+    padding: 10px 16px;
+    background: none;
+    border: none;
+    color: #e0e0e0;
+    cursor: pointer;
+    text-align: left;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.2s ease;
+}
+
+.notes-dropdown-item:hover {
+    background: #3d3d5c;
+}
+
+/* Контейнер просмотра заметок */
+#notes-view-container {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    background: var(--bg-primary);
+    overflow: hidden;
+}
+
+.notes-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--bg-tertiary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+}
+
+.notes-title {
+    margin: 0;
+    font-size: 14px;
+    color: #e0e0e0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.notes-controls {
+    display: flex;
+    gap: 4px;
+}
+
+.notes-mode-btn {
+    padding: 6px 12px;
+    background: none;
+    border: 1px solid #404060;
+    border-radius: 6px;
+    color: #888;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s ease;
+}
+
+.notes-mode-btn:hover {
+    background: #3d3d5c;
+    color: #e0e0e0;
+}
+
+.notes-mode-btn.active {
+    background: #5865f2;
+    border-color: #5865f2;
+    color: white;
+}
+
+/* Кнопка создания заметки */
+.new-note-btn {
+    display: block !important;
+    margin: 10px 16px !important;
+    padding: 12px 16px !important;
+    background: #5865f2 !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 8px !important;
+    cursor: pointer !important;
+    font-size: 14px !important;
+    font-weight: bold !important;
+    width: calc(100% - 32px) !important;
+    min-height: 44px !important;
+    text-align: left !important;
+    box-sizing: border-box !important;
+}
+.new-note-btn:hover {
+    background: #4752c4 !important;
+}
+
+/* Список заметок (основной) */
+.notes-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* Карточка заметки */
+.note-card {
+    background: #2d2d44;
+    border-radius: 8px;
+    padding: 12px;
+    border: 1px solid #404060;
+    transition: all 0.2s ease;
+}
+
+.note-card:hover {
+    border-color: #5865f2;
+    box-shadow: 0 2px 8px rgba(88, 101, 242, 0.2);
+}
+
+.note-card.highlighted {
+    background: rgba(88, 101, 242, 0.15);
+    border-color: #5865f2;
+}
+
+.note-card-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.note-author {
+    font-weight: 600;
+    color: #e0e0e0;
+    font-size: 13px;
+}
+
+.note-date {
+    font-size: 11px;
+    color: #888;
+}
+
+.note-edited {
+    font-size: 10px;
+    color: #666;
+    font-style: italic;
+}
+
+.note-actions {
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.note-card:hover .note-actions {
+    opacity: 1;
+}
+
+.note-actions button {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.note-actions button:hover {
+    background: #404060;
+    color: #e0e0e0;
+}
+
+.note-content {
+    color: #b0b0c0;
+    font-size: 13px;
+    line-height: 1.5;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+.note-reactions {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    align-items: center;
+}
+
+/* Инлайн-редактор заметки */
+.note-editor {
+    background: #1a1a2e;
+    border-radius: 6px;
+    padding: 8px;
+}
+
+.note-editor-textarea {
+    width: 100%;
+    min-height: 60px;
+    max-height: 120px;
+    padding: 8px;
+    background: #2d2d44;
+    border: 1px solid #404060;
+    color: #e0e0e0;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+    outline: none;
+}
+
+.note-editor-textarea:focus {
+    border-color: #5865f2;
+}
+
+.note-editor-controls {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.note-editor-controls button {
+    padding: 6px 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.2s ease;
+}
+
+.note-save {
+    background: #5865f2;
+    color: white;
+}
+
+.note-save:hover {
+    background: #4752c4;
+}
+
+.note-cancel {
+    background: #404060;
+    color: #e0e0e0;
+}
+
+.note-cancel:hover {
+    background: #505070;
+}
+
+/* Сайдбар заметок (в панели участников) */
+.notes-list-panel {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    background: var(--bg-primary);
+    overflow: hidden;
+}
+
+.notes-list-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--bg-tertiary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+}
+
+.notes-list-header h4 {
+    margin: 0;
+    font-size: 13px;
+    color: #e0e0e0;
+}
+
+.notes-list-close-btn {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.notes-list-close-btn:hover {
+    background: #404060;
+    color: #e0e0e0;
+}
+
+.notes-list-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.note-sidebar-item {
+    padding: 8px 12px;
+    background: #2d2d44;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1px solid transparent;
+}
+
+.note-sidebar-item:hover {
+    background: #3a3a5c;
+    border-color: #404060;
+}
+
+.note-sidebar-item.active {
+    background: rgba(88, 101, 242, 0.2);
+    border-color: #5865f2;
+}
+
+.note-sidebar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.note-sidebar-author {
+    font-weight: 600;
+    color: #e0e0e0;
+    font-size: 12px;
+}
+
+.note-sidebar-date {
+    font-size: 10px;
+    color: #888;
+}
+
+.note-sidebar-preview {
+    color: #a0a0b0;
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.note-sidebar-reactions {
+    display: flex;
+    gap: 4px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+}
+
+/* Состояния списка */
+.notes-loading,
+.notes-empty {
+    padding: 20px;
+    text-align: center;
+    color: #888;
+    font-size: 13px;
+}
+
+.notes-scroll-sentinel {
+    height: 1px;
+    width: 100%;
+}
+
+/* Тред заметки */
+#note-thread-container {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    background: var(--bg-primary);
+    overflow: hidden;
+}
+
+.note-thread-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--bg-tertiary);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+}
+
+.note-thread-back-btn {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.note-thread-back-btn:hover {
+    background: #404060;
+    color: #e0e0e0;
+}
+
+.note-thread-title {
+    margin: 0;
+    font-size: 14px;
+    color: #e0e0e0;
+}
+
+.note-thread-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.thread-message {
+    background: #2d2d44;
+    border-radius: 8px;
+    padding: 10px 12px;
+    border-left: 3px solid #5865f2;
+}
+
+.thread-msg-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.thread-author {
+    font-weight: 600;
+    color: #e0e0e0;
+    font-size: 13px;
+}
+
+.thread-time {
+    font-size: 11px;
+    color: #888;
+}
+
+.thread-msg-content {
+    color: #b0b0c0;
+    font-size: 13px;
+    line-height: 1.5;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+.thread-msg-reactions {
+    display: flex;
+    gap: 4px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+}
+
+.note-thread-input-area {
+    padding: 12px 16px;
+    border-top: 1px solid var(--bg-tertiary);
+    display: flex;
+    gap: 8px;
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+}
+
+.note-thread-input {
+    flex: 1;
+    min-height: 40px;
+    max-height: 100px;
+    padding: 8px 12px;
+    background: #1a1a2e;
+    border: 1px solid #404060;
+    color: #e0e0e0;
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    resize: none;
+    outline: none;
+}
+
+.note-thread-input:focus {
+    border-color: #5865f2;
+}
+
+.note-thread-send-btn {
+    background: #5865f2;
+    border: none;
+    border-radius: 8px;
+    color: white;
+    padding: 0 16px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background 0.2s ease;
+}
+
+.note-thread-send-btn:hover {
+    background: #4752c4;
+}
+
+/* Адаптация под мобильные */
+@media (max-width: 768px) {
+    .note-card {
+        padding: 10px;
+    }
+    
+    .note-card-header {
+        flex-wrap: wrap;
+    }
+    
+    .note-actions {
+        opacity: 1;
+    }
+    
+    .notes-header,
+    .notes-list-header,
+    .note-thread-header {
+        padding: 10px 12px;
+    }
+    
+    .notes-list,
+    .notes-list-content,
+    .note-thread-messages {
+        padding: 8px 12px;
+    }
+    
+    .note-thread-input-area {
+        padding: 10px 12px;
+    }
+    
+    .note-editor-textarea {
+        font-size: 14px; /* Предотвращает зум на iOS */
+    }
 }

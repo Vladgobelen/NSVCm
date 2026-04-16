@@ -14,6 +14,9 @@ class SoundManager {
         SOUND_MIC_ON: 'sound_mic_on',
         SOUND_MIC_OFF: 'sound_mic_off',
         SOUND_POPUP: 'sound_popup',
+        SOUND_CONNECTED: 'sound_connected',        // НОВЫЙ: успешное подключение
+        SOUND_DISCONNECTED: 'sound_disconnected',  // НОВЫЙ: отключение от сервера
+        SOUND_RECONNECTING: 'sound_reconnecting',  // НОВЫЙ: попытка переподключения
         
         // Уведомления (баннеры)
         NOTIFY_MENTION: 'notify_mention',
@@ -35,7 +38,10 @@ class SoundManager {
         [SoundManager.SoundTypes.SOUND_USER_LEAVE]: 'user-leave',
         [SoundManager.SoundTypes.SOUND_MIC_ON]: 'mic-on',
         [SoundManager.SoundTypes.SOUND_MIC_OFF]: 'mic-off',
-        [SoundManager.SoundTypes.SOUND_POPUP]: 'pop-up-message'
+        [SoundManager.SoundTypes.SOUND_POPUP]: 'pop-up-message',
+        [SoundManager.SoundTypes.SOUND_CONNECTED]: 'user-join',      // Используем существующий файл
+        [SoundManager.SoundTypes.SOUND_DISCONNECTED]: 'user-leave',  // Используем существующий файл
+        [SoundManager.SoundTypes.SOUND_RECONNECTING]: 'mic-off'      // Используем существующий файл
     };
 
     static SoundLabels = {
@@ -55,7 +61,10 @@ class SoundManager {
         [SoundManager.SoundTypes.SOUND_USER_LEAVE]: '🔔 Звук выхода пользователя',
         [SoundManager.SoundTypes.SOUND_MIC_ON]: '🔔 Звук включения микрофона',
         [SoundManager.SoundTypes.SOUND_MIC_OFF]: '🔔 Звук выключения микрофона',
-        [SoundManager.SoundTypes.SOUND_POPUP]: '🔔 Звук всплывающего уведомления'
+        [SoundManager.SoundTypes.SOUND_POPUP]: '🔔 Звук всплывающего уведомления',
+        [SoundManager.SoundTypes.SOUND_CONNECTED]: '🔔 Звук подключения к серверу',
+        [SoundManager.SoundTypes.SOUND_DISCONNECTED]: '🔔 Звук отключения от сервера',
+        [SoundManager.SoundTypes.SOUND_RECONNECTING]: '🔔 Звук попытки переподключения'
     };
 
     static SoundGroups = [
@@ -98,7 +107,10 @@ class SoundManager {
                 SoundManager.SoundTypes.SOUND_USER_LEAVE,
                 SoundManager.SoundTypes.SOUND_MIC_ON,
                 SoundManager.SoundTypes.SOUND_MIC_OFF,
-                SoundManager.SoundTypes.SOUND_POPUP
+                SoundManager.SoundTypes.SOUND_POPUP,
+                SoundManager.SoundTypes.SOUND_CONNECTED,
+                SoundManager.SoundTypes.SOUND_DISCONNECTED,
+                SoundManager.SoundTypes.SOUND_RECONNECTING
             ]
         }
     ];

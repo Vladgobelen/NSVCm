@@ -6,10 +6,49 @@ const PRODUCE_TIMEOUT = 15000;
 const CONSUME_TIMEOUT = 10000;
 
 class MediaManager {
+    // 🔥 НОВЫЙ МЕТОД: Получение mediasoupClient с ожиданием загрузки
+    static async getMediasoupClient() {
+        // Проверяем все возможные места, где может быть библиотека
+        const msClient = window.mediasoupClient || 
+                        (typeof globalThis !== 'undefined' && globalThis.mediasoupClient) ||
+                        (typeof global !== 'undefined' && global.mediasoupClient);
+        
+        if (msClient) {
+            return msClient;
+        }
+        
+        // Ждём загрузки (максимум 5 секунд)
+        console.log('⏳ Waiting for mediasoup-client to load...');
+        return new Promise((resolve, reject) => {
+            const maxAttempts = 50;
+            let attempts = 0;
+            
+            const checkInterval = setInterval(() => {
+                const client = window.mediasoupClient || 
+                              (typeof globalThis !== 'undefined' && globalThis.mediasoupClient) ||
+                              (typeof global !== 'undefined' && global.mediasoupClient);
+                
+                if (client) {
+                    clearInterval(checkInterval);
+                    console.log('✅ mediasoup-client loaded after', attempts * 100, 'ms');
+                    resolve(client);
+                } else if (++attempts >= maxAttempts) {
+                    clearInterval(checkInterval);
+                    console.error('❌ mediasoup-client not loaded after 5 seconds');
+                    reject(new Error('mediasoup-client not loaded'));
+                }
+            }, 100);
+        });
+    }
+
     static async connect(client, roomId, mediaData) {
         try {
-            if (typeof mediasoupClient === 'undefined') {
-                throw new Error('mediasoup-client not loaded');
+            // 🔥 ИСПРАВЛЕНИЕ: Ждём загрузки mediasoup-client
+            const mediasoupClient = await this.getMediasoupClient();
+            
+            // Проверяем, что Device доступен
+            if (!mediasoupClient.Device) {
+                throw new Error('mediasoupClient.Device is not available');
             }
 
             if (!client.device || client.device.loaded === false) {
@@ -66,36 +105,197 @@ class MediaManager {
         }
     }
 
-    static setupTransportStateChangeHandler(client, transport) {
-        transport.on('connectionstatechange', (state) => {
-            if (transport.closed) return;
+static setupTransportStateChangeHandler(client, transport) {
+    let hasBeenConnected = false;
+    const transportCreatedAt = Date.now();
+    
+    transport.on('connectionstatechange', (state) => {
+        if (transport.closed) return;
+        
+        const isRecvTransport = (transport === client.recvTransport);
+        const isSendTransport = (transport === client.sendTransport);
+        const transportType = isRecvTransport ? 'recv' : 'send';
+        
+        console.log(`[Transport] ${transportType} state changed: ${state}`);
+        
+        // Игнорируем failed/disconnected если транспорт еще ни разу не был connected
+        if ((state === 'failed' || state === 'disconnected') && !hasBeenConnected) {
+            console.log(`[Transport] ${transportType} transport ${state} before first connection, ignoring...`);
+            return;
+        }
+        
+        if (state === 'connected') {
+            hasBeenConnected = true;
             
-            const isRecvTransport = (transport === client.recvTransport);
-            const transportType = isRecvTransport ? 'recv' : 'send';
+            // Сбрасываем счетчики попыток при успешном подключении
+            if (isSendTransport) {
+                client._sendTransportRecreateAttempts = 0;
+                client._isSendTransportRecreating = false;
+            }
             
-            if (state === 'failed' || state === 'disconnected') {
-                if (client.currentRoom && !client.isReconnecting && !client._isMediaReconnecting) {
-                    if (client._scheduleIceRestart) {
-                        client._scheduleIceRestart(transport, transportType);
-                    } else {
-                        client._isMediaReconnecting = true;
-                        client.reconnectToRoom(client.currentRoom, 3, 2000, false, true)
-                            .finally(() => { client._isMediaReconnecting = false; });
-                    }
-                }
-            } else if (state === 'connected') {
-                if (isRecvTransport && client._transportReadyForConsume !== undefined) {
-                    client._transportReadyForConsume = true;
-                    if (client._processPendingConsumeQueue) {
-                        client._processPendingConsumeQueue();
-                    }
-                }
-                if (client.iceRestartState) {
-                    client.iceRestartState.delete(transport.id);
+            if (isRecvTransport && client._transportReadyForConsume !== undefined) {
+                client._transportReadyForConsume = true;
+                if (client._processPendingConsumeQueue) {
+                    client._processPendingConsumeQueue();
                 }
             }
-        });
+            
+            if (client.iceRestartState) {
+                client.iceRestartState.delete(transport.id);
+            }
+            
+            console.log(`[Transport] ${transportType} connected successfully`);
+            return;
+        }
+        
+        if (state === 'failed' || state === 'disconnected') {
+            // Теперь сюда попадаем только если транспорт УЖЕ был connected и потом отвалился
+            
+            if (isSendTransport) {
+                // 🔥 КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Для send транспорта НИКОГДА не делаем полный реконнект комнаты
+                console.warn(`[Transport] Send transport ${state}, attempting to recreate only send transport (NO ROOM RECONNECT)`);
+                
+                // Дополнительная защита: игнорируем ошибки в первые 15 секунд после создания
+                const timeSinceCreation = Date.now() - transportCreatedAt;
+                if (timeSinceCreation < 15000) {
+                    console.log(`[Transport] Send transport still in initialization phase (${timeSinceCreation}ms old), ignoring ${state}`);
+                    return;
+                }
+                
+                if (client._scheduleIceRestart && !client._isSendTransportRecreating) {
+                    // Пробуем ICE рестарт
+                    client._scheduleIceRestart(transport, 'send');
+                } else if (!client._isSendTransportRecreating) {
+                    client._isSendTransportRecreating = true;
+                    
+                    setTimeout(async () => {
+                        try {
+                            if (transport.closed) {
+                                client._isSendTransportRecreating = false;
+                                return;
+                            }
+                            
+                            console.log(`[Transport] Recreating send transport...`);
+                            
+                            const wasMicActive = client.isMicActive;
+                            const wasMicPaused = client.isMicPaused;
+                            
+                            // Пересоздаем send транспорт через вспомогательный метод
+                            if (typeof this._recreateSendTransport === 'function') {
+                                await this._recreateSendTransport(client);
+                            }
+                            
+                            // Восстанавливаем микрофон если был активен
+                            if (wasMicActive && !wasMicPaused) {
+                                await this.initMicrophone(client);
+                                await this.resumeMicrophone(client);
+                            } else if (wasMicActive && wasMicPaused) {
+                                await this.initMicrophone(client);
+                            }
+                            
+                            console.log(`[Transport] Send transport recreated successfully`);
+                            client._sendTransportRecreateAttempts = 0;
+                            
+                        } catch (error) {
+                            console.error(`[Transport] Failed to recreate send transport:`, error.message);
+                            
+                            if (!client._sendTransportRecreateAttempts) {
+                                client._sendTransportRecreateAttempts = 0;
+                            }
+                            client._sendTransportRecreateAttempts++;
+                            
+                            // 🔥 ВАЖНО: Даже после 3 неудачных попыток НЕ ДЕЛАЕМ reconnectToRoom
+                            // Просто сбрасываем счетчик и продолжаем пытаться
+                            if (client._sendTransportRecreateAttempts >= 3) {
+                                console.warn(`[Transport] Send transport recreate failed ${client._sendTransportRecreateAttempts} times, resetting counter (NO ROOM RECONNECT)`);
+                                client._sendTransportRecreateAttempts = 0;
+                                // НЕ ВЫЗЫВАЕМ reconnectToRoom для send транспорта!
+                            }
+                        } finally {
+                            client._isSendTransportRecreating = false;
+                        }
+                    }, 500);
+                }
+                
+            } else if (isRecvTransport) {
+                // Только для recv транспорта делаем полный реконнект комнаты
+                console.warn(`[Transport] Recv transport ${state}, attempting recovery (room reconnect may occur)`);
+                
+                if (client._scheduleIceRestart) {
+                    client._scheduleIceRestart(transport, 'recv');
+                } else if (client.currentRoom && !client.isReconnecting && !client._isMediaReconnecting) {
+                    client._isMediaReconnecting = true;
+                    client.reconnectToRoom(client.currentRoom)
+                        .finally(() => { client._isMediaReconnecting = false; });
+                }
+            }
+        }
+    });
+}
+
+// Вспомогательный метод для пересоздания send транспорта
+static async _recreateSendTransport(client) {
+    if (!client.mediaData || !client.device) {
+        throw new Error('No media data or device');
     }
+    
+    // Закрываем старый транспорт если есть
+    if (client.sendTransport && !client.sendTransport.closed) {
+        try {
+            client.sendTransport.close();
+        } catch (e) {
+            console.warn('Error closing old send transport:', e.message);
+        }
+    }
+    
+    // Создаем новый
+    const sendOptions = {
+        id: client.mediaData.sendTransport.id,
+        iceParameters: client.mediaData.sendTransport.iceParameters,
+        iceCandidates: client.mediaData.sendTransport.iceCandidates,
+        dtlsParameters: client.mediaData.sendTransport.dtlsParameters,
+        iceServers: client.mediaData.iceServers || []
+    };
+    
+    client.sendTransport = client.device.createSendTransport(sendOptions);
+    this.setupTransportConnectHandler(client, client.sendTransport);
+    this.setupTransportStateChangeHandler(client, client.sendTransport);
+    this.setupSendTransportHandlers(client);
+    
+    // Ждем подключения
+    await this._waitForTransportReady(client, client.sendTransport, 'send');
+}
+
+static _waitForTransportReady(client, transport, type, timeoutMs = 10000) {
+    return new Promise((resolve, reject) => {
+        if (transport.connectionState === 'connected') {
+            resolve();
+            return;
+        }
+        
+        const timeout = setTimeout(() => {
+            cleanup();
+            reject(new Error(`Transport ${type} ready timeout`));
+        }, timeoutMs);
+        
+        const onStateChange = (state) => {
+            if (state === 'connected') {
+                cleanup();
+                resolve();
+            } else if (state === 'failed' || state === 'closed') {
+                cleanup();
+                reject(new Error(`Transport ${type} entered ${state}`));
+            }
+        };
+        
+        const cleanup = () => {
+            clearTimeout(timeout);
+            transport.off('connectionstatechange', onStateChange);
+        };
+        
+        transport.on('connectionstatechange', onStateChange);
+    });
+}
 
     static setupTransportConnectHandler(client, transport) {
         let connectSent = false;

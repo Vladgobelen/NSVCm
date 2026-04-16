@@ -6,7 +6,8 @@ class InviteManager {
     static client = null;
 
     static init(client) {
-        this.client = client;
+if (this._initialized) return;    
+    this.client = client;
         this.processUrlParams();
     }
 

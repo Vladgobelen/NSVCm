@@ -7,29 +7,75 @@ class ScrollTracker {
     static _scrollBindInterval = null;
     static _lastViewedMessages = new Map();
     static _lastSentReadIds = new Map();
+    static _maxSeenMessageId = new Map();
+    static _firstUnreadId = new Map();
+    static _unreadMessageIds = new Map();
+    static _currentUnreadIndex = new Map();
+    static _savePositionTimeout = null;
+    static _buttonMode = null;
 
     static setClient(client) {
         this.client = client;
         this.setupScrollToBottomButton();
     }
 
+    static _getButtonMode() {
+        if (this._buttonMode === null) {
+            try {
+                const saved = localStorage.getItem('scrollButtonMode');
+                this._buttonMode = saved === 'unread' ? 'unread' : 'bottom';
+            } catch (e) {
+                this._buttonMode = 'bottom';
+            }
+        }
+        return this._buttonMode;
+    }
+
+    static _setButtonMode(mode) {
+        this._buttonMode = mode;
+        try {
+            localStorage.setItem('scrollButtonMode', mode);
+        } catch (e) {}
+        this._updateButtonAppearance();
+    }
+
+    static _updateButtonAppearance() {
+        if (!this._scrollToBottomBtn) return;
+        const mode = this._getButtonMode();
+        if (mode === 'unread') {
+            this._scrollToBottomBtn.innerHTML = '🔽';
+            this._scrollToBottomBtn.title = 'Прокрутить к следующему непрочитанному (ПКМ для настроек)';
+        } else {
+            this._scrollToBottomBtn.innerHTML = '↓';
+            this._scrollToBottomBtn.title = 'Прокрутить вниз (ПКМ для настроек)';
+        }
+    }
+
     static setupScrollToBottomButton() {
         if (this._scrollToBottomBtn) return;
-        
         const btn = document.createElement('button');
         btn.id = 'scroll-to-bottom-btn';
         btn.innerHTML = '↓';
-        btn.title = 'Прокрутить вниз';
+        btn.title = 'Прокрутить вниз (ПКМ для настроек)';
         btn.style.cssText = `position: fixed; bottom: 85px; left: 50%; transform: translateX(-50%); width: 40px; height: 40px; border-radius: 50%; background: #5865f2; color: white; border: 2px solid #2d2d44; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 20px; z-index: 10000; box-shadow: 0 4px 12px rgba(0,0,0,0.4); transition: opacity 0.2s ease, transform 0.2s ease; opacity: 0; pointer-events: none;`;
-        
-        btn.addEventListener('click', () => {
-            const container = document.querySelector('.messages-container');
-            if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const mode = this._getButtonMode();
+            if (mode === 'unread') {
+                this._jumpToNextUnread();
+            } else {
+                const container = document.querySelector('.messages-container');
+                if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+            }
         });
-        
+        btn.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this._showButtonContextMenu(e);
+        });
         document.body.appendChild(btn);
         this._scrollToBottomBtn = btn;
-
+        this._updateButtonAppearance();
         const tryBindScroll = () => {
             const container = document.querySelector('.messages-container');
             if (container) {
@@ -38,20 +84,164 @@ class ScrollTracker {
                 if (this._scrollBindInterval) clearInterval(this._scrollBindInterval);
             }
         };
-        
         tryBindScroll();
         this._scrollBindInterval = setInterval(tryBindScroll, 500);
     }
 
+    static _showButtonContextMenu(event) {
+        const { x, y } = event;
+        const existingMenu = document.querySelector('.scroll-button-context-menu');
+        if (existingMenu) existingMenu.remove();
+        const menu = document.createElement('div');
+        menu.className = 'scroll-button-context-menu';
+        menu.style.cssText = `position: fixed; background: #2d2d44; border: 1px solid #404060; border-radius: 8px; padding: 8px 0; min-width: 240px; z-index: 10001; box-shadow: 0 4px 20px rgba(0,0,0,0.4); left: ${x}px; top: ${y}px;`;
+        const currentMode = this._getButtonMode();
+        const modeItem = document.createElement('div');
+        modeItem.className = 'context-menu-item';
+        modeItem.style.cssText = 'padding: 10px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #e0e0e0; transition: background 0.2s;';
+        modeItem.innerHTML = currentMode === 'unread' ? '⬇️ При клике переносить в конец' : '🔽 При клике листать непрочитанные';
+        modeItem.addEventListener('mouseenter', () => modeItem.style.background = '#3d3d5c');
+        modeItem.addEventListener('mouseleave', () => modeItem.style.background = 'transparent');
+        modeItem.addEventListener('click', () => {
+            const newMode = currentMode === 'unread' ? 'bottom' : 'unread';
+            this._setButtonMode(newMode);
+            if (newMode === 'unread') {
+                const roomId = this.client?.currentRoom;
+                if (roomId) this._scanUnreadMessages(roomId);
+            }
+            menu.remove();
+        });
+        menu.appendChild(modeItem);
+        const separator = document.createElement('div');
+        separator.style.cssText = 'height: 1px; background: #404060; margin: 4px 0;';
+        menu.appendChild(separator);
+        const aboveItem = document.createElement('div');
+        aboveItem.className = 'context-menu-item';
+        aboveItem.style.cssText = 'padding: 10px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #e0e0e0; transition: background 0.2s;';
+        aboveItem.innerHTML = '📖 Прочитать всё выше';
+        aboveItem.addEventListener('mouseenter', () => aboveItem.style.background = '#3d3d5c');
+        aboveItem.addEventListener('mouseleave', () => aboveItem.style.background = 'transparent');
+        aboveItem.addEventListener('click', async () => {
+            menu.remove();
+            const roomId = this.client?.currentRoom;
+            if (!roomId) return;
+            const firstUnread = this._firstUnreadId.get(roomId);
+            if (firstUnread) {
+                await TextChatManager.markMessagesAboveAsRead(this.client, roomId, firstUnread);
+                this._firstUnreadId.delete(roomId);
+                this._unreadMessageIds.delete(roomId);
+                this._currentUnreadIndex.delete(roomId);
+                this._hideButton();
+            }
+        });
+        menu.appendChild(aboveItem);
+        const allItem = document.createElement('div');
+        allItem.className = 'context-menu-item';
+        allItem.style.cssText = 'padding: 10px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #e0e0e0; transition: background 0.2s;';
+        allItem.innerHTML = '✅ Прочитать всё в чате';
+        allItem.addEventListener('mouseenter', () => allItem.style.background = '#3d3d5c');
+        allItem.addEventListener('mouseleave', () => allItem.style.background = 'transparent');
+        allItem.addEventListener('click', async () => {
+            menu.remove();
+            const roomId = this.client?.currentRoom;
+            if (roomId) {
+                await TextChatManager.markAllMessagesAsRead(this.client, roomId);
+                this._firstUnreadId.delete(roomId);
+                this._unreadMessageIds.delete(roomId);
+                this._currentUnreadIndex.delete(roomId);
+                this._hideButton();
+            }
+        });
+        menu.appendChild(allItem);
+        document.body.appendChild(menu);
+        const closeHandler = (e) => {
+            if (!menu.contains(e.target)) {
+                menu.remove();
+                document.removeEventListener('click', closeHandler);
+                document.removeEventListener('contextmenu', closeHandler);
+            }
+        };
+        setTimeout(() => {
+            document.addEventListener('click', closeHandler);
+            document.addEventListener('contextmenu', closeHandler);
+        }, 10);
+    }
+
+    static _jumpToNextUnread() {
+        const roomId = this.client?.currentRoom;
+        if (!roomId) return;
+        const container = document.querySelector('.messages-container');
+        if (!container) return;
+        const unreadIds = this._unreadMessageIds.get(roomId) || [];
+        if (unreadIds.length === 0) {
+            this._scanUnreadMessages(roomId);
+            return;
+        }
+        let currentIndex = this._currentUnreadIndex.get(roomId) || 0;
+        if (currentIndex >= unreadIds.length) {
+            currentIndex = 0;
+        }
+        const targetId = unreadIds[currentIndex];
+        const found = this.scrollToMessage(targetId, container, true);
+        if (found) {
+            this._currentUnreadIndex.set(roomId, currentIndex + 1);
+        } else {
+            TextChatManager.loadMessagesAround(this.client, roomId, targetId, 50).then(() => {
+                setTimeout(() => {
+                    const retryFound = this.scrollToMessage(targetId, container, true);
+                    if (retryFound) {
+                        this._currentUnreadIndex.set(roomId, currentIndex + 1);
+                    }
+                }, 300);
+            }).catch(() => {});
+        }
+    }
+
+    static _scanUnreadMessages(roomId) {
+        const container = document.querySelector('.messages-container');
+        if (!container) return;
+        const messageElements = Array.from(container.querySelectorAll('.message[data-message-id]'));
+        const unreadIds = [];
+        const client = this.client || window.voiceClient;
+        const currentUserId = client?.userId;
+        for (const el of messageElements) {
+            const msgId = el.dataset.messageId;
+            if (!msgId) continue;
+            const isRead = el.classList.contains('message-read');
+            const isOwn = el.dataset.userId === currentUserId;
+            if (!isRead && !isOwn) {
+                unreadIds.push(msgId);
+            }
+        }
+        unreadIds.sort((a, b) => {
+            const tsA = this._extractTimestamp(a);
+            const tsB = this._extractTimestamp(b);
+            return tsA - tsB;
+        });
+        this._unreadMessageIds.set(roomId, unreadIds);
+        this._currentUnreadIndex.set(roomId, 0);
+        if (unreadIds.length > 0) {
+            const firstUnread = unreadIds[0];
+            this._firstUnreadId.set(roomId, firstUnread);
+        }
+    }
+
+    static _extractTimestamp(id) {
+        if (!id) return 0;
+        const parts = id.split('_');
+        if (parts.length >= 2) {
+            const ts = parseInt(parts[1], 10);
+            return isNaN(ts) ? 0 : ts;
+        }
+        return 0;
+    }
+
     static _checkScrollVisibility(container) {
         if (!container || !this._scrollToBottomBtn) return;
-        
         if (this._scrollCheckTimeout) clearTimeout(this._scrollCheckTimeout);
-        
         this._scrollCheckTimeout = setTimeout(() => {
             const threshold = 150;
             const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
-            
             if (distance > threshold) {
                 this._scrollToBottomBtn.style.opacity = '1';
                 this._scrollToBottomBtn.style.transform = 'translateX(-50%) scale(1)';
@@ -62,6 +252,14 @@ class ScrollTracker {
                 this._scrollToBottomBtn.style.pointerEvents = 'none';
             }
         }, 50);
+    }
+
+    static _hideButton() {
+        if (this._scrollToBottomBtn) {
+            this._scrollToBottomBtn.style.opacity = '0';
+            this._scrollToBottomBtn.style.transform = 'translateX(-50%) scale(0.8)';
+            this._scrollToBottomBtn.style.pointerEvents = 'none';
+        }
     }
 
     static scrollToBottom(container = null) {
@@ -76,7 +274,6 @@ class ScrollTracker {
         const target = container || document.querySelector('.messages-container');
         if (!target) return this.scrollToBottom();
         if (!messageId) return this.scrollToBottom(target);
-        
         const msgEl = target.querySelector(`[data-message-id="${messageId}"]`);
         if (msgEl) {
             msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -91,85 +288,174 @@ class ScrollTracker {
         return false;
     }
 
-    static initScrollTracker(roomId, container = null) {
-        const target = container || document.querySelector('.messages-container');
-        if (!target || !roomId) return;
-        if (target._scrollTrackerBound) return;
+static initScrollTracker(roomId, container = null) {
+    const target = container || document.querySelector('.messages-container');
+    if (!target || !roomId) return;
+    if (target._scrollTrackerBound) return;
+    target._scrollTrackerBound = true;
+    
+    // ✅ Флаг для блокировки перезаписи при первом скролле
+    target._isFirstScrollAfterInit = true;
+    target._scrollInitializedAt = Date.now();
+    
+    this._lastViewedMessages.set(roomId, null);
+    this._lastSentReadIds.set(roomId, null);
+    
+    // ✅ НЕ СБРАСЫВАЕМ существующие значения (они могли быть установлены с сервера)
+    if (!this._maxSeenMessageId.has(roomId)) {
+        this._maxSeenMessageId.set(roomId, null);
+    }
+    if (!this._firstUnreadId.has(roomId)) {
+        this._firstUnreadId.set(roomId, null);
+    }
+    
+    this._unreadMessageIds.delete(roomId);
+    this._currentUnreadIndex.delete(roomId);
+    
+    const handleScroll = () => {
+        clearTimeout(target._scrollSaveTimeout);
+        clearTimeout(target._readCheckTimeout);
         
-        target._scrollTrackerBound = true;
-        this._lastViewedMessages.set(roomId, null);
-        this._lastSentReadIds.set(roomId, null);
-        console.log(`🔍 [READ-DEBUG] initScrollTracker активирован для комнаты: ${roomId}`);
-
-        const handleScroll = () => {
-            clearTimeout(target._scrollSaveTimeout);
-            clearTimeout(target._readCheckTimeout);
-
-            // 1. Отслеживание позиции скролла (RAM)
-            target._scrollSaveTimeout = setTimeout(() => {
-                const messages = Array.from(target.querySelectorAll('.message[data-message-id]'));
-                if (messages.length === 0) return;
+        target._scrollSaveTimeout = setTimeout(() => {
+            // ✅ Пропускаем первые 500ms после инициализации
+            // Это дает время загрузиться сообщениям и произойти целевому скроллу
+            if (target._isFirstScrollAfterInit) {
+                const timeSinceInit = Date.now() - target._scrollInitializedAt;
+                if (timeSinceInit < 2000) {
+                    return;
+                }
+                target._isFirstScrollAfterInit = false;
+            }
+            
+            const messages = Array.from(target.querySelectorAll('.message[data-message-id]'));
+            if (messages.length === 0) return;
+            
+            let bottomVisibleId = null;
+            let topVisibleId = null;
+            const targetRect = target.getBoundingClientRect();
+            
+            // ✅ Ищем частично видимые сообщения
+            for (const msg of messages) {
+                const rect = msg.getBoundingClientRect();
                 
-                let lastVisibleId = messages[messages.length - 1].dataset.messageId;
-                for (let i = messages.length - 1; i >= 0; i--) {
-                    const rect = messages[i].getBoundingClientRect();
-                    const targetRect = target.getBoundingClientRect();
-                    if (rect.top >= targetRect.top && rect.bottom <= targetRect.bottom) {
-                        lastVisibleId = messages[i].dataset.messageId;
-                        break;
+                // Сообщение хотя бы частично видимо
+                if (rect.bottom > targetRect.top && rect.top < targetRect.bottom) {
+                    // Запоминаем самое верхнее видимое
+                    if (!topVisibleId) {
+                        topVisibleId = msg.dataset.messageId;
+                    }
+                    // Всегда обновляем bottomVisibleId на последнее видимое
+                    bottomVisibleId = msg.dataset.messageId;
+                }
+            }
+            
+            // ✅ Fallback: если ничего не нашли - ищем ближайшее к нижней границе
+            if (!bottomVisibleId && messages.length > 0) {
+                let minDistance = Infinity;
+                for (const msg of messages) {
+                    const rect = msg.getBoundingClientRect();
+                    const distance = Math.abs(rect.bottom - targetRect.bottom);
+                    if (distance < minDistance) {
+                        minDistance = distance;
+                        bottomVisibleId = msg.dataset.messageId;
                     }
                 }
-                this._lastViewedMessages.set(roomId, lastVisibleId);
-            }, 300);
-
-            // 2. Триггер прочтения и СОХРАНЕНИЯ ПОЗИЦИИ (500мс остановки скролла)
-            target._readCheckTimeout = setTimeout(() => {
-                const messages = Array.from(target.querySelectorAll('.message[data-message-id]'));
-                if (messages.length === 0) return;
-                
-                const targetRect = target.getBoundingClientRect();
-                const visibilityThreshold = targetRect.top + (targetRect.height * 0.15);
-                let bottomVisibleId = null;
-                
-                for (let i = messages.length - 1; i >= 0; i--) {
-                    const rect = messages[i].getBoundingClientRect();
-                    if (rect.bottom > visibilityThreshold) {
-                        bottomVisibleId = messages[i].dataset.messageId;
-                        break;
-                    }
+            }
+            
+            if (bottomVisibleId) {
+                const currentMax = this._maxSeenMessageId.get(roomId);
+                // ✅ Обновляем только если новое сообщение новее (больше timestamp)
+                if (!currentMax || this._compareMessageIds(bottomVisibleId, currentMax) > 0) {
+                    this._maxSeenMessageId.set(roomId, bottomVisibleId);
                 }
-
-                if (bottomVisibleId && this._lastSentReadIds.get(roomId) !== bottomVisibleId) {
-                    this._lastSentReadIds.set(roomId, bottomVisibleId);
-                    this._lastViewedMessages.set(roomId, bottomVisibleId);
-                    console.log(`👁️ [READ-DEBUG] Scroll stopped at ${bottomVisibleId} (room: ${roomId}). Saving to server.`);
-
-                    const client = this.client || window.voiceClient;
-                    if (client && client.token) {
-                        fetch(`${client.API_SERVER_URL}/api/messages/${roomId}/view-position`, {
-                            method: 'POST',
-                            headers: { 
-                                'Content-Type': 'application/json', 
-                                'Authorization': `Bearer ${client.token}` 
-                            },
-                            body: JSON.stringify({ messageId: bottomVisibleId })
-                        }).catch(err => console.error('Ошибка сохранения позиции скролла:', err));
-                    }
-
-                    if (client) {
-                        TextChatManager.markMessagesAsRead(client, roomId, bottomVisibleId);
-                    }
+                this._lastViewedMessages.set(roomId, bottomVisibleId);
+            }
+            
+            const distanceToBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+            
+            // ✅ Устанавливаем firstUnread только если реально далеко от дна
+            if (distanceToBottom > 150 && topVisibleId) {
+                const currentFirstUnread = this._firstUnreadId.get(roomId);
+                // Устанавливаем только если новое значение старее (меньше timestamp)
+                if (!currentFirstUnread || this._compareMessageIds(topVisibleId, currentFirstUnread) < 0) {
+                    this._firstUnreadId.set(roomId, topVisibleId);
                 }
-            }, 500);
-        };
+            } else if (distanceToBottom <= 50) {
+                // Если в самом низу - сбрасываем firstUnread (всё прочитано)
+                this._firstUnreadId.set(roomId, null);
+            }
+        }, 300);
+        
+        target._readCheckTimeout = setTimeout(() => {
+            const messages = Array.from(target.querySelectorAll('.message[data-message-id]'));
+            if (messages.length === 0) return;
+            
+            const targetRect = target.getBoundingClientRect();
+            const visibilityThreshold = targetRect.top + (targetRect.height * 0.15);
+            let bottomVisibleId = null;
+            
+            for (let i = messages.length - 1; i >= 0; i--) {
+                const rect = messages[i].getBoundingClientRect();
+                if (rect.bottom > visibilityThreshold) {
+                    bottomVisibleId = messages[i].dataset.messageId;
+                    break;
+                }
+            }
+            
+            // ✅ Проверяем maxSeen, а не bottomVisibleId
+            const maxSeen = this._maxSeenMessageId.get(roomId);
+            
+            if (maxSeen && this._lastSentReadIds.get(roomId) !== maxSeen) {
+                this._lastSentReadIds.set(roomId, maxSeen);
+                
+                const client = this.client || window.voiceClient;
+                const firstUnread = this._firstUnreadId.get(roomId);
+                
+                if (client && client.token) {
+                    fetch(`${client.API_SERVER_URL}/api/messages/${roomId}/view-position`, {
+                        method: 'POST',
+                        headers: { 
+                            'Content-Type': 'application/json', 
+                            'Authorization': `Bearer ${client.token}` 
+                        },
+                        body: JSON.stringify({ 
+                            maxSeenId: maxSeen, 
+                            firstUnreadId: firstUnread 
+                        })
+                    }).catch(err => console.error('Ошибка сохранения позиции скролла:', err));
+                }
+                
+                if (client && bottomVisibleId) {
+                    TextChatManager.markMessagesAsRead(client, roomId, bottomVisibleId);
+                }
+            }
+        }, 500);
+    };
+    
+target.addEventListener('scroll', handleScroll, { passive: true });
 
-        target.addEventListener('scroll', handleScroll, { passive: true });
+// ✅ Сбрасываем флаг при первом ручном скролле пользователя
+target.addEventListener('wheel', () => {
+    target._isFirstScrollAfterInit = false;
+}, { once: true });
+
+target.addEventListener('touchstart', () => {
+    target._isFirstScrollAfterInit = false;
+}, { once: true });
+
+setTimeout(() => this._scanUnreadMessages(roomId), 500);
+}
+
+    static _compareMessageIds(idA, idB) {
+        const tsA = this._extractTimestamp(idA);
+        const tsB = this._extractTimestamp(idB);
+        if (tsA !== tsB) return tsA - tsB;
+        return (idA || '').localeCompare(idB || '');
     }
 
     static saveLastViewedMessage(roomId, container = null) {
         const target = container || document.querySelector('.messages-container');
         if (!target || !roomId) return;
-        
         const messages = Array.from(target.querySelectorAll('.message[data-message-id]'));
         if (messages.length > 0) {
             const lastId = messages[messages.length - 1].dataset.messageId;
@@ -181,9 +467,39 @@ class ScrollTracker {
         return this._lastViewedMessages.get(roomId) || null;
     }
 
+    static getMaxSeenMessageId(roomId) {
+        return this._maxSeenMessageId.get(roomId) || null;
+    }
+
+    static getFirstUnreadId(roomId) {
+        return this._firstUnreadId.get(roomId) || null;
+    }
+
+    static setMaxSeenMessageId(roomId, messageId) {
+        this._maxSeenMessageId.set(roomId, messageId);
+    }
+
+    static setFirstUnreadId(roomId, messageId) {
+        this._firstUnreadId.set(roomId, messageId);
+    }
+
     static clearLastViewedMessage(roomId) {
         this._lastViewedMessages.delete(roomId);
         this._lastSentReadIds.delete(roomId);
+        this._maxSeenMessageId.delete(roomId);
+        this._firstUnreadId.delete(roomId);
+        this._unreadMessageIds.delete(roomId);
+        this._currentUnreadIndex.delete(roomId);
+    }
+
+    static getButtonMode() {
+        return this._getButtonMode();
+    }
+
+    static refreshUnreadScan(roomId) {
+        if (roomId) {
+            this._scanUnreadMessages(roomId);
+        }
     }
 }
 

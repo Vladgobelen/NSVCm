@@ -93,98 +93,145 @@ class SecondaryChatManager {
         }
     }
 
-    static async toggle(client, direction = 'side') {
-        this.hideDirectionPopup();
-        this.secondaryChat.direction = direction;
-        const mainContent = document.querySelector('.main-content');
-        if (!mainContent) return;
+static async toggle(client, direction = 'side') {
+    this.hideDirectionPopup();
+    this.secondaryChat.direction = direction;
+    const mainContent = document.querySelector('.main-content');
+    if (!mainContent) return;
 
-        const wasEnabled = this.secondaryChat.enabled;
-        this.secondaryChat.enabled = !wasEnabled;
-        
-        if (!client.secondaryChat) {
-            client.secondaryChat = { enabled: false, roomId: null, isLoading: false, hasMore: true, oldestMessageId: null };
-        }
-        client.secondaryChat.enabled = this.secondaryChat.enabled;
-
-        if (this.secondaryChat.enabled) {
-            const chatArea = mainContent.querySelector('.chat-area');
-            if (!chatArea) return;
-
-            const splitContainer = document.createElement('div');
-            splitContainer.className = `chat-split-container split-${direction}`;
-            splitContainer.id = 'chat-split-container';
-
-            const primaryFrame = document.createElement('div');
-            primaryFrame.className = 'primary-frame';
-            Array.from(chatArea.children).forEach((child) => primaryFrame.appendChild(child));
-
-            const secondaryFrame = document.createElement('div');
-            secondaryFrame.className = 'secondary-frame';
-            secondaryFrame.innerHTML = `
-                <div class="secondary-chat-header">
-                    <select class="secondary-room-selector">
-                        <option value="">📋 Выберите гнездо...</option>
-                    </select>
-                    <button class="secondary-close-btn" title="Закрыть">✕</button>
-                </div>
-                <div class="secondary-room-list">
-                    <div class="no-results">Загрузка гнёзд...</div>
-                </div>
-                <div class="secondary-messages-container" style="display: none;"></div>
-                <div class="secondary-input-area" style="display: none;">
-                    <textarea class="message-input" placeholder="Написать сообщение..." rows="1"></textarea>
-                    <button class="send-btn">➤</button>
-                </div>
-            `;
-
-            splitContainer.appendChild(primaryFrame);
-            splitContainer.appendChild(secondaryFrame);
-            chatArea.appendChild(splitContainer);
-
-            this.secondaryChat.container = secondaryFrame;
-            this.secondaryChat.messagesContainer = secondaryFrame.querySelector('.secondary-messages-container');
-            this.secondaryChat.inputEl = secondaryFrame.querySelector('.secondary-input-area .message-input');
-            this.secondaryChat.roomSelector = secondaryFrame.querySelector('.secondary-room-selector');
-            this.secondaryChat.roomList = secondaryFrame.querySelector('.secondary-room-list');
-
-            this._initEvents(client);
-            await this._loadRoomOptions(client);
-
-            const splitBtn = document.querySelector('.split-toggle-btn');
-            if (splitBtn) splitBtn.classList.add('active');
-        } else {
-            if (client.secondaryChat.roomId) client.secondaryChat.roomId = null;
-            
-            const splitContainer = document.getElementById('chat-split-container');
-            if (splitContainer) {
-                const primaryFrame = splitContainer.querySelector('.primary-frame');
-                const parent = splitContainer.parentNode;
-                if (primaryFrame) {
-                    const children = Array.from(primaryFrame.children);
-                    children.forEach((child) => parent.insertBefore(child, splitContainer));
-                }
-                splitContainer.remove();
-            }
-
-            this._destroyHistoryObserver();
-            
-            this.secondaryChat = {
-                enabled: false, direction: 'side', roomId: null,
-                container: null, messagesContainer: null, inputEl: null,
-                roomSelector: null, roomList: null,
-                isLoading: false, hasMore: true, oldestMessageId: null,
-                historyObserver: null,
-                scrollToBottomBtn: null
-            };
-            client.secondaryChat.enabled = false;
-            client.secondaryChat.roomId = null;
-            client.secondaryChat.isLoading = false;
-
-            const splitBtn = document.querySelector('.split-toggle-btn');
-            if (splitBtn) splitBtn.classList.remove('active');
-        }
+    const wasEnabled = this.secondaryChat.enabled;
+    this.secondaryChat.enabled = !wasEnabled;
+    
+    if (!client.secondaryChat) {
+        client.secondaryChat = { enabled: false, roomId: null, isLoading: false, hasMore: true, oldestMessageId: null };
     }
+    client.secondaryChat.enabled = this.secondaryChat.enabled;
+
+    if (this.secondaryChat.enabled) {
+        const chatArea = mainContent.querySelector('.chat-area');
+        if (!chatArea) return;
+
+        // ✅ Сохраняем ID сообщения, на котором сейчас скролл
+        const targetId = ScrollTracker?.getMaxSeenMessageId(client.currentRoom);
+        console.log('📌 Сохраняем позицию перед открытием фрейма:', targetId);
+
+        const splitContainer = document.createElement('div');
+        splitContainer.className = `chat-split-container split-${direction}`;
+        splitContainer.id = 'chat-split-container';
+
+        const primaryFrame = document.createElement('div');
+        primaryFrame.className = 'primary-frame';
+        
+        Array.from(chatArea.children).forEach((child) => primaryFrame.appendChild(child));
+
+        const secondaryFrame = document.createElement('div');
+        secondaryFrame.className = 'secondary-frame';
+        secondaryFrame.innerHTML = `
+            <div class="secondary-chat-header">
+                <select class="secondary-room-selector">
+                    <option value="">📋 Выберите гнездо...</option>
+                </select>
+                <button class="secondary-close-btn" title="Закрыть">✕</button>
+            </div>
+            <div class="secondary-room-list">
+                <div class="no-results">Загрузка гнёзд...</div>
+            </div>
+            <div class="secondary-messages-container" style="display: none;"></div>
+            <div class="secondary-input-area" style="display: none;">
+                <textarea class="message-input" placeholder="Написать сообщение..." rows="1"></textarea>
+                <button class="send-btn">➤</button>
+            </div>
+        `;
+
+        splitContainer.appendChild(primaryFrame);
+        splitContainer.appendChild(secondaryFrame);
+        chatArea.appendChild(splitContainer);
+
+        this.secondaryChat.container = secondaryFrame;
+        this.secondaryChat.messagesContainer = secondaryFrame.querySelector('.secondary-messages-container');
+        this.secondaryChat.inputEl = secondaryFrame.querySelector('.secondary-input-area .message-input');
+        this.secondaryChat.roomSelector = secondaryFrame.querySelector('.secondary-room-selector');
+        this.secondaryChat.roomList = secondaryFrame.querySelector('.secondary-room-list');
+
+        this._initEvents(client);
+        await this._loadRoomOptions(client);
+
+        // ✅ Восстанавливаем скролл основного чата после всех манипуляций с DOM
+        const mainContainer = primaryFrame.querySelector('.messages-container');
+        if (mainContainer && targetId) {
+            // Ждем несколько кадров для стабилизации layout
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    const targetEl = mainContainer.querySelector(`[data-message-id="${targetId}"]`);
+                    if (targetEl) {
+                        targetEl.scrollIntoView({ behavior: 'instant', block: 'start' });
+                        console.log('✅ Восстановлен скролл после открытия фрейма к', targetId);
+                        
+                        // Подсветка для наглядности
+                        targetEl.style.transition = 'background 0.3s';
+                        targetEl.style.background = 'rgba(88, 101, 242, 0.15)';
+                        setTimeout(() => { targetEl.style.background = ''; }, 1000);
+                    } else {
+                        console.warn('❌ Целевое сообщение не найдено в DOM после перемещения');
+                    }
+                });
+            });
+        }
+
+        const splitBtn = document.querySelector('.split-toggle-btn');
+        if (splitBtn) splitBtn.classList.add('active');
+        
+    } else {
+        // Закрытие вторичного чата
+        if (client.secondaryChat.roomId) client.secondaryChat.roomId = null;
+        
+        // ✅ Сохраняем позицию перед закрытием
+        const splitContainer = document.getElementById('chat-split-container');
+        const targetId = ScrollTracker?.getMaxSeenMessageId(client.currentRoom);
+        
+        if (splitContainer) {
+            const primaryFrame = splitContainer.querySelector('.primary-frame');
+            const parent = splitContainer.parentNode;
+            
+            if (primaryFrame) {
+                const children = Array.from(primaryFrame.children);
+                children.forEach((child) => parent.insertBefore(child, splitContainer));
+            }
+            splitContainer.remove();
+            
+            // ✅ Восстанавливаем скролл после закрытия
+            if (targetId) {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        const mainContainer = document.querySelector('.messages-container');
+                        const targetEl = mainContainer?.querySelector(`[data-message-id="${targetId}"]`);
+                        if (targetEl) {
+                            targetEl.scrollIntoView({ behavior: 'instant', block: 'start' });
+                            console.log('✅ Восстановлен скролл после закрытия фрейма к', targetId);
+                        }
+                    });
+                });
+            }
+        }
+
+        this._destroyHistoryObserver();
+        
+        this.secondaryChat = {
+            enabled: false, direction: 'side', roomId: null,
+            container: null, messagesContainer: null, inputEl: null,
+            roomSelector: null, roomList: null,
+            isLoading: false, hasMore: true, oldestMessageId: null,
+            historyObserver: null,
+            scrollToBottomBtn: null
+        };
+        client.secondaryChat.enabled = false;
+        client.secondaryChat.roomId = null;
+        client.secondaryChat.isLoading = false;
+
+        const splitBtn = document.querySelector('.split-toggle-btn');
+        if (splitBtn) splitBtn.classList.remove('active');
+    }
+}
 
     static _initEvents(client) {
         const { container, roomSelector, roomList, inputEl } = this.secondaryChat;
@@ -460,12 +507,39 @@ class SecondaryChatManager {
                 if (room?.serverId) serverId = room.serverId;
             }
             UIManager.clearUnreadForRoom(serverId, roomId);
-            
-            if (messagesContainer) {
+if (messagesContainer) {
+    // Ждем полной отрисовки всех элементов
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            // Учитываем загрузку картинок
+            const images = messagesContainer.querySelectorAll('img');
+            if (images.length > 0) {
+                let loadedCount = 0;
+                const checkAllLoaded = () => {
+                    loadedCount++;
+                    if (loadedCount === images.length) {
+                        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                    }
+                };
+                images.forEach(img => {
+                    if (img.complete) {
+                        checkAllLoaded();
+                    } else {
+                        img.addEventListener('load', checkAllLoaded, { once: true });
+                        img.addEventListener('error', checkAllLoaded, { once: true });
+                    }
+                });
+                // Таймаут на случай зависших картинок
                 setTimeout(() => {
                     messagesContainer.scrollTop = messagesContainer.scrollHeight;
-                }, 100);
+                }, 500);
+            } else {
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
             }
+        });
+    });
+}            
+
         } catch (error) {
             console.error('❌ [SECONDARY] Ошибка загрузки:', error.message);
             if (messagesContainer) {

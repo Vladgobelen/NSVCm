@@ -1,4 +1,5 @@
 import SoundManager from './SoundManager.js';
+import SettingsManager from './SettingsManager.js';
 
 class ModalManager {
     static _activeErrors = new Map();
@@ -56,7 +57,6 @@ class ModalManager {
 
     static _renderSettingsContent() {
         const soundGroups = SoundManager.getGroupedSoundTypes();
-        
         let soundsHtml = '';
         for (const group of soundGroups) {
             let groupItemsHtml = '';
@@ -65,48 +65,120 @@ class ModalManager {
                 const isEnabled = SoundManager.isEnabled(soundType);
                 const checkedAttr = isEnabled ? 'checked' : '';
                 groupItemsHtml += `
-                    <div class="sound-toggle-row">
-                        <label class="sound-label">
-                            <input type="checkbox" class="sound-checkbox" data-sound-type="${soundType}" ${checkedAttr}>
-                            <span>${label}</span>
-                        </label>
-                    </div>
+                <div class="sound-toggle-row">
+                    <label class="sound-label">
+                        <input type="checkbox" class="sound-checkbox" data-sound-type="${soundType}" ${checkedAttr}>
+                        <span>${label}</span>
+                    </label>
+                </div>
                 `;
             }
             soundsHtml += `
-                <div class="sound-settings-group">
-                    <div class="sound-group-header">${group.name}</div>
-                    <div class="sound-group-items">
-                        ${groupItemsHtml}
-                    </div>
-                </div>
-            `;
-        }
-        
-        return `
-            <div class="settings-modal-container">
-                <div class="settings-tabs">
-                    <button class="settings-tab active" data-tab="general">⚙️ Основные</button>
-                    <button class="settings-tab" data-tab="sounds">🔊 Звуки</button>
-                </div>
-                
-                <div class="settings-tab-content active" data-tab-content="general">
-                    <div class="settings-section">
-                        <button id="force-refresh-btn" style="width: 100%; padding: 12px; background: #5865f2; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s, transform 0.1s; display: flex; align-items: center; justify-content: center; gap: 8px;">⚡ Принудительно обновить</button>
-                        <div style="margin-top: 12px; font-size: 12px; color: #888; text-align: center; line-height: 1.4;">Очистит Service Worker кэш и перезагрузит страницу</div>
-                    </div>
-                </div>
-                
-                <div class="settings-tab-content" data-tab-content="sounds">
-                    <div class="sound-settings-container">
-                        ${soundsHtml}
-                    </div>
-                    <div class="sound-settings-footer">
-                        <button id="sound-reset-defaults" class="sound-reset-btn">Сбросить настройки звуков</button>
-                    </div>
+            <div class="sound-settings-group">
+                <div class="sound-group-header">${group.name}</div>
+                <div class="sound-group-items">
+                    ${groupItemsHtml}
                 </div>
             </div>
+            `;
+        }
+
+        // ✅ Инициализируем SettingsManager и получаем настройку
+        SettingsManager.init();
+        const copyOnClick = SettingsManager.getCopyOnClick();
+
+        return `
+        <div class="settings-modal-container">
+            <div class="settings-tabs">
+                <button class="settings-tab active" data-tab="general">⚙️ Основные</button>
+                <button class="settings-tab" data-tab="sounds">🔊 Звуки</button>
+                <button class="settings-tab" data-tab="ui">💬 Интерфейс</button>
+            </div>
+            <div class="settings-tab-content active" data-tab-content="general">
+                <div class="settings-section">
+                    <button id="force-refresh-btn" style="width: 100%; padding: 12px; background: #5865f2; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s, transform 0.1s; display: flex; align-items: center; justify-content: center; gap: 8px;">⚡ Принудительно обновить</button>
+                    <div style="margin-top: 12px; font-size: 12px; color: #888; text-align: center; line-height: 1.4;">Очистит Service Worker кэш и перезагрузит страницу</div>
+                </div>
+            </div>
+            <div class="settings-tab-content" data-tab-content="sounds">
+                <div class="sound-settings-container">
+                    ${soundsHtml}
+                </div>
+                <div class="sound-settings-footer">
+                    <button id="sound-reset-defaults" class="sound-reset-btn">Сбросить настройки звуков</button>
+                </div>
+            </div>
+            <div class="settings-tab-content" data-tab-content="ui">
+                <div class="ui-settings-container" style="padding: 12px 0;">
+                    <label class="ui-setting-label" style="display: flex; align-items: center; gap: 10px; cursor: pointer; color: #b0b0c0; font-size: 14px;">
+                        <input type="checkbox" id="copy-on-click-checkbox" style="width: 18px; height: 18px; cursor: pointer; accent-color: #5865f2;" ${copyOnClick ? 'checked' : ''}>
+                        <span>Копировать сообщение в буфер при клике</span>
+                    </label>
+                </div>
+            </div>
+        </div>
         `;
+    }
+
+    static openSettingsModal(client) {
+        const existing = document.getElementById('settings-modal');
+        if (existing) {
+            existing.remove();
+            return;
+        }
+        const modal = document.createElement('div');
+        modal.id = 'settings-modal';
+        modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 10001; backdrop-filter: blur(2px);';
+        modal.innerHTML = `
+        <div class="settings-modal-content" style="background: #2d2d44; border: 1px solid #404060; border-radius: 12px; padding: 0; width: 420px; max-width: 90%; max-height: 80vh; position: relative; box-shadow: 0 8px 24px rgba(0,0,0,0.4); display: flex; flex-direction: column; overflow: hidden;">
+            <button id="close-settings-modal" style="position: absolute; top: 12px; right: 12px; background: none; border: none; color: #aaa; font-size: 22px; cursor: pointer; line-height: 1; z-index: 10;">&times;</button>
+            <h3 style="margin: 0; padding: 20px 24px 16px; color: #e0e0e0; font-size: 16px; font-weight: 600; border-bottom: 1px solid #404060;">⚙️ Настройки</h3>
+            <div id="settings-dynamic-content" style="padding: 20px 24px; overflow-y: auto; flex: 1;">
+                ${this._renderSettingsContent()}
+            </div>
+        </div>
+        `;
+        document.body.appendChild(modal);
+        this._initSettingsTabs(modal);
+        this._initSoundCheckboxes(modal);
+
+        // ✅ Инициализация чекбокса копирования через SettingsManager
+        const copyCheckbox = modal.querySelector('#copy-on-click-checkbox');
+        if (copyCheckbox) {
+            copyCheckbox.addEventListener('change', (e) => {
+                SettingsManager.setCopyOnClick(e.target.checked);
+            });
+        }
+
+        const closeBtn = modal.querySelector('#close-settings-modal');
+        const refreshBtn = modal.querySelector('#force-refresh-btn');
+        const closeModal = () => {
+            modal.style.opacity = '0';
+            setTimeout(() => modal.remove(), 200);
+        };
+        closeBtn.addEventListener('click', closeModal);
+        modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+        if (refreshBtn) {
+            refreshBtn.addEventListener('mouseenter', () => refreshBtn.style.background = '#4752c4');
+            refreshBtn.addEventListener('mouseleave', () => refreshBtn.style.background = '#5865f2');
+            refreshBtn.addEventListener('mousedown', () => refreshBtn.style.transform = 'scale(0.98)');
+            refreshBtn.addEventListener('mouseup', () => refreshBtn.style.transform = 'scale(1)');
+            refreshBtn.addEventListener('click', () => {
+                refreshBtn.disabled = true;
+                refreshBtn.textContent = '⏳ Очистка...';
+                try {
+                    if ('caches' in window) {
+                        caches.keys().then(keys => keys.forEach(key => caches.delete(key)));
+                    }
+                    sessionStorage.clear();
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('v', Date.now());
+                    window.location.href = url.toString();
+                } catch (e) {
+                    window.location.reload(true);
+                }
+            });
+        }
     }
 
     static _initSettingsTabs(modal) {
@@ -144,65 +216,6 @@ class ModalManager {
                     const soundType = cb.dataset.soundType;
                     cb.checked = SoundManager.isEnabled(soundType);
                 });
-            });
-        }
-    }
-
-    static openSettingsModal(client) {
-        const existing = document.getElementById('settings-modal');
-        if (existing) {
-            existing.remove();
-            return;
-        }
-
-        const modal = document.createElement('div');
-        modal.id = 'settings-modal';
-        modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 10001; backdrop-filter: blur(2px);';
-
-        modal.innerHTML = `
-            <div class="settings-modal-content" style="background: #2d2d44; border: 1px solid #404060; border-radius: 12px; padding: 0; width: 420px; max-width: 90%; max-height: 80vh; position: relative; box-shadow: 0 8px 24px rgba(0,0,0,0.4); display: flex; flex-direction: column; overflow: hidden;">
-                <button id="close-settings-modal" style="position: absolute; top: 12px; right: 12px; background: none; border: none; color: #aaa; font-size: 22px; cursor: pointer; line-height: 1; z-index: 10;">&times;</button>
-                <h3 style="margin: 0; padding: 20px 24px 16px; color: #e0e0e0; font-size: 16px; font-weight: 600; border-bottom: 1px solid #404060;">⚙️ Настройки</h3>
-                <div id="settings-dynamic-content" style="padding: 20px 24px; overflow-y: auto; flex: 1;">
-                    ${this._renderSettingsContent()}
-                </div>
-            </div>
-        `;
-        document.body.appendChild(modal);
-
-        this._initSettingsTabs(modal);
-        this._initSoundCheckboxes(modal);
-
-        const closeBtn = modal.querySelector('#close-settings-modal');
-        const refreshBtn = modal.querySelector('#force-refresh-btn');
-
-        const closeModal = () => {
-            modal.style.opacity = '0';
-            setTimeout(() => modal.remove(), 200);
-        };
-
-        closeBtn.addEventListener('click', closeModal);
-        modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
-        
-        if (refreshBtn) {
-            refreshBtn.addEventListener('mouseenter', () => refreshBtn.style.background = '#4752c4');
-            refreshBtn.addEventListener('mouseleave', () => refreshBtn.style.background = '#5865f2');
-            refreshBtn.addEventListener('mousedown', () => refreshBtn.style.transform = 'scale(0.98)');
-            refreshBtn.addEventListener('mouseup', () => refreshBtn.style.transform = 'scale(1)');
-            refreshBtn.addEventListener('click', () => {
-                refreshBtn.disabled = true;
-                refreshBtn.textContent = '⏳ Очистка...';
-                try {
-                    if ('caches' in window) {
-                        caches.keys().then(keys => keys.forEach(key => caches.delete(key)));
-                    }
-                    sessionStorage.clear();
-                    const url = new URL(window.location.href);
-                    url.searchParams.set('v', Date.now());
-                    window.location.href = url.toString();
-                } catch (e) {
-                    window.location.reload(true);
-                }
             });
         }
     }
