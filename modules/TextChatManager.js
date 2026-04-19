@@ -69,14 +69,15 @@ static loadMessages(client, roomId, limit = 100, beforeId = null, targetContaine
                                 mediaUrl = msg.imageUrl;
                             }
                             
-                            UIManager.addMessage(
-                                msg.username, msg.text, msg.timestamp, msg.type, 
-                                mediaUrl, // ← теперь audioUrl для аудио
-                                msg.id, msg.readBy || [], msg.userId, false, 
-                                msg.thumbnailUrl, container, msg.replyTo,
-                                msg.reactions || {}, msg.poll, msg.forwardedFrom, 
-                                msg.pollRef, msg.embed
-                            );
+UIManager.addMessage(
+    msg.username, msg.text, msg.timestamp, msg.type, 
+    mediaUrl,
+    msg.id, msg.readBy || [], msg.userId, false, 
+    msg.thumbnailUrl, container, msg.replyTo,
+    msg.reactions || {}, msg.poll, msg.forwardedFrom, 
+    msg.pollRef, msg.embed,
+    msg.edited || false, msg.editedAt || null
+);
                         }
                     }
                 }
@@ -111,12 +112,13 @@ static loadMessages(client, roomId, limit = 100, beforeId = null, targetContaine
                         if (newMessages.length > 0) {
                             const fragment = document.createDocumentFragment();
                             for (const msg of newMessages) {
-                                const el = MessageRenderer._createMessageElement(
-                                    msg.username, msg.text, msg.timestamp, msg.type,
-                                    msg.imageUrl, msg.id, msg.readBy || [], msg.userId, 
-                                    false, msg.thumbnailUrl, msg.replyTo, msg.reactions || {},
-                                    msg.poll, msg.forwardedFrom, msg.pollRef, msg.embed
-                                );
+const el = MessageRenderer._createMessageElement(
+    msg.username, msg.text, msg.timestamp, msg.type,
+    msg.imageUrl, msg.id, msg.readBy || [], msg.userId, 
+    false, msg.thumbnailUrl, msg.replyTo, msg.reactions || {},
+    msg.poll, msg.forwardedFrom, msg.pollRef, msg.embed,
+    msg.edited || false, msg.editedAt || null
+);
                                 if (el) {
                                     el.classList.add('appeared');
                                     fragment.appendChild(el);

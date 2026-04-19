@@ -1,3 +1,4 @@
+// modules/ScrollTracker.js
 import TextChatManager from './TextChatManager.js';
 
 class ScrollTracker {
@@ -12,7 +13,7 @@ class ScrollTracker {
     static _unreadMessageIds = new Map();
     static _currentUnreadIndex = new Map();
     static _savePositionTimeout = null;
-    static _buttonMode = null;
+    static _buttonMode = 'bottom';
 
     static setClient(client) {
         this.client = client;
@@ -23,7 +24,7 @@ class ScrollTracker {
         if (this._buttonMode === null) {
             try {
                 const saved = localStorage.getItem('scrollButtonMode');
-                this._buttonMode = saved === 'unread' ? 'unread' : 'bottom';
+                this._buttonMode = (saved === 'unread') ? 'unread' : 'bottom';
             } catch (e) {
                 this._buttonMode = 'bottom';
             }
@@ -53,11 +54,34 @@ class ScrollTracker {
 
     static setupScrollToBottomButton() {
         if (this._scrollToBottomBtn) return;
+        
         const btn = document.createElement('button');
         btn.id = 'scroll-to-bottom-btn';
         btn.innerHTML = '↓';
         btn.title = 'Прокрутить вниз (ПКМ для настроек)';
-        btn.style.cssText = `position: fixed; bottom: 85px; left: 50%; transform: translateX(-50%); width: 40px; height: 40px; border-radius: 50%; background: #5865f2; color: white; border: 2px solid #2d2d44; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 20px; z-index: 10000; box-shadow: 0 4px 12px rgba(0,0,0,0.4); transition: opacity 0.2s ease, transform 0.2s ease; opacity: 0; pointer-events: none;`;
+        btn.style.cssText = `
+            position: fixed; 
+            bottom: 85px; 
+            left: 50%; 
+            transform: translateX(-50%); 
+            width: 40px; 
+            height: 40px; 
+            border-radius: 50%; 
+            background: #5865f2; 
+            color: white; 
+            border: 2px solid #2d2d44; 
+            cursor: pointer; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            font-size: 20px; 
+            z-index: 10000; 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4); 
+            transition: opacity 0.2s ease, transform 0.2s ease; 
+            opacity: 0; 
+            pointer-events: none;
+        `;
+        
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             const mode = this._getButtonMode();
@@ -68,14 +92,17 @@ class ScrollTracker {
                 if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
             }
         });
+        
         btn.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             e.stopPropagation();
             this._showButtonContextMenu(e);
         });
+        
         document.body.appendChild(btn);
         this._scrollToBottomBtn = btn;
         this._updateButtonAppearance();
+        
         const tryBindScroll = () => {
             const container = document.querySelector('.messages-container');
             if (container) {
@@ -89,13 +116,27 @@ class ScrollTracker {
     }
 
     static _showButtonContextMenu(event) {
-        const { x, y } = event;
+        const { clientX: x, clientY: y } = event;
         const existingMenu = document.querySelector('.scroll-button-context-menu');
         if (existingMenu) existingMenu.remove();
+        
         const menu = document.createElement('div');
         menu.className = 'scroll-button-context-menu';
-        menu.style.cssText = `position: fixed; background: #2d2d44; border: 1px solid #404060; border-radius: 8px; padding: 8px 0; min-width: 240px; z-index: 10001; box-shadow: 0 4px 20px rgba(0,0,0,0.4); left: ${x}px; top: ${y}px;`;
+        menu.style.cssText = `
+            position: fixed; 
+            background: #2d2d44; 
+            border: 1px solid #404060; 
+            border-radius: 8px; 
+            padding: 8px 0; 
+            min-width: 240px; 
+            z-index: 10001; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4); 
+            left: ${x}px; 
+            top: ${y}px;
+        `;
+        
         const currentMode = this._getButtonMode();
+        
         const modeItem = document.createElement('div');
         modeItem.className = 'context-menu-item';
         modeItem.style.cssText = 'padding: 10px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #e0e0e0; transition: background 0.2s;';
@@ -112,9 +153,11 @@ class ScrollTracker {
             menu.remove();
         });
         menu.appendChild(modeItem);
+        
         const separator = document.createElement('div');
         separator.style.cssText = 'height: 1px; background: #404060; margin: 4px 0;';
         menu.appendChild(separator);
+        
         const aboveItem = document.createElement('div');
         aboveItem.className = 'context-menu-item';
         aboveItem.style.cssText = 'padding: 10px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #e0e0e0; transition: background 0.2s;';
@@ -135,6 +178,7 @@ class ScrollTracker {
             }
         });
         menu.appendChild(aboveItem);
+        
         const allItem = document.createElement('div');
         allItem.className = 'context-menu-item';
         allItem.style.cssText = 'padding: 10px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #e0e0e0; transition: background 0.2s;';
@@ -153,7 +197,9 @@ class ScrollTracker {
             }
         });
         menu.appendChild(allItem);
+        
         document.body.appendChild(menu);
+        
         const closeHandler = (e) => {
             if (!menu.contains(e.target)) {
                 menu.remove();
@@ -161,6 +207,7 @@ class ScrollTracker {
                 document.removeEventListener('contextmenu', closeHandler);
             }
         };
+        
         setTimeout(() => {
             document.addEventListener('click', closeHandler);
             document.addEventListener('contextmenu', closeHandler);
@@ -170,19 +217,26 @@ class ScrollTracker {
     static _jumpToNextUnread() {
         const roomId = this.client?.currentRoom;
         if (!roomId) return;
+        
         const container = document.querySelector('.messages-container');
         if (!container) return;
-        const unreadIds = this._unreadMessageIds.get(roomId) || [];
+        
+        let unreadIds = this._unreadMessageIds.get(roomId) || [];
         if (unreadIds.length === 0) {
             this._scanUnreadMessages(roomId);
-            return;
+            unreadIds = this._unreadMessageIds.get(roomId) || [];
         }
+        
+        if (unreadIds.length === 0) return;
+        
         let currentIndex = this._currentUnreadIndex.get(roomId) || 0;
         if (currentIndex >= unreadIds.length) {
             currentIndex = 0;
         }
+        
         const targetId = unreadIds[currentIndex];
         const found = this.scrollToMessage(targetId, container, true);
+        
         if (found) {
             this._currentUnreadIndex.set(roomId, currentIndex + 1);
         } else {
@@ -197,34 +251,50 @@ class ScrollTracker {
         }
     }
 
-    static _scanUnreadMessages(roomId) {
-        const container = document.querySelector('.messages-container');
-        if (!container) return;
-        const messageElements = Array.from(container.querySelectorAll('.message[data-message-id]'));
-        const unreadIds = [];
-        const client = this.client || window.voiceClient;
-        const currentUserId = client?.userId;
-        for (const el of messageElements) {
-            const msgId = el.dataset.messageId;
-            if (!msgId) continue;
-            const isRead = el.classList.contains('message-read');
-            const isOwn = el.dataset.userId === currentUserId;
-            if (!isRead && !isOwn) {
-                unreadIds.push(msgId);
-            }
-        }
-        unreadIds.sort((a, b) => {
-            const tsA = this._extractTimestamp(a);
-            const tsB = this._extractTimestamp(b);
-            return tsA - tsB;
-        });
-        this._unreadMessageIds.set(roomId, unreadIds);
-        this._currentUnreadIndex.set(roomId, 0);
-        if (unreadIds.length > 0) {
-            const firstUnread = unreadIds[0];
-            this._firstUnreadId.set(roomId, firstUnread);
+static _scanUnreadMessages(roomId) {
+    const container = document.querySelector('.messages-container');
+    if (!container) return;
+    
+    const messageElements = Array.from(container.querySelectorAll('.message[data-message-id]'));
+    const unreadIds = [];
+    const client = this.client || window.voiceClient;
+    const currentUserId = client?.userId;
+    
+    for (const el of messageElements) {
+        const msgId = el.dataset.messageId;
+        if (!msgId) continue;
+        
+        // 🔥 ИСПРАВЛЕНИЕ: Проверяем ОБА класса — и read, и unread
+        const isRead = el.classList.contains('message-read');
+        const isUnread = el.classList.contains('message-unread');
+        const isOwn = el.dataset.userId === currentUserId;
+        
+        // Сообщение непрочитано если:
+        // - НЕ своё
+        // - Либо есть класс message-unread, либо нет класса message-read
+        if (!isOwn && (isUnread || !isRead)) {
+            unreadIds.push(msgId);
         }
     }
+    
+    unreadIds.sort((a, b) => {
+        const tsA = this._extractTimestamp(a);
+        const tsB = this._extractTimestamp(b);
+        return tsA - tsB;
+    });
+    
+    this._unreadMessageIds.set(roomId, unreadIds);
+    this._currentUnreadIndex.set(roomId, 0);
+    
+    if (unreadIds.length > 0) {
+        const firstUnread = unreadIds[0];
+        this._firstUnreadId.set(roomId, firstUnread);
+    } else {
+        // 🔥 ВАЖНО: Если непрочитанных нет, сбрасываем firstUnread
+        // Но только если сервер тоже не прислал firstUnread
+        // (это будет перезаписано при загрузке view-position)
+    }
+}
 
     static _extractTimestamp(id) {
         if (!id) return 0;
@@ -238,10 +308,13 @@ class ScrollTracker {
 
     static _checkScrollVisibility(container) {
         if (!container || !this._scrollToBottomBtn) return;
+        
         if (this._scrollCheckTimeout) clearTimeout(this._scrollCheckTimeout);
+        
         this._scrollCheckTimeout = setTimeout(() => {
             const threshold = 150;
             const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
+            
             if (distance > threshold) {
                 this._scrollToBottomBtn.style.opacity = '1';
                 this._scrollToBottomBtn.style.transform = 'translateX(-50%) scale(1)';
@@ -272,19 +345,30 @@ class ScrollTracker {
 
     static scrollToMessage(messageId, container = null, highlight = true) {
         const target = container || document.querySelector('.messages-container');
-        if (!target) return this.scrollToBottom();
-        if (!messageId) return this.scrollToBottom(target);
+        if (!target) {
+            this.scrollToBottom();
+            return false;
+        }
+        
+        if (!messageId) {
+            this.scrollToBottom(target);
+            return false;
+        }
+        
         const msgEl = target.querySelector(`[data-message-id="${messageId}"]`);
         if (msgEl) {
             msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
             if (highlight) {
                 msgEl.style.transition = 'background 0.3s';
                 msgEl.style.background = 'rgba(88, 101, 242, 0.2)';
                 setTimeout(() => { msgEl.style.background = ''; }, 1500);
             }
+            
             this._checkScrollVisibility(target);
             return true;
         }
+        
         return false;
     }
 
@@ -292,22 +376,16 @@ static initScrollTracker(roomId, container = null) {
     const target = container || document.querySelector('.messages-container');
     if (!target || !roomId) return;
     if (target._scrollTrackerBound) return;
-    target._scrollTrackerBound = true;
     
-    // ✅ Флаг для блокировки перезаписи при первом скролле
-    target._isFirstScrollAfterInit = true;
+    target._scrollTrackerBound = true;
+    target._isFirstScrollAfterInit = false;
     target._scrollInitializedAt = Date.now();
     
     this._lastViewedMessages.set(roomId, null);
     this._lastSentReadIds.set(roomId, null);
     
-    // ✅ НЕ СБРАСЫВАЕМ существующие значения (они могли быть установлены с сервера)
-    if (!this._maxSeenMessageId.has(roomId)) {
-        this._maxSeenMessageId.set(roomId, null);
-    }
-    if (!this._firstUnreadId.has(roomId)) {
-        this._firstUnreadId.set(roomId, null);
-    }
+    // 🔥 ВАЖНО: НЕ проверяем has(), а всегда инициализируем заново
+    // Старые значения уже должны быть очищены через clearLastViewedMessage
     
     this._unreadMessageIds.delete(roomId);
     this._currentUnreadIndex.delete(roomId);
@@ -317,16 +395,6 @@ static initScrollTracker(roomId, container = null) {
         clearTimeout(target._readCheckTimeout);
         
         target._scrollSaveTimeout = setTimeout(() => {
-            // ✅ Пропускаем первые 500ms после инициализации
-            // Это дает время загрузиться сообщениям и произойти целевому скроллу
-            if (target._isFirstScrollAfterInit) {
-                const timeSinceInit = Date.now() - target._scrollInitializedAt;
-                if (timeSinceInit < 2000) {
-                    return;
-                }
-                target._isFirstScrollAfterInit = false;
-            }
-            
             const messages = Array.from(target.querySelectorAll('.message[data-message-id]'));
             if (messages.length === 0) return;
             
@@ -334,22 +402,17 @@ static initScrollTracker(roomId, container = null) {
             let topVisibleId = null;
             const targetRect = target.getBoundingClientRect();
             
-            // ✅ Ищем частично видимые сообщения
             for (const msg of messages) {
                 const rect = msg.getBoundingClientRect();
                 
-                // Сообщение хотя бы частично видимо
                 if (rect.bottom > targetRect.top && rect.top < targetRect.bottom) {
-                    // Запоминаем самое верхнее видимое
                     if (!topVisibleId) {
                         topVisibleId = msg.dataset.messageId;
                     }
-                    // Всегда обновляем bottomVisibleId на последнее видимое
                     bottomVisibleId = msg.dataset.messageId;
                 }
             }
             
-            // ✅ Fallback: если ничего не нашли - ищем ближайшее к нижней границе
             if (!bottomVisibleId && messages.length > 0) {
                 let minDistance = Infinity;
                 for (const msg of messages) {
@@ -364,7 +427,6 @@ static initScrollTracker(roomId, container = null) {
             
             if (bottomVisibleId) {
                 const currentMax = this._maxSeenMessageId.get(roomId);
-                // ✅ Обновляем только если новое сообщение новее (больше timestamp)
                 if (!currentMax || this._compareMessageIds(bottomVisibleId, currentMax) > 0) {
                     this._maxSeenMessageId.set(roomId, bottomVisibleId);
                 }
@@ -373,15 +435,12 @@ static initScrollTracker(roomId, container = null) {
             
             const distanceToBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
             
-            // ✅ Устанавливаем firstUnread только если реально далеко от дна
             if (distanceToBottom > 150 && topVisibleId) {
                 const currentFirstUnread = this._firstUnreadId.get(roomId);
-                // Устанавливаем только если новое значение старее (меньше timestamp)
                 if (!currentFirstUnread || this._compareMessageIds(topVisibleId, currentFirstUnread) < 0) {
                     this._firstUnreadId.set(roomId, topVisibleId);
                 }
             } else if (distanceToBottom <= 50) {
-                // Если в самом низу - сбрасываем firstUnread (всё прочитано)
                 this._firstUnreadId.set(roomId, null);
             }
         }, 300);
@@ -402,7 +461,6 @@ static initScrollTracker(roomId, container = null) {
                 }
             }
             
-            // ✅ Проверяем maxSeen, а не bottomVisibleId
             const maxSeen = this._maxSeenMessageId.get(roomId);
             
             if (maxSeen && this._lastSentReadIds.get(roomId) !== maxSeen) {
@@ -432,18 +490,17 @@ static initScrollTracker(roomId, container = null) {
         }, 500);
     };
     
-target.addEventListener('scroll', handleScroll, { passive: true });
-
-// ✅ Сбрасываем флаг при первом ручном скролле пользователя
-target.addEventListener('wheel', () => {
-    target._isFirstScrollAfterInit = false;
-}, { once: true });
-
-target.addEventListener('touchstart', () => {
-    target._isFirstScrollAfterInit = false;
-}, { once: true });
-
-setTimeout(() => this._scanUnreadMessages(roomId), 500);
+    target.addEventListener('scroll', handleScroll, { passive: true });
+    
+    // 🔥 ИСПРАВЛЕНИЕ: Сканируем непрочитанные сразу, а не через 800мс
+    // Но даём DOM время на рендеринг
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            if (roomId === this.client?.currentRoom) {
+                this._scanUnreadMessages(roomId);
+            }
+        });
+    });
 }
 
     static _compareMessageIds(idA, idB) {
@@ -456,6 +513,7 @@ setTimeout(() => this._scanUnreadMessages(roomId), 500);
     static saveLastViewedMessage(roomId, container = null) {
         const target = container || document.querySelector('.messages-container');
         if (!target || !roomId) return;
+        
         const messages = Array.from(target.querySelectorAll('.message[data-message-id]'));
         if (messages.length > 0) {
             const lastId = messages[messages.length - 1].dataset.messageId;
@@ -475,13 +533,13 @@ setTimeout(() => this._scanUnreadMessages(roomId), 500);
         return this._firstUnreadId.get(roomId) || null;
     }
 
-    static setMaxSeenMessageId(roomId, messageId) {
-        this._maxSeenMessageId.set(roomId, messageId);
-    }
+static setMaxSeenMessageId(roomId, messageId) {
+    this._maxSeenMessageId.set(roomId, messageId); // не проверять на null
+}
 
-    static setFirstUnreadId(roomId, messageId) {
-        this._firstUnreadId.set(roomId, messageId);
-    }
+static setFirstUnreadId(roomId, messageId) {
+    this._firstUnreadId.set(roomId, messageId); // не проверять на null
+}
 
     static clearLastViewedMessage(roomId) {
         this._lastViewedMessages.delete(roomId);

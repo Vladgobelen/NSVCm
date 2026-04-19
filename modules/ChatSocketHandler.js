@@ -8,16 +8,17 @@ class ChatSocketHandler {
     this.client = client;
   }
 
-  registerHandlers(socket) {
+registerHandlers(socket) {
     socket.on('message-deleted', this.handleMessageDeleted.bind(this));
     socket.on('message-reaction-updated', this.handleMessageReactionUpdated.bind(this));
     socket.on('message-updated', this.handleMessageUpdated.bind(this));
+    socket.on('message-edited', this.handleMessageEdited.bind(this)); // ← НОВЫЙ
     socket.on('new-message', this.handleNewMessage.bind(this));
     socket.on('messages-read-status', this.handleMessagesReadStatus.bind(this));
     socket.on('message-pinned', this.handleMessagePinned.bind(this));
     socket.on('message-unpinned', this.handleMessageUnpinned.bind(this));
     socket.on('pinned-messages-list', this.handlePinnedMessagesList.bind(this));
-  }
+}
 
   handleMessageDeleted(data) {
     UIManager.removeMessageFromUI(data.messageId);
@@ -55,8 +56,77 @@ class ChatSocketHandler {
     }
   }
 
+handleMessageEdited(data) {
+    const { messageId, newText, edited, editedAt, embed } = data;
+    if (!messageId) return;
+    
+    const updateWithRetry = (retries = 5) => {
+        const msgEl = document.querySelector(`.message[data-message-id="${messageId}"]`);
+        if (msgEl) {
+            const textContainer = msgEl.querySelector('.message-text');
+            if (textContainer && newText) {
+                textContainer.innerHTML = MessageRenderer.escapeHtmlAndFormat(newText);
+                MessageRenderer.highlightCodeBlocks(msgEl);
+            }
+            
+            // Обновляем embed если есть
+            if (embed) {
+                MessageRenderer.updateMessageEmbed(messageId, embed);
+            }
+            
+            // Обновляем dataset
+            if (edited) {
+                msgEl.dataset.edited = 'true';
+                msgEl.dataset.editedAt = editedAt;
+            }
+            
+            // Добавляем/обновляем иконку редактирования
+            const header = msgEl.querySelector('.message-header');
+            if (header && edited) {
+                const existingBadge = header.querySelector('.message-edited-badge');
+                if (!existingBadge) {
+                    const badge = document.createElement('span');
+                    badge.className = 'message-edited-badge';
+                    badge.innerHTML = '✏️';
+                    badge.title = editedAt ? `Отредактировано: ${new Date(editedAt).toLocaleString('ru-RU')}` : 'Отредактировано';
+                    // Вставляем перед кнопками
+                    const editBtn = header.querySelector('.message-edit-btn');
+                    if (editBtn) {
+                        header.insertBefore(badge, editBtn);
+                    } else {
+                        header.appendChild(badge);
+                    }
+                } else {
+                    existingBadge.title = editedAt ? `Отредактировано: ${new Date(editedAt).toLocaleString('ru-RU')}` : 'Отредактировано';
+                }
+            }
+            
+            // Обновляем сохранённый объект сообщения
+            if (msgEl._messageObj) {
+                msgEl._messageObj.text = newText;
+                msgEl._messageObj.edited = true;
+                msgEl._messageObj.editedAt = editedAt;
+            }
+        } else if (retries > 0) {
+            setTimeout(() => updateWithRetry(retries - 1), 100);
+        }
+    };
+    updateWithRetry();
+}
+
 handleNewMessage(message) {
+    console.log('[CHAT] handleNewMessage called:', message.username, message.text);
+    
     if (!message || !message.roomId) return;
+    
+    console.log('[CHAT] username:', message.username, 'client:', this.client.username);
+    console.log('[CHAT] roomId:', message.roomId, 'current:', this.client.currentRoom);
+    
+    if (message.username !== this.client.username && message.roomId === this.client.currentRoom) {
+        console.log('[CHAT] Sending notification for:', message.username);
+        window.postMessage({ type: 'ELECTRON_SHOW_NOTIFICATION', title: message.username, body: message.text || 'Новое сообщение', source: 'webview' }, '*');
+    }
+    
     if (message.isForSecondary) {
         SecondaryChatManager.addMessage(
             message.username, message.text, message.timestamp, message.type || 'text',
@@ -68,7 +138,6 @@ handleNewMessage(message) {
     }
 
     if (message.roomId === this.client.currentRoom) {
-        // Определяем mediaUrl ДО вызова
         let mediaUrl = null;
         if (message.type === 'audio') {
             mediaUrl = message.audioUrl;

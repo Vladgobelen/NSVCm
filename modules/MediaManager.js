@@ -1,3 +1,5 @@
+// modules/MediaManager.js - финальная версия с защитой
+
 import VolumeBoostManager from './VolumeBoostManager.js';
 import UIManager from './UIManager.js';
 
@@ -6,18 +8,14 @@ const PRODUCE_TIMEOUT = 15000;
 const CONSUME_TIMEOUT = 10000;
 
 class MediaManager {
-    // 🔥 НОВЫЙ МЕТОД: Получение mediasoupClient с ожиданием загрузки
+    
     static async getMediasoupClient() {
-        // Проверяем все возможные места, где может быть библиотека
         const msClient = window.mediasoupClient || 
                         (typeof globalThis !== 'undefined' && globalThis.mediasoupClient) ||
                         (typeof global !== 'undefined' && global.mediasoupClient);
         
-        if (msClient) {
-            return msClient;
-        }
+        if (msClient) return msClient;
         
-        // Ждём загрузки (максимум 5 секунд)
         console.log('⏳ Waiting for mediasoup-client to load...');
         return new Promise((resolve, reject) => {
             const maxAttempts = 50;
@@ -41,41 +39,47 @@ class MediaManager {
         });
     }
 
-    static async connect(client, roomId, mediaData) {
-        try {
-            // 🔥 ИСПРАВЛЕНИЕ: Ждём загрузки mediasoup-client
-            const mediasoupClient = await this.getMediasoupClient();
-            
-            // Проверяем, что Device доступен
-            if (!mediasoupClient.Device) {
-                throw new Error('mediasoupClient.Device is not available');
-            }
 
-            if (!client.device || client.device.loaded === false) {
-                client.device = new mediasoupClient.Device();
-                await client.device.load({ routerRtpCapabilities: mediaData.rtpCapabilities });
-            }
-
-            await this.createTransports(client, mediaData);
-            await this.initMicrophone(client);
-
-            client.isConnected = true;
-            client.isMicActive = client.audioProducer !== null;
-            client.isMicPaused = true;
-            client.consumerState = new Map();
-            
-            if (client.socket) {
-                client.socket.emit('request-mic-states', { roomId });
-            }
-        } catch (error) {
-            console.error('Media connection failed:', error.message);
-            client.device = null;
-            client.sendTransport = null;
-            client.recvTransport = null;
-            client.audioProducer = null;
-            throw new Error(`Media connection failed: ${error.message}`);
+static async connect(client, roomId, mediaData) {
+    try {
+        const mediasoupClient = await this.getMediasoupClient();
+        
+        if (!mediasoupClient.Device) {
+            throw new Error('mediasoupClient.Device is not available');
         }
+
+        if (!client.device || client.device.loaded === false) {
+            client.device = new mediasoupClient.Device();
+            await client.device.load({ routerRtpCapabilities: mediaData.rtpCapabilities });
+        }
+
+        await this.createTransports(client, mediaData);
+
+        client.isConnected = true;
+        client.isMicActive = false;
+        client.isMicPaused = true;
+        client.consumerState = new Map();
+        
+        // 🔥 Сбрасываем флаги инициализации
+        client._micInitInProgress = false;
+        client._micInitPromise = null;
+        
+        if (client.socket) {
+            client.socket.emit('request-mic-states', { roomId });
+        }
+        
+        // 🔥 НЕ вызываем _setupFirstInteractionListener!
+        // Микрофон будет инициализирован при клике на кнопку
+        
+    } catch (error) {
+        console.error('Media connection failed:', error.message);
+        client.device = null;
+        client.sendTransport = null;
+        client.recvTransport = null;
+        client.audioProducer = null;
+        throw new Error(`Media connection failed: ${error.message}`);
     }
+}
 
     static async createTransports(client, mediaData) {
         if (!client.sendTransport) {
@@ -105,197 +109,76 @@ class MediaManager {
         }
     }
 
-static setupTransportStateChangeHandler(client, transport) {
-    let hasBeenConnected = false;
-    const transportCreatedAt = Date.now();
-    
-    transport.on('connectionstatechange', (state) => {
-        if (transport.closed) return;
+    static setupTransportStateChangeHandler(client, transport) {
+        let hasBeenConnected = false;
+        const transportCreatedAt = Date.now();
         
-        const isRecvTransport = (transport === client.recvTransport);
-        const isSendTransport = (transport === client.sendTransport);
-        const transportType = isRecvTransport ? 'recv' : 'send';
-        
-        console.log(`[Transport] ${transportType} state changed: ${state}`);
-        
-        // Игнорируем failed/disconnected если транспорт еще ни разу не был connected
-        if ((state === 'failed' || state === 'disconnected') && !hasBeenConnected) {
-            console.log(`[Transport] ${transportType} transport ${state} before first connection, ignoring...`);
-            return;
-        }
-        
-        if (state === 'connected') {
-            hasBeenConnected = true;
+        transport.on('connectionstatechange', (state) => {
+            if (transport.closed) return;
             
-            // Сбрасываем счетчики попыток при успешном подключении
-            if (isSendTransport) {
-                client._sendTransportRecreateAttempts = 0;
-                client._isSendTransportRecreating = false;
+            const isRecvTransport = (transport === client.recvTransport);
+            const isSendTransport = (transport === client.sendTransport);
+            const transportType = isRecvTransport ? 'recv' : 'send';
+            
+            console.log(`[Transport] ${transportType} state changed: ${state}`);
+            
+            if ((state === 'failed' || state === 'disconnected') && !hasBeenConnected) {
+                console.log(`[Transport] ${transportType} transport ${state} before first connection, ignoring...`);
+                return;
             }
             
-            if (isRecvTransport && client._transportReadyForConsume !== undefined) {
-                client._transportReadyForConsume = true;
-                if (client._processPendingConsumeQueue) {
-                    client._processPendingConsumeQueue();
-                }
-            }
-            
-            if (client.iceRestartState) {
-                client.iceRestartState.delete(transport.id);
-            }
-            
-            console.log(`[Transport] ${transportType} connected successfully`);
-            return;
-        }
-        
-        if (state === 'failed' || state === 'disconnected') {
-            // Теперь сюда попадаем только если транспорт УЖЕ был connected и потом отвалился
-            
-            if (isSendTransport) {
-                // 🔥 КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Для send транспорта НИКОГДА не делаем полный реконнект комнаты
-                console.warn(`[Transport] Send transport ${state}, attempting to recreate only send transport (NO ROOM RECONNECT)`);
-                
-                // Дополнительная защита: игнорируем ошибки в первые 15 секунд после создания
-                const timeSinceCreation = Date.now() - transportCreatedAt;
-                if (timeSinceCreation < 15000) {
-                    console.log(`[Transport] Send transport still in initialization phase (${timeSinceCreation}ms old), ignoring ${state}`);
-                    return;
-                }
-                
-                if (client._scheduleIceRestart && !client._isSendTransportRecreating) {
-                    // Пробуем ICE рестарт
-                    client._scheduleIceRestart(transport, 'send');
-                } else if (!client._isSendTransportRecreating) {
-                    client._isSendTransportRecreating = true;
-                    
-                    setTimeout(async () => {
-                        try {
-                            if (transport.closed) {
-                                client._isSendTransportRecreating = false;
-                                return;
-                            }
-                            
-                            console.log(`[Transport] Recreating send transport...`);
-                            
-                            const wasMicActive = client.isMicActive;
-                            const wasMicPaused = client.isMicPaused;
-                            
-                            // Пересоздаем send транспорт через вспомогательный метод
-                            if (typeof this._recreateSendTransport === 'function') {
-                                await this._recreateSendTransport(client);
-                            }
-                            
-                            // Восстанавливаем микрофон если был активен
-                            if (wasMicActive && !wasMicPaused) {
-                                await this.initMicrophone(client);
-                                await this.resumeMicrophone(client);
-                            } else if (wasMicActive && wasMicPaused) {
-                                await this.initMicrophone(client);
-                            }
-                            
-                            console.log(`[Transport] Send transport recreated successfully`);
-                            client._sendTransportRecreateAttempts = 0;
-                            
-                        } catch (error) {
-                            console.error(`[Transport] Failed to recreate send transport:`, error.message);
-                            
-                            if (!client._sendTransportRecreateAttempts) {
-                                client._sendTransportRecreateAttempts = 0;
-                            }
-                            client._sendTransportRecreateAttempts++;
-                            
-                            // 🔥 ВАЖНО: Даже после 3 неудачных попыток НЕ ДЕЛАЕМ reconnectToRoom
-                            // Просто сбрасываем счетчик и продолжаем пытаться
-                            if (client._sendTransportRecreateAttempts >= 3) {
-                                console.warn(`[Transport] Send transport recreate failed ${client._sendTransportRecreateAttempts} times, resetting counter (NO ROOM RECONNECT)`);
-                                client._sendTransportRecreateAttempts = 0;
-                                // НЕ ВЫЗЫВАЕМ reconnectToRoom для send транспорта!
-                            }
-                        } finally {
-                            client._isSendTransportRecreating = false;
-                        }
-                    }, 500);
-                }
-                
-            } else if (isRecvTransport) {
-                // Только для recv транспорта делаем полный реконнект комнаты
-                console.warn(`[Transport] Recv transport ${state}, attempting recovery (room reconnect may occur)`);
-                
-                if (client._scheduleIceRestart) {
-                    client._scheduleIceRestart(transport, 'recv');
-                } else if (client.currentRoom && !client.isReconnecting && !client._isMediaReconnecting) {
-                    client._isMediaReconnecting = true;
-                    client.reconnectToRoom(client.currentRoom)
-                        .finally(() => { client._isMediaReconnecting = false; });
-                }
-            }
-        }
-    });
-}
-
-// Вспомогательный метод для пересоздания send транспорта
-static async _recreateSendTransport(client) {
-    if (!client.mediaData || !client.device) {
-        throw new Error('No media data or device');
-    }
-    
-    // Закрываем старый транспорт если есть
-    if (client.sendTransport && !client.sendTransport.closed) {
-        try {
-            client.sendTransport.close();
-        } catch (e) {
-            console.warn('Error closing old send transport:', e.message);
-        }
-    }
-    
-    // Создаем новый
-    const sendOptions = {
-        id: client.mediaData.sendTransport.id,
-        iceParameters: client.mediaData.sendTransport.iceParameters,
-        iceCandidates: client.mediaData.sendTransport.iceCandidates,
-        dtlsParameters: client.mediaData.sendTransport.dtlsParameters,
-        iceServers: client.mediaData.iceServers || []
-    };
-    
-    client.sendTransport = client.device.createSendTransport(sendOptions);
-    this.setupTransportConnectHandler(client, client.sendTransport);
-    this.setupTransportStateChangeHandler(client, client.sendTransport);
-    this.setupSendTransportHandlers(client);
-    
-    // Ждем подключения
-    await this._waitForTransportReady(client, client.sendTransport, 'send');
-}
-
-static _waitForTransportReady(client, transport, type, timeoutMs = 10000) {
-    return new Promise((resolve, reject) => {
-        if (transport.connectionState === 'connected') {
-            resolve();
-            return;
-        }
-        
-        const timeout = setTimeout(() => {
-            cleanup();
-            reject(new Error(`Transport ${type} ready timeout`));
-        }, timeoutMs);
-        
-        const onStateChange = (state) => {
             if (state === 'connected') {
-                cleanup();
-                resolve();
-            } else if (state === 'failed' || state === 'closed') {
-                cleanup();
-                reject(new Error(`Transport ${type} entered ${state}`));
+                hasBeenConnected = true;
+                
+                if (isSendTransport) {
+                    client._sendTransportRecreateAttempts = 0;
+                    client._isSendTransportRecreating = false;
+                    // 🔥 Уведомляем, что транспорт готов
+                    client._sendTransportReady = true;
+                }
+                
+                if (isRecvTransport && client._transportReadyForConsume !== undefined) {
+                    client._transportReadyForConsume = true;
+                    if (client._processPendingConsumeQueue) {
+                        client._processPendingConsumeQueue();
+                    }
+                }
+                
+                if (client.iceRestartState) {
+                    client.iceRestartState.delete(transport.id);
+                }
+                
+                console.log(`[Transport] ${transportType} connected successfully`);
+                return;
             }
-        };
-        
-        const cleanup = () => {
-            clearTimeout(timeout);
-            transport.off('connectionstatechange', onStateChange);
-        };
-        
-        transport.on('connectionstatechange', onStateChange);
-    });
-}
+            
+            if (state === 'failed' || state === 'disconnected') {
+                if (isSendTransport) {
+                    console.warn(`[Transport] Send transport ${state}, attempting to recreate...`);
+                    
+                    const timeSinceCreation = Date.now() - transportCreatedAt;
+                    if (timeSinceCreation < 15000) {
+                        console.log(`[Transport] Send transport still in initialization phase, ignoring ${state}`);
+                        return;
+                    }
+                    
+                    if (client._scheduleIceRestart && !client._isSendTransportRecreating) {
+                        client._scheduleIceRestart(transport, 'send');
+                    }
+                } else if (isRecvTransport) {
+                    console.warn(`[Transport] Recv transport ${state}, attempting recovery...`);
+                    
+                    if (client._scheduleIceRestart) {
+                        client._scheduleIceRestart(transport, 'recv');
+                    } else if (client.currentRoom && !client.isReconnecting && !client._isMediaReconnecting) {
+                        client._isMediaReconnecting = true;
+                        client.reconnectToRoom(client.currentRoom)
+                            .finally(() => { client._isMediaReconnecting = false; });
+                    }
+                }
+            }
+        });
+    }
 
     static setupTransportConnectHandler(client, transport) {
         let connectSent = false;
@@ -359,72 +242,209 @@ static _waitForTransportReady(client, transport, type, timeoutMs = 10000) {
         });
     }
 
-    static async initMicrophone(client) {
-        try {
-            if (!client.sendTransport) throw new Error('Send transport not initialized');
-            const constraints = {
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true,
-                    channelCount: 1,
-                    latency: 0.1
+
+static async initMicrophone(client) {
+    // Предотвращаем параллельные вызовы
+    if (client._micInitInProgress) {
+        console.log('[MediaManager] Microphone initialization already in progress, waiting...');
+        return client._micInitPromise;
+    }
+    
+    client._micInitInProgress = true;
+    client._micInitPromise = this._doInitMicrophone(client);
+    
+    try {
+        const result = await client._micInitPromise;
+        console.log('[MediaManager] initMicrophone completed, result:', result);
+        return result;
+    } finally {
+        client._micInitInProgress = false;
+        client._micInitPromise = null;
+    }
+}    
+
+static async _doInitMicrophone(client) {
+    try {
+        if (!client.sendTransport) {
+            throw new Error('Send transport not initialized');
+        }
+        
+        // Ждём подключения send транспорта
+        if (client.sendTransport.connectionState !== 'connected') {
+            console.log('[MediaManager] Waiting for send transport to connect...');
+            
+            // Показываем уведомление и НЕ убираем его автоматически
+            const notification = UIManager.showNotification('🔗 Устанавливаем защищённое соединение...', 'info', 0);
+            
+            try {
+                // Ждём подключения до 30 секунд
+                await this._waitForTransportReady(client.sendTransport, 'send', 3000);
+                
+                // Подключилось - обновляем уведомление
+                if (notification) {
+                    notification.textContent = '✅ Защищённое соединение установлено!';
+                    notification.style.background = '#2ecc71';
+                    
+                    setTimeout(() => {
+                        notification.classList.add('fade-out');
+                        setTimeout(() => notification.remove(), 300);
+                    }, 2000);
+                }
+                
+            } catch (e) {
+                console.warn('[MediaManager] Send transport connection delayed, proceeding anyway...');
+                
+                // Таймаут - показываем что продолжаем
+                if (notification) {
+                    notification.textContent = '🌐 Продолжаем подключение...';
+                    notification.style.background = '#faa61a';
+                    
+                    setTimeout(() => {
+                        notification.classList.add('fade-out');
+                        setTimeout(() => notification.remove(), 300);
+                    }, 2000);
+                }
+            }
+        }
+        
+        // Проверяем, может продюсер уже создан
+        if (client.audioProducer && !client.audioProducer.closed) {
+            console.log('[MediaManager] Microphone already initialized');
+            return true;
+        }
+        
+        const constraints = {
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+                channelCount: 1
+            }
+        };
+
+        // Очищаем старый стрим если есть
+        if (client.stream) {
+            client.stream.getTracks().forEach(t => t.stop());
+            client.stream = null;
+        }
+
+        console.log('[MediaManager] Requesting user media...');
+        client.stream = await navigator.mediaDevices.getUserMedia(constraints);
+        const track = client.stream.getAudioTracks()[0];
+        
+        if (!track) {
+            throw new Error('No audio track available');
+        }
+        
+        console.log('[MediaManager] Audio track obtained:', track.label);
+        
+        // Включаем трек
+        track.enabled = true;
+
+        console.log('[MediaManager] Creating audio producer...');
+        client.audioProducer = await client.sendTransport.produce({
+            track,
+            encodings: [{ maxBitrate: 24000, dtx: true }],
+            appData: { clientID: client.clientID, roomId: client.currentRoom }
+        });
+
+        console.log('[MediaManager] Audio producer created:', client.audioProducer.id);
+
+        // Проверяем что продюсер реально создался
+        if (!client.audioProducer || client.audioProducer.closed) {
+            throw new Error('Producer creation failed or closed immediately');
+        }
+
+        client.audioProducer.on('transportclose', () => {
+            console.log('[MediaManager] Producer transport closed');
+            client.audioProducer = null;
+            client.isMicActive = false;
+            client.isMicPaused = true;
+            if (client.updateMicButtonState) {
+                client.updateMicButtonState();
+            }
+        });
+
+        client.audioProducer.on('trackended', () => {
+            console.log('[MediaManager] Producer track ended');
+            client.audioProducer = null;
+            client.isMicActive = false;
+            client.isMicPaused = true;
+            if (client.updateMicButtonState) {
+                client.updateMicButtonState();
+            }
+        });
+
+        // Устанавливаем состояние
+        client.isMicActive = true;
+        client.isMicPaused = false;
+        
+        // Уведомляем сервер
+        if (client.socket) {
+            client.socket.emit('new-producer-notification', {
+                roomId: client.currentRoom,
+                producerId: client.audioProducer.id,
+                clientID: client.clientID,
+                userId: client.userId,
+                kind: 'audio'
+            });
+            
+            client.socket.emit('mic-indicator-state', { 
+                roomId: client.currentRoom, 
+                isActive: true 
+            });
+        }
+        
+        console.log('[MediaManager] Microphone initialized and ACTIVE, producer:', client.audioProducer.id);
+        return true;
+        
+    } catch (error) {
+        console.error('[MediaManager] Failed to init microphone:', error.message, error.stack);
+        
+        // Сбрасываем состояние при ошибке
+        client.isMicActive = false;
+        client.isMicPaused = true;
+        client.audioProducer = null;
+        
+        if (client.stream) {
+            client.stream.getTracks().forEach(t => t.stop());
+            client.stream = null;
+        }
+        
+        UIManager.showNotification('❌ Ошибка микрофона: ' + error.message, 'error', 4000);
+        throw error;
+    }
+}
+
+    static _waitForTransportReady(transport, type, timeoutMs = 5000) {
+        return new Promise((resolve, reject) => {
+            if (transport.connectionState === 'connected') {
+                resolve();
+                return;
+            }
+            
+            const timeout = setTimeout(() => {
+                cleanup();
+                reject(new Error(`Transport ${type} ready timeout`));
+            }, timeoutMs);
+            
+            const onStateChange = (state) => {
+                if (state === 'connected') {
+                    cleanup();
+                    resolve();
+                } else if (state === 'failed' || state === 'closed') {
+                    cleanup();
+                    reject(new Error(`Transport ${type} entered ${state}`));
                 }
             };
-
-            client.stream = await navigator.mediaDevices.getUserMedia(constraints);
-            const track = client.stream.getAudioTracks()[0];
-            track.enabled = false;
-
-            client.audioProducer = await client.sendTransport.produce({
-                track,
-                encodings: [{ maxBitrate: 24000, dtx: true }],
-                appData: { clientID: client.clientID, roomId: client.currentRoom }
-            });
-
-            client.audioProducer.on('transportclose', () => {
-                client.audioProducer = null;
-                client.isMicActive = false;
-                client.isMicPaused = false;
-                client.updateMicButtonState?.();
-            });
-
-            client.audioProducer.on('trackended', () => {
-                client.audioProducer = null;
-                client.isMicActive = false;
-                client.isMicPaused = false;
-                client.updateMicButtonState?.();
-            });
-
-            await client.audioProducer.pause();
-            client.isMicActive = true;
-            client.isMicPaused = true;
-
-            if (client.socket && client.audioProducer) {
-                client.socket.emit('new-producer-notification', {
-                    roomId: client.currentRoom,
-                    producerId: client.audioProducer.id,
-                    clientID: client.clientID,
-                    userId: client.userId,
-                    kind: 'audio'
-                });
-            }
-        } catch (error) {
-            console.error('Failed to init microphone:', error.message);
-            client.isMicActive = false;
-            client.isMicPaused = false;
-            client.audioProducer = null;
-            if (client.stream) {
-                client.stream.getTracks().forEach(t => t.stop());
-                client.stream = null;
-            }
-            UIManager.showError('Микрофон: ' + error.message);
-        }
-    }
-
-    static async toggleMicrophone(client) {
-        if (!client.currentRoom || !client.isMicActive || !client.audioProducer) return false;
-        return client.isMicPaused ? await this.resumeMicrophone(client) : await this.pauseMicrophone(client);
+            
+            const cleanup = () => {
+                clearTimeout(timeout);
+                transport.off('connectionstatechange', onStateChange);
+            };
+            
+            transport.on('connectionstatechange', onStateChange);
+        });
     }
 
     static async pauseMicrophone(client) {
@@ -437,7 +457,11 @@ static _waitForTransportReady(client, transport, type, timeoutMs = 10000) {
     }
 
     static async resumeMicrophone(client) {
-        if (!client.audioProducer || client.audioProducer.closed) return false;
+        if (!client.audioProducer || client.audioProducer.closed) {
+            console.log('[MediaManager] Cannot resume: microphone not initialized');
+            return false;
+        }
+        
         await client.audioProducer.resume();
         if (client.audioProducer.track) client.audioProducer.track.enabled = true;
         client.isMicPaused = false;
@@ -459,124 +483,96 @@ static _waitForTransportReady(client, transport, type, timeoutMs = 10000) {
             client.sendTransport = null;
         }
         client.isMicActive = false;
-        client.isMicPaused = false;
+        client.isMicPaused = true;
     }
 
-    static async createConsumer(client, consumerParams) {
-        if (!client.recvTransport || client.recvTransport.closed || client.recvTransport.connectionState === 'failed') {
-            throw new Error('Recv transport is missing, closed, or failed');
-        }
-        if (client.audioProducer?.id === consumerParams.producerId || consumerParams.clientID === client.clientID) {
-            throw new Error('Cannot consume own audio');
-        }
-
-        const consumer = await client.recvTransport.consume({
-            id: consumerParams.id,
-            producerId: consumerParams.producerId,
-            kind: consumerParams.kind,
-            rtpParameters: consumerParams.rtpParameters
-        });
-
-        consumer.on('trackended', () => {
-            if (client._scheduleConsumerRetry) {
-                client._scheduleConsumerRetry(
-                    consumerParams.producerId,
-                    { producerId: consumerParams.producerId, kind: consumerParams.kind },
-                    'track_ended'
-                );
-            }
-        });
-
-        consumer.on('transportclose', () => {
-            if (client._scheduleConsumerRetry) {
-                client._scheduleConsumerRetry(
-                    consumerParams.producerId,
-                    { producerId: consumerParams.producerId, kind: consumerParams.kind },
-                    'transport_closed'
-                );
-            }
-        });
-
-        consumer.on('producerclose', () => {
-            if (client._resetConsumerRecoveryState) {
-                client._resetConsumerRecoveryState(consumerParams.producerId);
-            }
-        });
-
-        const audioElement = document.createElement('audio');
-        audioElement.id = `audio-${consumerParams.producerId}`;
-        audioElement.autoplay = true;
-        audioElement.playsInline = true;
-        audioElement.muted = false;
-        audioElement.style.cssText = 'position:absolute; width:0; height:0; overflow:hidden; z-index:-1;';
-        document.body.appendChild(audioElement);
-        audioElement.srcObject = new MediaStream([consumer.track]);
-
-        const playPromise = audioElement.play();
-        if (playPromise !== undefined) {
-            playPromise.catch(() => {
-                VolumeBoostManager.resume().catch(() => {});
-                const retryPlay = () => audioElement.play().catch(() => {});
-                document.addEventListener('click', retryPlay, { once: true });
-                document.addEventListener('touchstart', retryPlay, { once: true });
-            });
-        }
-
-        return { consumer, audioElement };
+static async createConsumer(client, consumerParams) {
+    if (!client.recvTransport || client.recvTransport.closed || client.recvTransport.connectionState === 'failed') {
+        throw new Error('Recv transport is missing, closed, or failed');
+    }
+    
+    // Не проверяем активность продюсера - Consumer создаётся в любом случае
+    // Если продюсер на паузе, Consumer будет получать тишину, но когда продюсер возобновится,
+    // звук появится автоматически
+    
+    if (client.audioProducer?.id === consumerParams.producerId || consumerParams.clientID === client.clientID) {
+        throw new Error('Cannot consume own audio');
     }
 
-    static async recoverConsumer(client, producerId, producerData) {
-        if (!client.recvTransport || client.recvTransport.closed) {
-            return false;
+    const consumer = await client.recvTransport.consume({
+        id: consumerParams.id,
+        producerId: consumerParams.producerId,
+        kind: consumerParams.kind,
+        rtpParameters: consumerParams.rtpParameters
+    });
+
+    consumer.on('trackended', () => {
+        if (client._scheduleConsumerRetry) {
+            client._scheduleConsumerRetry(
+                consumerParams.producerId,
+                { producerId: consumerParams.producerId, kind: consumerParams.kind },
+                'track_ended'
+            );
         }
-        if (client.consumedProducerIdsRef?.has(producerId)) {
-            return true;
+    });
+
+    consumer.on('transportclose', () => {
+        if (client._scheduleConsumerRetry) {
+            client._scheduleConsumerRetry(
+                consumerParams.producerId,
+                { producerId: consumerParams.producerId, kind: consumerParams.kind },
+                'transport_closed'
+            );
         }
-        try {
-            return new Promise((resolve) => {
-                if (!client.socket?.connected) {
-                    resolve(false);
-                    return;
-                }
-                client.socket.emit('consume', {
-                    producerId,
-                    rtpCapabilities: client.device.rtpCapabilities,
-                    transportId: client.recvTransport.id,
-                    clientId: client.clientID
-                }, async (response) => {
-                    if (response?.success && response.consumerParameters) {
-                        try {
-                            const { consumer, audioElement } = await this.createConsumer(client, response.consumerParameters);
-                            if (client.consumerState) {
-                                client.consumerState.set(producerId, {
-                                    status: 'active',
-                                    consumer,
-                                    audioElement,
-                                    lastError: null
-                                });
-                            }
-                            if (client.consumedProducerIdsRef) {
-                                client.consumedProducerIdsRef.add(producerId);
-                            }
-                            if (client._resetConsumerRecoveryState) {
-                                client._resetConsumerRecoveryState(producerId);
-                            }
-                            resolve(true);
-                        } catch (error) {
-                            resolve(false);
-                        }
-                    } else {
-                        resolve(false);
-                    }
-                });
-            });
-        } catch (error) {
-            return false;
+    });
+
+    consumer.on('producerclose', () => {
+        if (client._resetConsumerRecoveryState) {
+            client._resetConsumerRecoveryState(consumerParams.producerId);
         }
+    });
+
+    const audioElement = document.createElement('audio');
+    audioElement.id = `audio-${consumerParams.producerId}`;
+    audioElement.autoplay = true;
+    audioElement.playsInline = true;
+    audioElement.muted = false;
+    
+    audioElement.style.cssText = `
+        position: fixed !important;
+        top: -9999px !important;
+        left: -9999px !important;
+        width: 1px !important;
+        height: 1px !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+    `;
+    
+    document.body.appendChild(audioElement);
+    audioElement.srcObject = new MediaStream([consumer.track]);
+
+    const playPromise = audioElement.play();
+    if (playPromise !== undefined) {
+        playPromise.catch(() => {
+            VolumeBoostManager.resume().catch(() => {});
+            const retryPlay = () => audioElement.play().catch(() => {});
+            document.addEventListener('click', retryPlay, { once: true });
+            document.addEventListener('touchstart', retryPlay, { once: true });
+        });
     }
+
+    return { consumer, audioElement };
+}
 
     static disconnect(client) {
+        // 🔥 Сбрасываем флаги
+        client._micInitInProgress = false;
+        client._micInitPromise = null;
+        client._sendTransportReady = false;
+        
         this.stopMicrophone(client, true);
+        
         if (client.recvTransport) {
             try { if (!client.recvTransport.closed) client.recvTransport.close(); } catch {}
             client.recvTransport = null;
@@ -592,21 +588,13 @@ static _waitForTransportReady(client, transport, type, timeoutMs = 10000) {
             });
             client.consumerState.clear();
         }
-        if (window.audioElements) {
-            window.audioElements.forEach(audio => {
-                try {
-                    audio.pause();
-                    audio.srcObject = null;
-                    audio.remove();
-                } catch {}
-            });
-            window.audioElements.clear();
-        }
+        
         client.device = null;
         client.isConnected = false;
         client.isMicActive = false;
-        client.isMicPaused = false;
+        client.isMicPaused = true;
     }
 }
 
 export default MediaManager;
+

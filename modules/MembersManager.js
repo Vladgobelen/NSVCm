@@ -61,6 +61,7 @@ class MembersManager {
     return stateData?.state || CONNECTION_STATE.UNKNOWN;
   }
 
+  // 🔥 ИСПРАВЛЕНИЕ: НЕ вызываем полное обновление списка при изменении микрофона
   static setMicState(userId, isActive) {
     if (!userId) return;
     this.micStates.set(userId, { isActive, timestamp: Date.now() });
@@ -69,6 +70,8 @@ class MembersManager {
       member.isMicActive = isActive;
       this.members.set(userId, member);
     }
+    // 🔥 ВАЖНО: НЕ вызываем updateMembersListWithStatus здесь!
+    // Обновляем только индикатор микрофона через отдельный метод
     UIManager.updateMemberMicState(userId, isActive);
   }
 
@@ -77,9 +80,15 @@ class MembersManager {
     return this.micStates.get(userId) || { isActive: false, timestamp: 0 };
   }
 
+  // 🔥 ИСПРАВЛЕНИЕ: Определяем, нужно ли полное обновление списка
   static updateMember(userId, updates) {
     if (this.members.has(userId)) {
       const member = { ...this.members.get(userId), ...updates };
+      
+      // Определяем, нужно ли полное обновление списка участников
+      const needsListUpdate = updates.isOnline !== undefined || 
+                             updates.username !== undefined ||
+                             updates.clientId !== undefined;
       
       if (updates.isMicActive !== undefined && updates.lastSpeakingUpdate) {
         member.isMicActive = updates.isMicActive;
@@ -89,7 +98,11 @@ class MembersManager {
       }
       
       if (updates.connectionState) this.setConnectionState(userId, updates.connectionState);
-      if (updates.isMicActive !== undefined) this.setMicState(userId, updates.isMicActive);
+      
+      // Обновляем micStates при изменении isMicActive
+      if (updates.isMicActive !== undefined) {
+        this.micStates.set(userId, { isActive: updates.isMicActive, timestamp: Date.now() });
+      }
       
       this.members.set(userId, member);
       
@@ -99,8 +112,16 @@ class MembersManager {
       
       if (!this.__bulkUpdate) {
         this._updateOnlineOfflineLists();
-        UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
-        UIManager.updateMemberMicState(userId, updates.isMicActive);
+        
+        // 🔥 Обновляем список ТОЛЬКО если изменилось что-то важное (не микрофон)
+        if (needsListUpdate) {
+          UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+        }
+        
+        // 🔥 Индикатор микрофона обновляем всегда отдельно
+        if (updates.isMicActive !== undefined) {
+          UIManager.updateMemberMicState(userId, updates.isMicActive);
+        }
       }
     }
   }
@@ -148,6 +169,7 @@ class MembersManager {
     }
   }
 
+  // 🔥 ИСПРАВЛЕНИЕ: Обновляем список только при изменении не-микрофонных данных
   static forceUpdateFromServer(userId, serverData) {
     if (!this.members.has(userId)) {
       this.addMember({ ...serverData, userId });
@@ -165,8 +187,9 @@ class MembersManager {
     this.members.set(userId, updated);
     
     if (serverData.connectionState) this.setConnectionState(userId, serverData.connectionState);
+    
     if (serverData.isMicActive !== undefined) {
-      this.setMicState(userId, serverData.isMicActive);
+      this.micStates.set(userId, { isActive: serverData.isMicActive, timestamp: Date.now() });
       UIManager.updateMemberMicState(userId, serverData.isMicActive);
       
       if (serverData.isMicActive === true) {
@@ -176,7 +199,15 @@ class MembersManager {
     
     if (!this.__bulkUpdate) {
       this._updateOnlineOfflineLists();
-      UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+      
+      // 🔥 Обновляем список только если изменилось что-то кроме микрофона
+      const hasOtherChanges = serverData.isOnline !== undefined ||
+                             serverData.username !== undefined ||
+                             serverData.clientId !== undefined;
+      
+      if (hasOtherChanges) {
+        UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
+      }
     }
   }
 
@@ -203,7 +234,7 @@ class MembersManager {
     this.members.set(processedMemberData.userId, processedMemberData);
     if (processedMemberData.isOnline) {
       this.setConnectionState(processedMemberData.userId, processedMemberData.connectionState);
-      this.setMicState(processedMemberData.userId, processedMemberData.isMicActive);
+      this.micStates.set(processedMemberData.userId, { isActive: processedMemberData.isMicActive, timestamp: Date.now() });
     }
     this._updateOnlineOfflineLists();
     UIManager.updateMembersListWithStatus(this.onlineMembers, this.offlineMembers);
@@ -239,7 +270,7 @@ class MembersManager {
       });
       if (member.isOnline) {
         this.setConnectionState(member.userId, member.connectionState || CONNECTION_STATE.CONNECTED);
-        this.setMicState(member.userId, member.isMicActive || false);
+        this.micStates.set(member.userId, { isActive: member.isMicActive || false, timestamp: Date.now() });
       }
     });
     this._updateOnlineOfflineLists();
@@ -258,7 +289,7 @@ class MembersManager {
         const memberWithState = { ...member, connectionState: member.connectionState || CONNECTION_STATE.CONNECTED, isMicActive: member.isMicActive || false, isOnline: true };
         this.members.set(member.userId, memberWithState);
         this.setConnectionState(member.userId, memberWithState.connectionState);
-        this.setMicState(member.userId, memberWithState.isMicActive);
+        this.micStates.set(member.userId, { isActive: memberWithState.isMicActive, timestamp: Date.now() });
         
         if (memberWithState.isMicActive === true) {
           setTimeout(() => this._ensureConsumerForActiveSpeaker(member.userId), 100);

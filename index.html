@@ -1,213 +1,214 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, shrink-to-fit=no">
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
-    <meta name="theme-color" content="#36393f">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="icon" type="image/x-icon" href="/icons/icon.ico?v=20260404">
-    <link rel="icon" type="image/png" sizes="32x32" href="/icons/32x32.png?v=20260404">
-    <link rel="icon" type="image/png" sizes="128x128" href="/icons/128x128.png?v=20260404">
-    <link rel="apple-touch-icon" sizes="128x128" href="/icons/128x128.png?v=20260404">
-    <script src="socket.io.min.js?v=20260404"></script>
-    <script src="mediasoup-client.min.js?v=20260404"></script>
-    <title>Щебетало</title>
-    <link rel="stylesheet" href="styles.css?v=20260415">
-    <link href="prism.min.css?v=20260404" rel="stylesheet">
-    <script>
-        window.Prism = window.Prism || {};
-        window.Prism.manual = true;
-    </script>
-    <script src="prism.min.js?v=20260404"></script>
-    <script src="components/prism-lua.min.js?v=20260404"></script>
-    <script src="components/prism-javascript.min.js?v=20260404"></script>
-    <script src="components/prism-typescript.min.js?v=20260404"></script>
-    <script src="components/prism-python.min.js?v=20260404"></script>
-    <script src="components/prism-bash.min.js?v=20260404"></script>
-    <script src="components/prism-json.min.js?v=20260404"></script>
-    <script>
-        (function() {
-            function setVH() {
-                const vh = window.innerHeight * 0.01;
-                document.documentElement.style.setProperty('--vh', `${vh}px`);
-            }
-            function fixIOSKeyboard() {
-                if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-                    setVH();
-                    window.addEventListener('focusin', function(e) {
-                        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
-                            document.body.classList.add('keyboard-open');
-                            setTimeout(function() {
-                                e.target.scrollIntoViewIfNeeded?.(false);
-                            }, 100);
-                        }
-                    });
-                    window.addEventListener('focusout', function() {
-                        document.body.classList.remove('keyboard-open');
-                        window.scrollTo(0, 0);
-                    });
-                    document.addEventListener('touchmove', function(e) {
-                        if (e.target === document.documentElement || e.target === document.body) {
-                            e.preventDefault();
-                        }
-                    }, { passive: false });
-                }
-                if (/Android/i.test(navigator.userAgent)) {
-                    setVH();
-                    const originalHeight = window.innerHeight;
-                    window.addEventListener('resize', function() {
-                        if (window.innerHeight < originalHeight) {
-                            document.body.classList.add('keyboard-open');
-                        } else {
-                            document.body.classList.remove('keyboard-open');
-                        }
-                    });
-                }
-                window.addEventListener('resize', setVH);
-                window.addEventListener('orientationchange', function() {
-                    setTimeout(setVH, 100);
-                });
-            }
-            fixIOSKeyboard();
-            window.mobileFix = {
-                setVH: setVH,
-                isIOS: /iPhone|iPad|iPod/i.test(navigator.userAgent),
-                isAndroid: /Android/i.test(navigator.userAgent)
-            };
-        })();
-    </script>
-    <style>
-        body.keyboard-open {
-            position: fixed;
-            width: 100%;
-        }
-        .app {
-            height: calc(var(--vh, 1vh) * 100);
-        }
-        @media (max-width: 768px) {
-            .server-item, .room-item, .member-item, button {
-                -webkit-touch-callout: none;
-                -webkit-user-select: none;
-                user-select: none;
-            }
-            .modal-content button,
-            .pinned-modal-close,
-            .forward-modal-close {
-                min-height: 44px;
-                min-width: 44px;
-            }
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, shrink-to-fit=no">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta name="theme-color" content="#36393f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" type="image/x-icon" href="/icons/icon.ico?v=20260404">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/32x32.png?v=20260404">
+<link rel="icon" type="image/png" sizes="128x128" href="/icons/128x128.png?v=20260404">
+<link rel="apple-touch-icon" sizes="128x128" href="/icons/128x128.png?v=20260404">
+<script src="socket.io.min.js?v=20260404"></script>
+<script src="mediasoup-client.min.js?v=20260404"></script>
+<title>Щебетало</title>
+<link rel="stylesheet" href="styles.css?v=20260415">
+<link href="prism.min.css?v=20260404" rel="stylesheet">
+<script>
+window.Prism = window.Prism || {};
+window.Prism.manual = true;
+</script>
+<script src="prism.min.js?v=20260404"></script>
+<script src="components/prism-lua.min.js?v=20260404"></script>
+<script src="components/prism-javascript.min.js?v=20260404"></script>
+<script src="components/prism-typescript.min.js?v=20260404"></script>
+<script src="components/prism-python.min.js?v=20260404"></script>
+<script src="components/prism-bash.min.js?v=20260404"></script>
+<script src="components/prism-json.min.js?v=20260404"></script>
+<script>
+(function() {
+function setVH() {
+const vh = window.innerHeight * 0.01;
+document.documentElement.style.setProperty('--vh', `${vh}px`);
+}
+function fixIOSKeyboard() {
+if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+setVH();
+window.addEventListener('focusin', function(e) {
+if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+document.body.classList.add('keyboard-open');
+setTimeout(function() {
+e.target.scrollIntoViewIfNeeded?.(false);
+}, 100);
+}
+});
+window.addEventListener('focusout', function() {
+document.body.classList.remove('keyboard-open');
+window.scrollTo(0, 0);
+});
+document.addEventListener('touchmove', function(e) {
+if (e.target === document.documentElement || e.target === document.body) {
+e.preventDefault();
+}
+}, { passive: false });
+}
+if (/Android/i.test(navigator.userAgent)) {
+setVH();
+const originalHeight = window.innerHeight;
+window.addEventListener('resize', function() {
+if (window.innerHeight < originalHeight) {
+document.body.classList.add('keyboard-open');
+} else {
+document.body.classList.remove('keyboard-open');
+}
+});
+}
+window.addEventListener('resize', setVH);
+window.addEventListener('orientationchange', function() {
+setTimeout(setVH, 100);
+});
+}
+fixIOSKeyboard();
+window.mobileFix = {
+setVH: setVH,
+isIOS: /iPhone|iPad|iPod/i.test(navigator.userAgent),
+isAndroid: /Android/i.test(navigator.userAgent)
+};
+})();
+</script>
+<style>
+body.keyboard-open {
+position: fixed;
+width: 100%;
+}
+.app {
+height: calc(var(--vh, 1vh) * 100);
+}
+@media (max-width: 768px) {
+.server-item, .room-item, .member-item, button {
+-webkit-touch-callout: none;
+-webkit-user-select: none;
+user-select: none;
+}
+.modal-content button,
+.pinned-modal-close,
+.forward-modal-close {
+min-height: 44px;
+min-width: 44px;
+}
+}
+</style>
 </head>
 <body>
-    <div class="app">
-        <div class="sidebar">
-            <div class="sidebar-header">
-                <button id="serversToggle" class="panel-toggle-btn active">Деревья</button>
-                <button id="roomsToggle" class="panel-toggle-btn">Гнезда</button>
-            </div>
-            <div class="panel-content active" id="servers-panel">
-                <div class="panel-header">
-                    <h3>🌳 Деревья</h3>
-                    <button class="create-server-btn" title="Посадить дерево">+</button>
-                </div>
-                <div class="search-container">
-                    <input type="text" id="serverSearch" placeholder="Поиск деревьев" class="search-input">
-                    <button id="clearSearchBtn" class="clear-search-btn" title="Очистить поиск">✕</button>
-                </div>
-                <div class="servers-list"></div>
-            </div>
-            <div class="panel-content" id="rooms-panel">
-                <div class="panel-header">
-                    <h3>🪺 Гнезда</h3>
-                    <button class="create-room-btn" title="Свить гнездо">+</button>
-                </div>
-                <div class="rooms-list"></div>
-            </div>
-        </div>
-        <div class="main-content">
-            <div class="chat-header">
-                <button class="toggle-sidebar-btn">☰</button>
-                <div class="current-room-title">Выберите гнездо</div>
-                <div class="header-controls">
-                    <button class="notes-btn" id="notesToggle" title="Заметки">📝</button>
-                    <button class="mic-toggle-btn connected">🎤</button>
-                    <button class="settings-btn">⚙</button>
-                    <button class="toggle-members-btn">👥</button>
-                </div>
-            </div>
-            <div class="chat-area">
-                <div id="pinned-messages-bar" class="pinned-messages-bar" style="display: none;">
-                    <div class="pinned-message-content">
-                        <span class="pinned-icon">📌</span>
-                        <span class="pinned-author"></span>
-                        <span class="pinned-text"></span>
-                    </div>
-                    <div class="pinned-actions">
-                        <span class="pinned-counter">0</span>
-                        <button class="pinned-expand-btn" title="Показать все закрепленные">📋</button>
-                    </div>
-                </div>
-                <div class="messages-container"></div>
-                <div id="notes-view-container" class="notes-view-container" style="display: none;">
-                    <div class="notes-header">
-                        <h3 class="notes-title">Заметки</h3>
-                        <div class="notes-controls">
-                            <button class="notes-mode-btn active" data-mode="personal">Личные</button>
-                            <button class="notes-mode-btn" data-mode="public">Публичные</button>
-                        </div>
-                    </div>
-                    <button class="new-note-btn" id="new-note-btn">+ Новая заметка</button>
-                    <div class="notes-list-container">
-                        <div class="notes-list"></div>
-                        <div class="notes-scroll-sentinel"></div>
-                        <div class="notes-loading" style="display: none;">Загрузка...</div>
-                        <div class="notes-empty" style="display: none;">Нет заметок</div>
-                    </div>
-                </div>
-                <div id="note-thread-container" class="note-thread-container" style="display: none;">
-                    <div class="note-thread-header">
-                        <button class="note-thread-back-btn" title="Назад">←</button>
-                        <h3 class="note-thread-title">Ответы</h3>
-                    </div>
-                    <div class="note-thread-messages"></div>
-                    <div class="note-thread-input-area">
-                        <textarea class="note-thread-input" placeholder="Написать ответ..." rows="1"></textarea>
-                        <button class="note-thread-send-btn">➤</button>
-                    </div>
-                </div>
-                <div class="input-area">
-                    <button class="attach-btn">📎</button>
-                    <textarea class="message-input" placeholder="Enter — отправить, Shift+Enter — новая строка" rows="1"></textarea>
-                    <button class="send-btn">➤</button>
-                </div>
-            </div>
-        </div>
-        <div class="members-panel">
-            <div class="panel-header">
-                <h3>Щебетало-19</h3>
-            </div>
-            <div class="members-list"></div>
-            <div class="notes-list-panel" style="display: none;">
-                <div class="notes-list-header">
-                    <h4>Заметки</h4>
-                    <button class="notes-list-close-btn" title="Закрыть">✕</button>
-                </div>
-                <div class="notes-list-content"></div>
-            </div>
-        </div>
-        <button class="mic-button connected">🎤</button>
-    </div>
-    <div id="notes-dropdown-menu" class="notes-dropdown-menu" style="display: none;">
-        <button class="notes-dropdown-item" data-type="personal">🔐 Личные</button>
-        <button class="notes-dropdown-item" data-type="public">🌐 Публичные</button>
-    </div>
-    <script src="logger.js?v=20260410"></script>
-    <script src="patch_browser_compat.js?v=20260410"></script>
-    <script type="module" src="app.js?v=20260410"></script>
+<div class="app">
+<div class="sidebar">
+<div class="sidebar-header">
+<button id="serversToggle" class="panel-toggle-btn active">Деревья</button>
+<button id="roomsToggle" class="panel-toggle-btn">Гнезда</button>
+</div>
+<div class="panel-content active" id="servers-panel">
+<div class="panel-header">
+<h3>🌳 Деревья</h3>
+<button class="create-server-btn" title="Посадить дерево">+</button>
+</div>
+<div class="search-container">
+<input type="text" id="serverSearch" placeholder="Поиск деревьев" class="search-input">
+<button id="clearSearchBtn" class="clear-search-btn" title="Очистить поиск">✕</button>
+</div>
+<div class="servers-list"></div>
+</div>
+<div class="panel-content" id="rooms-panel">
+<div class="panel-header">
+<h3>🪺 Гнезда</h3>
+<button class="create-room-btn" title="Свить гнездо">+</button>
+</div>
+<div class="rooms-list"></div>
+</div>
+</div>
+<div class="main-content">
+<div class="chat-header">
+<button class="toggle-sidebar-btn">☰</button>
+<div class="current-room-title">Выберите гнездо</div>
+<div class="header-controls">
+<button class="notes-btn" id="notesToggle" title="Заметки">📝</button>
+<button class="mic-toggle-btn connected">🎤</button>
+<button class="settings-btn">⚙</button>
+<button class="toggle-members-btn">👥</button>
+</div>
+</div>
+<div class="chat-area">
+<div id="pinned-messages-bar" class="pinned-messages-bar" style="display: none;">
+<div class="pinned-message-content">
+<span class="pinned-icon">📌</span>
+<span class="pinned-author"></span>
+<span class="pinned-text"></span>
+</div>
+<div class="pinned-actions">
+<span class="pinned-counter">0</span>
+<button class="pinned-expand-btn" title="Показать все закрепленные">📋</button>
+</div>
+</div>
+<div class="messages-container"></div>
+<div id="notes-view-container" class="notes-view-container" style="display: none;">
+<div class="notes-header">
+<h3 class="notes-title">Заметки</h3>
+<div class="notes-controls">
+<button class="notes-mode-btn active" data-mode="personal">Личные</button>
+<button class="notes-mode-btn" data-mode="public">Публичные</button>
+</div>
+<button class="notes-close-btn" title="Закрыть заметки">✕</button>
+</div>
+<button class="new-note-btn" id="new-note-btn">+ Новая заметка</button>
+<div class="notes-list-container">
+<div class="notes-list"></div>
+<div class="notes-scroll-sentinel"></div>
+<div class="notes-loading" style="display: none;">Загрузка...</div>
+<div class="notes-empty" style="display: none;">Нет заметок</div>
+</div>
+</div>
+<div id="note-thread-container" class="note-thread-container" style="display: none;">
+<div class="note-thread-header">
+<button class="note-thread-back-btn" title="Назад">←</button>
+<h3 class="note-thread-title">Ответы</h3>
+</div>
+<div class="note-thread-messages"></div>
+<div class="note-thread-input-area">
+<textarea class="note-thread-input" placeholder="Написать ответ..." rows="1"></textarea>
+<button class="note-thread-send-btn">➤</button>
+</div>
+</div>
+<div class="input-area">
+<button class="attach-btn">📎</button>
+<textarea class="message-input" placeholder="Enter, Shift+Enter" rows="1"></textarea>
+<button class="send-btn">➤</button>
+</div>
+</div>
+</div>
+<div class="members-panel">
+<div class="panel-header">
+<h3>Щебетало-19</h3>
+</div>
+<div class="members-list"></div>
+<div class="notes-list-panel" style="display: none;">
+<div class="notes-list-header">
+<h4>Заметки</h4>
+<button class="notes-list-close-btn" title="Закрыть">✕</button>
+</div>
+<div class="notes-list-content"></div>
+</div>
+</div>
+<button class="mic-button connected">🎤</button>
+</div>
+<div id="notes-dropdown-menu" class="notes-dropdown-menu" style="display: none;">
+<button class="notes-dropdown-item" data-type="personal">🔐 Личные</button>
+<button class="notes-dropdown-item" data-type="public">🌐 Публичные</button>
+</div>
+<script src="logger.js?v=20260411"></script>
+<script src="patch_browser_compat.js?v=20260411"></script>
+<script type="module" src="app.js?v=20260411"></script>
 </body>
 </html>

@@ -1,4 +1,3 @@
-// modules/VoiceChatClient.js
 import SettingsManager from './SettingsManager.js';
 import MediaManager from './MediaManager.js';
 import RoomManager from './RoomManager.js';
@@ -23,50 +22,26 @@ import SystemSocketHandler from './SystemSocketHandler.js';
 import PollSocketHandler from './PollSocketHandler.js';
 import NoteStateManager from './NoteStateManager.js';
 import NoteAPI from './NoteAPI.js';
-import NoteRenderer from './NoteRenderer.js';
 import NoteUIManager from './NoteUIManager.js';
 import NoteSocketHandler from './NoteSocketHandler.js';
+import MobileOnlineBar from './MobileOnlineBar.js';
+import AvatarManager from './AvatarManager.js';
 
-const NETWORK_RECONNECT_CONFIG = {
-    BASE_DELAY: 1000,
-    MAX_DELAY: 16000,
-    JITTER_FACTOR: 0.2
-};
+const NETWORK_RECONNECT_CONFIG = { BASE_DELAY: 1000, MAX_DELAY: 16000, JITTER_FACTOR: 0.2 };
 const PING_INTERVAL = 10000;
 const JOIN_TIMEOUT = 9000;
-const CONNECTION_STATE = {
-    DISCONNECTED: 'disconnected',
-    CONNECTING: 'connecting',
-    CONNECTED: 'connected',
-    ERROR: 'error'
-};
-const CONSUMER_RETRY_CONFIG = {
-    BASE_DELAY: 1000,
-    MAX_DELAY: 32000,
-    MAX_ATTEMPTS: 8,
-    JITTER_FACTOR: 0.3
-};
-const ICE_RESTART_CONFIG = {
-    BASE_DELAY: 2000,
-    MAX_DELAY: 30000,
-    MAX_ATTEMPTS: 20,
-    JITTER_FACTOR: 0.2
-};
-const TRANSPORT_RECONNECT_CONFIG = {
-    BASE_DELAY: 1000,
-    MAX_DELAY: 16000,
-    MAX_ATTEMPTS: 6,
-    JITTER_FACTOR: 0.25
-};
+const CONNECTION_STATE = { DISCONNECTED: 'disconnected', CONNECTING: 'connecting', CONNECTED: 'connected', ERROR: 'error' };
+const CONSUMER_RETRY_CONFIG = { BASE_DELAY: 1000, MAX_DELAY: 32000, MAX_ATTEMPTS: 8, JITTER_FACTOR: 0.3 };
+const ICE_RESTART_CONFIG = { BASE_DELAY: 2000, MAX_DELAY: 30000, MAX_ATTEMPTS: 20, JITTER_FACTOR: 0.2 };
+const TRANSPORT_RECONNECT_CONFIG = { BASE_DELAY: 1000, MAX_DELAY: 16000, MAX_ATTEMPTS: 6, JITTER_FACTOR: 0.25 };
 
 class VoiceChatClient {
     constructor() {
-if (window._voiceClientInstance) {
-        console.warn('🔴 VoiceChatClient already exists! Aborting duplicate.');
-        return window._voiceClientInstance;
-    }
-    window._voiceClientInstance = this;    
-    this.API_SERVER_URL = 'https://ns.fiber-gate.ru';
+        if (window._voiceClientInstance) {
+            return window._voiceClientInstance;
+        }
+        window._voiceClientInstance = this;
+        this.API_SERVER_URL = 'https://ns.fiber-gate.ru';
         this.CHAT_API_URL = `${this.API_SERVER_URL}/api/join`;
         this.clientID = Utils.generateClientID();
         this.device = null;
@@ -113,13 +88,7 @@ if (window._voiceClientInstance) {
         this.hasMoreHistory = true;
         this.oldestMessageId = null;
         this.historyObserver = null;
-        this.secondaryChat = {
-            enabled: false,
-            roomId: null,
-            isLoading: false,
-            hasMore: true,
-            oldestMessageId: null
-        };
+        this.secondaryChat = { enabled: false, roomId: null, isLoading: false, hasMore: true, oldestMessageId: null };
         this._authFetchController = null;
         this.diagnosticActive = false;
         this.pinnedMessages = new Map();
@@ -139,28 +108,11 @@ if (window._voiceClientInstance) {
         this.systemHandler = new SystemSocketHandler(this);
         this.pollHandler = new PollSocketHandler(this);
         this.noteHandler = new NoteSocketHandler(this);
-
-
-// ВРЕМЕННО ДЛЯ ОТЛАДКИ - ПЕРЕХВАТЧИКИ ВСЕХ КРИТИЧЕСКИХ МЕТОДОВ
-const methodsToTrace = ['reconnectToRoom', 'leaveRoom', 'disconnectFromRoom', 'joinRoom', 'destroySocket'];
-methodsToTrace.forEach(methodName => {
-    const original = this[methodName];
-    if (typeof original === 'function') {
-        this[methodName] = function(...args) {
-            console.trace(`🔴🔴🔴 ${methodName} CALLED FROM:`);
-            return original.apply(this, args);
-        };
-    }
-});
-
-// Также перехватываем MediaManager.disconnect
-const originalMediaDisconnect = MediaManager.disconnect;
-MediaManager.disconnect = function(...args) {
-    console.trace('🔴🔴🔴 MediaManager.disconnect CALLED FROM:');
-    return originalMediaDisconnect.apply(this, args);
-};
-
-
+	this._isMediaInitializing = false;  // Флаг инициализации медиа
+	this._pendingMicAction = null;      // Отложенное действие с микрофоном
+	this._trafficMonitorInterval = null;
+	this._lastBytesReceived = new Map(); // producerId -> bytes
+	this._trafficActiveProducers = new Set(); // producerId с активным трафиком
 
         this.init();
     }
@@ -213,12 +165,7 @@ MediaManager.disconnect = function(...args) {
     _scheduleConsumerRetry(producerId, producerData, errorReason = 'unknown') {
         let state = this.consumerRecoveryState.get(producerId);
         if (!state) {
-            state = {
-                attempts: 0,
-                nextRetryTimer: null,
-                lastError: errorReason,
-                producerData: producerData
-            };
+            state = { attempts: 0, nextRetryTimer: null, lastError: errorReason, producerData: producerData };
         } else {
             state.attempts++;
             state.lastError = errorReason;
@@ -234,23 +181,14 @@ MediaManager.disconnect = function(...args) {
         if (state.nextRetryTimer) {
             clearTimeout(state.nextRetryTimer);
         }
-        const delay = this._calculateBackoffDelay(
-            state.attempts,
-            CONSUMER_RETRY_CONFIG.BASE_DELAY,
-            CONSUMER_RETRY_CONFIG.MAX_DELAY,
-            CONSUMER_RETRY_CONFIG.JITTER_FACTOR
-        );
+        const delay = this._calculateBackoffDelay(state.attempts, CONSUMER_RETRY_CONFIG.BASE_DELAY, CONSUMER_RETRY_CONFIG.MAX_DELAY, CONSUMER_RETRY_CONFIG.JITTER_FACTOR);
         state.nextRetryTimer = this._safeSetTimeout(() => {
             if (this.consumedProducerIdsRef.has(producerId)) {
                 this._resetConsumerRecoveryState(producerId);
                 return;
             }
             if (!this.recvTransport || this.recvTransport.closed) {
-                this._producersPendingConsume.push({
-                    producerId,
-                    producerData,
-                    addedAt: Date.now()
-                });
+                this._producersPendingConsume.push({ producerId, producerData, addedAt: Date.now() });
                 return;
             }
             this._attemptConsumeWithRetry(producerId, producerData);
@@ -261,60 +199,74 @@ MediaManager.disconnect = function(...args) {
         }
     }
 
-    _attemptConsumeWithRetry(producerId, producerData) {
-        if (!this.socket || !this.socket.connected) {
-            this._scheduleConsumerRetry(producerId, producerData, 'socket_disconnected');
-            return;
-        }
-        if (!this.recvTransport || this.recvTransport.closed || this.recvTransport.connectionState === 'failed') {
-            this._scheduleConsumerRetry(producerId, producerData, 'transport_not_ready');
-            return;
-        }
-        this.socket.emit('consume', {
-            producerId,
-            rtpCapabilities: this.device.rtpCapabilities,
-            transportId: this.recvTransport.id,
-            clientId: this.clientID
-        }, async (response) => {
-            if (!response?.success) {
-                const errorMsg = response?.error || 'unknown_error';
-                this._scheduleConsumerRetry(producerId, producerData, errorMsg);
-                return;
-            }
-            if (!response.consumerParameters) {
-                this._scheduleConsumerRetry(producerId, producerData, 'no_parameters');
-                return;
-            }
-            try {
-                const { consumer, audioElement } = await MediaManager.createConsumer(this, response.consumerParameters);
-                this._resetConsumerRecoveryState(producerId);
-                this.consumerState.set(response.consumerParameters.producerId, {
-                    status: 'active',
-                    consumer,
-                    audioElement,
-                    lastError: null,
-                    recoveryAttempts: 0
-                });
-                this.consumedProducerIdsRef.add(response.consumerParameters.producerId);
-                const members = MembersManager.getMembers();
-                const member = members.find(
-                    (m) => m.clientId === response.consumerParameters.peerId || m.userId === response.consumerParameters.peerId
-                );
-                const userId = member?.userId || response.consumerParameters.peerId;
-                if (userId) {
-                    if (!window.producerUserMap) window.producerUserMap = new Map();
-                    window.producerUserMap.set(response.consumerParameters.producerId, userId);
-                    UIManager.showVolumeSliderByUserId(response.consumerParameters.producerId, userId);
-                    VolumeBoostManager.attachToAudioElement(audioElement, userId, 1.0).catch(() => {});
-                }
-                if (this.diagnosticActive) {
-                    this._notifyDiagnosticUpdate();
-                }
-            } catch (error) {
-                this._scheduleConsumerRetry(producerId, producerData, error.message);
-            }
-        });
+_attemptConsumeWithRetry(producerId, producerData) {
+    if (!this.socket || !this.socket.connected) {
+        this._scheduleConsumerRetry(producerId, producerData, 'socket_disconnected');
+        return;
     }
+    if (!this.recvTransport || this.recvTransport.closed || this.recvTransport.connectionState === 'failed') {
+        this._scheduleConsumerRetry(producerId, producerData, 'transport_not_ready');
+        return;
+    }
+    this.socket.emit('consume', {
+        producerId,
+        rtpCapabilities: this.device.rtpCapabilities,
+        transportId: this.recvTransport.id,
+        clientId: this.clientID
+    }, async (response) => {
+        if (!response?.success) {
+            const errorMsg = response?.error || 'unknown_error';
+            this._scheduleConsumerRetry(producerId, producerData, errorMsg);
+            return;
+        }
+        if (!response.consumerParameters) {
+            this._scheduleConsumerRetry(producerId, producerData, 'no_parameters');
+            return;
+        }
+        try {
+            const { consumer, audioElement } = await MediaManager.createConsumer(this, response.consumerParameters);
+            this._resetConsumerRecoveryState(producerId);
+            this.consumerState.set(response.consumerParameters.producerId, {
+                status: 'active',
+                consumer,
+                audioElement,
+                lastError: null,
+                recoveryAttempts: 0
+            });
+            this.consumedProducerIdsRef.add(response.consumerParameters.producerId);
+            
+const members = MembersManager.getMembers();
+// 🔥 В первую очередь берём userId из ответа сервера
+let userId = response.consumerParameters.userId;
+if (!userId) {
+    const member = members.find((m) => m.clientId === response.consumerParameters.peerId || m.userId === response.consumerParameters.peerId);
+    userId = member?.userId || response.consumerParameters.peerId;
+}
+            
+            if (userId) {
+                if (!window.producerUserMap) window.producerUserMap = new Map();
+                
+                // 🔥 ИСПРАВЛЕНИЕ: Если пришёл clientId вместо userId — ищем настоящий userId в DOM
+                if (userId.startsWith('client_')) {
+                    const domMember = Array.from(document.querySelectorAll('.member-item')).find(el => el.dataset.clientId === userId);
+                    if (domMember?.dataset.userId) {
+                        userId = domMember.dataset.userId;
+                    }
+                }
+                
+                window.producerUserMap.set(response.consumerParameters.producerId, userId);
+                UIManager.showVolumeSliderByUserId(response.consumerParameters.producerId, userId);
+                VolumeBoostManager.attachToAudioElement(audioElement, userId, 1.0).catch(() => {});
+            }
+            
+            if (this.diagnosticActive) {
+                this._notifyDiagnosticUpdate();
+            }
+        } catch (error) {
+            this._scheduleConsumerRetry(producerId, producerData, error.message);
+        }
+    });
+}
 
     _processPendingConsumeQueue() {
         if (!this._transportReadyForConsume) return;
@@ -341,12 +293,7 @@ MediaManager.disconnect = function(...args) {
             this._scheduleTransportReconnect(transportType);
             return;
         }
-        const delay = this._calculateBackoffDelay(
-            state.attempts,
-            ICE_RESTART_CONFIG.BASE_DELAY,
-            ICE_RESTART_CONFIG.MAX_DELAY,
-            ICE_RESTART_CONFIG.JITTER_FACTOR
-        );
+        const delay = this._calculateBackoffDelay(state.attempts, ICE_RESTART_CONFIG.BASE_DELAY, ICE_RESTART_CONFIG.MAX_DELAY, ICE_RESTART_CONFIG.JITTER_FACTOR);
         state.lastAttempt = Date.now();
         state.nextRetryTimer = this._safeSetTimeout(async () => {
             try {
@@ -376,6 +323,169 @@ MediaManager.disconnect = function(...args) {
         this.iceRestartState.set(transportId, state);
     }
 
+startTrafficMonitor() {
+    if (this._trafficMonitorInterval) return;
+    
+    this._trafficMonitorInterval = setInterval(async () => {
+        await this._checkConsumersTraffic();
+    }, 200);
+}
+
+stopTrafficMonitor() {
+    if (this._trafficMonitorInterval) {
+        clearInterval(this._trafficMonitorInterval);
+        this._trafficMonitorInterval = null;
+    }
+    this._lastBytesReceived.clear();
+    this._trafficActiveProducers.clear();
+    
+    document.querySelectorAll('.member-avatar.speaking').forEach(avatar => {
+        avatar.style.animation = '';
+        avatar.style.boxShadow = '';
+        avatar.style.transform = '';
+        avatar.classList.remove('speaking');
+    });
+    
+    document.querySelectorAll('.mobile-online-icon.speaking').forEach(icon => {
+        icon.style.animation = '';
+        icon.style.boxShadow = '';
+        icon.style.transform = '';
+        icon.classList.remove('speaking');
+    });
+}
+
+async _checkConsumersTraffic() {
+    if (!this.consumerState || this.consumerState.size === 0) return;
+    
+    const nowActiveProducers = new Set();
+    
+    for (const [producerId, state] of this.consumerState.entries()) {
+        if (state.status !== 'active' || !state.consumer || state.consumer.closed) {
+            continue;
+        }
+        
+        try {
+            const stats = await state.consumer.getStats();
+            let currentBytes = 0;
+            
+            stats.forEach(report => {
+                if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+                    currentBytes = report.bytesReceived || 0;
+                }
+            });
+            
+            const lastBytes = this._lastBytesReceived.get(producerId) || currentBytes;
+            this._lastBytesReceived.set(producerId, currentBytes);
+            
+            const hasTraffic = (currentBytes - lastBytes) > 100;
+            
+            if (hasTraffic) {
+                nowActiveProducers.add(producerId);
+            }
+            
+            const producerUserMap = window.producerUserMap || new Map();
+            const userId = producerUserMap.get(producerId);
+            
+            if (userId) {
+                this._updateAvatarSpeakingState(userId, hasTraffic);
+            }
+            
+        } catch (e) {
+            // Игнорируем ошибки
+        }
+    }
+    
+    this._trafficActiveProducers = nowActiveProducers;
+}
+
+_updateAvatarSpeakingState(userId, isSpeaking) {
+    if (!userId) return;
+    
+    // 🔥 Защита от мерцания: не выключаем анимацию мгновенно
+    if (!isSpeaking && this._speakingTimeouts?.has(userId)) {
+        return; // Уже запланировано выключение
+    }
+    
+    const applyState = (speaking) => {
+        const memberItems = document.querySelectorAll(`.member-item[data-user-id="${userId}"]`);
+        memberItems.forEach(memberItem => {
+            const avatar = memberItem.querySelector('.member-avatar');
+            if (!avatar) return;
+            
+            if (speaking) {
+                avatar.style.animation = 'speak-pulse 0.6s ease-in-out infinite alternate';
+                avatar.style.boxShadow = '0 0 12px #2ecc71, 0 0 24px #2ecc71';
+                avatar.style.transform = 'scale(1.05)';
+                avatar.classList.add('speaking');
+            } else {
+                avatar.style.animation = '';
+                avatar.style.boxShadow = '';
+                avatar.style.transform = '';
+                avatar.classList.remove('speaking');
+            }
+        });
+        
+        const mobileIcon = document.querySelector(`.mobile-online-icon[data-user-id="${userId}"]`);
+        if (mobileIcon) {
+            if (speaking) {
+                mobileIcon.style.animation = 'speak-pulse 0.6s ease-in-out infinite alternate';
+                mobileIcon.style.boxShadow = '0 0 12px #2ecc71, 0 0 24px #2ecc71';
+                mobileIcon.style.transform = 'scale(1.1)';
+                mobileIcon.classList.add('speaking');
+            } else {
+                mobileIcon.style.animation = '';
+                mobileIcon.style.boxShadow = '';
+                mobileIcon.style.transform = '';
+                mobileIcon.classList.remove('speaking');
+            }
+        }
+    };
+    
+    if (isSpeaking) {
+        // Включаем мгновенно
+        if (this._speakingTimeouts?.has(userId)) {
+            clearTimeout(this._speakingTimeouts.get(userId));
+            this._speakingTimeouts.delete(userId);
+        }
+        applyState(true);
+    } else {
+        // Выключаем с задержкой 300мс, чтобы избежать мерцания при кратковременных паузах
+        if (!this._speakingTimeouts) this._speakingTimeouts = new Map();
+        
+        if (this._speakingTimeouts.has(userId)) {
+            clearTimeout(this._speakingTimeouts.get(userId));
+        }
+        
+        const timeout = setTimeout(() => {
+            applyState(false);
+            this._speakingTimeouts.delete(userId);
+        }, 300);
+        
+        this._speakingTimeouts.set(userId, timeout);
+    }
+}
+
+/**
+ * Проверяет, идёт ли трафик от конкретного producer'а
+ */
+isProducerSendingTraffic(producerId) {
+    return this._trafficActiveProducers.has(producerId);
+}
+
+/**
+ * Проверяет, идёт ли трафик от конкретного пользователя
+ */
+isUserSendingTraffic(userId) {
+    const producerUserMap = window.producerUserMap || new Map();
+    
+    for (const [producerId, uid] of producerUserMap.entries()) {
+        if (uid === userId) {
+            return this._trafficActiveProducers.has(producerId);
+        }
+    }
+    return false;
+}
+
     async _requestIceRestart(transportId) {
         return new Promise((resolve, reject) => {
             if (!this.socket || !this.socket.connected) {
@@ -385,10 +495,7 @@ MediaManager.disconnect = function(...args) {
             const timeout = setTimeout(() => {
                 reject(new Error('ICE restart timeout'));
             }, 5000);
-            this.socket.emit('restart-ice', {
-                transportId,
-                roomId: this.currentRoom
-            }, (response) => {
+            this.socket.emit('restart-ice', { transportId, roomId: this.currentRoom }, (response) => {
                 clearTimeout(timeout);
                 if (response?.success && response.iceParameters) {
                     resolve(response.iceParameters);
@@ -408,17 +515,12 @@ MediaManager.disconnect = function(...args) {
         }
         if (state.attempts >= TRANSPORT_RECONNECT_CONFIG.MAX_ATTEMPTS) {
             this.transportRecoveryState.delete(transportType);
-        if (this.currentRoom && !this.isReconnecting) {
+            if (this.currentRoom && !this.isReconnecting) {
                 this.reconnectToRoom(this.currentRoom);
             }
             return;
         }
-        const delay = this._calculateBackoffDelay(
-            state.attempts,
-            TRANSPORT_RECONNECT_CONFIG.BASE_DELAY,
-            TRANSPORT_RECONNECT_CONFIG.MAX_DELAY,
-            TRANSPORT_RECONNECT_CONFIG.JITTER_FACTOR
-        );
+        const delay = this._calculateBackoffDelay(state.attempts, TRANSPORT_RECONNECT_CONFIG.BASE_DELAY, TRANSPORT_RECONNECT_CONFIG.MAX_DELAY, TRANSPORT_RECONNECT_CONFIG.JITTER_FACTOR);
         if (state.timer) {
             clearTimeout(state.timer);
         }
@@ -552,25 +654,14 @@ MediaManager.disconnect = function(...args) {
         const recoveryInfo = {
             consumers: [],
             transports: {
-                recv: {
-                    state: this.recvTransport?.connectionState || 'none',
-                    recoveryAttempts: this.transportRecoveryState.get('recv')?.attempts || 0
-                },
-                send: {
-                    state: this.sendTransport?.connectionState || 'none',
-                    recoveryAttempts: this.transportRecoveryState.get('send')?.attempts || 0
-                }
+                recv: { state: this.recvTransport?.connectionState || 'none', recoveryAttempts: this.transportRecoveryState.get('recv')?.attempts || 0 },
+                send: { state: this.sendTransport?.connectionState || 'none', recoveryAttempts: this.transportRecoveryState.get('send')?.attempts || 0 }
             },
             pendingConsumeQueue: this._producersPendingConsume.length,
             transportReadyForConsume: this._transportReadyForConsume
         };
         for (const [producerId, state] of this.consumerRecoveryState.entries()) {
-            recoveryInfo.consumers.push({
-                producerId: producerId.substring(0, 8),
-                attempts: state.attempts,
-                exhausted: state.exhausted || false,
-                lastError: state.lastError
-            });
+            recoveryInfo.consumers.push({ producerId: producerId.substring(0, 8), attempts: state.attempts, exhausted: state.exhausted || false, lastError: state.lastError });
         }
         DiagnosticPanel.updateRecoveryInfo?.(recoveryInfo);
     }
@@ -591,35 +682,167 @@ MediaManager.disconnect = function(...args) {
         return this._authFetchController;
     }
 
-    async _fetchWithTimeout(url, options = {}, timeoutMs = JOIN_TIMEOUT, abortable = true) {
-        const controller = abortable ? this._abortMediaRequests() : this._abortAuthRequests();
-        const timeoutController = new AbortController();
-        const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
-        try {
-            const response = await fetch(url, {
-                ...options,
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${this.token}`,
-                    ...(options.headers || {})
-                },
-                signal: controller.signal || timeoutController.signal
-            });
-            clearTimeout(timeoutId);
-            if (!response.ok) {
-                const text = await response.text().catch(() => '');
-                throw new Error(`HTTP ${response.status}: ${text}`);
+// VoiceChatClient.js - исправленный метод _fetchWithTimeout
+
+async _fetchWithTimeout(url, options = {}, timeoutMs = JOIN_TIMEOUT, abortable = true) {
+    const controller = abortable ? this._abortMediaRequests() : this._abortAuthRequests();
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+    
+    // Максимум 2 попытки при 401 ошибке
+    let retryCount = 0;
+    const MAX_RETRIES = 2;
+    
+    const executeRequest = async (currentToken) => {
+        const headers = {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${currentToken}`,
+            ...(options.headers || {})
+        };
+        
+        const response = await fetch(url, {
+            ...options,
+            headers,
+            signal: controller.signal || timeoutController.signal
+        });
+        
+        return response;
+    };
+    
+    try {
+        let response = await executeRequest(this.token);
+        
+        // Если 401 - пробуем обновить токен
+        if (response.status === 401 && retryCount < MAX_RETRIES) {
+            console.log('[Auth] Токен истек, пробуем обновить...');
+            
+            const refreshed = await this._refreshToken();
+            
+            if (refreshed) {
+                retryCount++;
+                console.log(`[Auth] Токен обновлен, повторяем запрос (${retryCount}/${MAX_RETRIES})`);
+                response = await executeRequest(this.token);
+            } else {
+                throw new Error('Не удалось обновить токен');
             }
-            return response;
-        } catch (error) {
-            clearTimeout(timeoutId);
-            if (error.name === 'AbortError') {
-                if (abortable) throw new Error('Request cancelled');
-                throw error;
+        }
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+            const text = await response.text().catch(() => '');
+            let errorMessage = `HTTP ${response.status}`;
+            try {
+                const errorData = JSON.parse(text);
+                errorMessage = errorData.error || errorMessage;
+            } catch {
+                errorMessage = text || errorMessage;
             }
+            throw new Error(errorMessage);
+        }
+        
+        return response;
+        
+    } catch (error) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+            if (abortable) throw new Error('Request cancelled');
             throw error;
         }
+        throw error;
     }
+}
+
+async _refreshToken() {
+    console.log('[Auth] Попытка обновления токена...');
+    
+    // 1. Пробуем через валидацию существующего токена
+    try {
+        const isValid = await AuthManager.validateToken(
+            this, 
+            this.userId, 
+            this.token, 
+            this.tokenVersion
+        );
+        
+        if (isValid) {
+            console.log('[Auth] Токен действителен, обновление не требуется');
+            return true;
+        }
+    } catch (e) {
+        console.log('[Auth] Валидация токена не удалась:', e.message);
+    }
+    
+    // 2. Пробуем перелогиниться с сохраненными данными
+    const lastUser = AuthManager.loadLastUser();
+    if (lastUser && lastUser.username === this.username) {
+        console.log('[Auth] Пробуем перелогиниться с сохраненными данными...');
+        
+        try {
+            const response = await fetch(`${this.API_SERVER_URL}/api/auth/refresh`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId: this.userId,
+                    refreshToken: lastUser.refreshToken || this.token,
+                    tokenVersion: this.tokenVersion
+                })
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                this.token = data.token;
+                this.tokenVersion = data.tokenVersion || this.tokenVersion;
+                
+                // Обновляем сохраненные данные
+                AuthManager.saveLastUser({
+                    username: this.username,
+                    userId: this.userId,
+                    token: this.token,
+                    tokenVersion: this.tokenVersion
+                });
+                
+                console.log('[Auth] Токен успешно обновлен');
+                return true;
+            }
+        } catch (e) {
+            console.log('[Auth] Ошибка обновления токена:', e.message);
+        }
+    }
+    
+    // 3. Если ничего не помогло - показываем модалку авторизации
+    console.log('[Auth] Требуется повторная авторизация');
+    
+    // Сохраняем текущую комнату для восстановления
+    const currentRoomId = this.currentRoom;
+    const currentServerId = this.currentServerId;
+    
+    // Показываем модалку авторизации
+    AuthManager.showAuthModal(this);
+    
+    // Возвращаем Promise, который разрешится после успешной авторизации
+    return new Promise((resolve) => {
+        const checkInterval = setInterval(() => {
+            if (this.token && this.userId) {
+                clearInterval(checkInterval);
+                console.log('[Auth] Повторная авторизация успешна');
+                
+                // Восстанавливаем комнату если была
+                if (currentRoomId && this.currentRoom !== currentRoomId) {
+                    this.joinRoom(currentRoomId, true).catch(console.error);
+                }
+                
+                resolve(true);
+            }
+        }, 500);
+        
+        // Таймаут 30 секунд
+        setTimeout(() => {
+            clearInterval(checkInterval);
+            resolve(false);
+        }, 30000);
+    });
+}
 
     logToRoomChat(message, type = 'system') {
         if (!this.currentRoom || !this.socket) return false;
@@ -641,9 +864,7 @@ MediaManager.disconnect = function(...args) {
         const previousState = this.connectionState;
         this.connectionState = state;
         if (previousState !== state) {
-            const stateMessages = {
-                [CONNECTION_STATE.ERROR]: '❌ Ошибка подключения'
-            };
+            const stateMessages = { [CONNECTION_STATE.ERROR]: '❌ Ошибка подключения' };
             const message = stateMessages[state];
             if (message && (roomId || this.currentRoom)) {
                 this.logToRoomChat(message, 'connection');
@@ -663,11 +884,7 @@ MediaManager.disconnect = function(...args) {
                     return;
                 } catch (e) {}
             }
-            window.postMessage({
-                type: 'ELECTRON_PLAY_SOUND',
-                soundType: soundName,
-                source: 'webview'
-            }, '*');
+            window.postMessage({ type: 'ELECTRON_PLAY_SOUND', soundType: soundName, source: 'webview' }, '*');
             return;
         }
         if (typeof Audio === 'undefined') return;
@@ -676,26 +893,26 @@ MediaManager.disconnect = function(...args) {
         audio.play().catch(() => {});
     }
 
-	async init() {
-	    this.initElements();
-	    this.initEventListeners();
-	    this.setupElectronBridge();
-	    UIManager.setClient(this);
-	    SoundManager.init(this);
-SettingsManager.init();
-	    InviteManager.init(this);
-	    
-try {
-    const NoteAPI = (await import('./NoteAPI.js')).default;
-    const NoteUIManager = (await import('./NoteUIManager.js')).default;
-    NoteUIManager.init(this, new NoteAPI(this));
-    console.log('✅ [VoiceClient] Заметки инициализированы');
-} catch (err) {
-    console.warn('⚠️ [VoiceClient] Не удалось инициализировать заметки:', err.message);
-}
-
-	    await this.initAutoConnect();
-	}
+    async init() {
+        this.initElements();
+        this.initEventListeners();
+        this.setupElectronBridge();
+        UIManager.setClient(this);
+        SoundManager.init(this);
+        SettingsManager.init();
+        UIManager.initDesktopSwipe();
+        InviteManager.init(this);
+        AvatarManager.init(this);
+        MobileOnlineBar.init();
+        try {
+            const NoteAPI = (await import('./NoteAPI.js')).default;
+            const NoteUIManager = (await import('./NoteUIManager.js')).default;
+            NoteUIManager.init(this, new NoteAPI(this));
+        } catch (err) {
+            console.error('⚠️ [VoiceClient] Не удалось инициализировать заметки:', err.message);
+        }
+        await this.initAutoConnect();
+    }
 
     initElements() {
         this.elements.micButton = document.querySelector('.mic-button');
@@ -816,19 +1033,12 @@ try {
             const leftPanelOpen = this.elements.sidebar.classList.contains('open');
             const rightPanelOpen = this.elements.membersPanel.classList.contains('open');
             if (!leftPanelOpen && !rightPanelOpen) {
-                if (isSwipeRight) {
-                    this.elements.sidebar.classList.add('open');
-                } else if (isSwipeLeft) {
-                    this.elements.membersPanel.classList.add('open');
-                }
+                if (isSwipeRight) this.elements.sidebar.classList.add('open');
+                else if (isSwipeLeft) this.elements.membersPanel.classList.add('open');
             } else if (leftPanelOpen) {
-                if (isSwipeLeft) {
-                    this.elements.sidebar.classList.remove('open');
-                }
+                if (isSwipeLeft) this.elements.sidebar.classList.remove('open');
             } else if (rightPanelOpen) {
-                if (isSwipeRight) {
-                    this.elements.membersPanel.classList.remove('open');
-                }
+                if (isSwipeRight) this.elements.membersPanel.classList.remove('open');
             }
             this._touchStartX = 0;
             this._touchStartY = 0;
@@ -892,6 +1102,8 @@ try {
                         this.sendMessage(text);
                     }
                     this.elements.messageInput.value = '';
+                    this.elements.messageInput.style.height = '40px';
+                    this.elements.messageInput.focus();
                 }
             });
         }
@@ -960,24 +1172,19 @@ try {
                 if (this.diagnosticActive) this.stopDiagnostic();
                 else this.startDiagnostic();
             });
-
-// ✅ Надёжная привязка кнопки заметок (вынести ОТДЕЛЬНО от headerControls)
-const notesBtn = document.querySelector('#notesToggle');
-const dropdown = document.getElementById('notes-dropdown-menu');
-if (notesBtn && dropdown) {
-    // Удаляем старые обработчики через клонирование (защита от дублей)
-    const newBtn = notesBtn.cloneNode(true);
-    notesBtn.parentNode.replaceChild(newBtn, notesBtn);
-    
-    // Привязываем новый обработчик
-    newBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const rect = newBtn.getBoundingClientRect();
-        dropdown.style.left = `${rect.left}px`;
-        dropdown.style.top = `${rect.bottom + 5}px`;
-        dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
-    });
-}
+            const notesBtn = document.querySelector('#notesToggle');
+            const dropdown = document.getElementById('notes-dropdown-menu');
+            if (notesBtn && dropdown) {
+                const newBtn = notesBtn.cloneNode(true);
+                notesBtn.parentNode.replaceChild(newBtn, notesBtn);
+                newBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const rect = newBtn.getBoundingClientRect();
+                    dropdown.style.left = `${rect.left}px`;
+                    dropdown.style.top = `${rect.bottom + 5}px`;
+                    dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+                });
+            }
             const dropdownItems = document.querySelectorAll('.notes-dropdown-item');
             dropdownItems.forEach(item => {
                 item.addEventListener('click', (e) => {
@@ -992,7 +1199,7 @@ if (notesBtn && dropdown) {
         const mainContent = document.querySelector('.main-content');
         const fileInput = document.createElement('input');
         fileInput.type = 'file';
-        fileInput.accept = 'image/jpeg,image/jpg,image/png,image/webp,image/gif,image/bmp,image/tiff,image/svg+xml,image/heic,image/heif,image/avif,audio/mpeg,audio/mp3,audio/wav,audio/wave,audio/x-wav,audio/ogg,audio/webm,audio/aac,audio/flac,audio/x-m4a,audio/mp4,audio/x-ms-wma,video/webm,.webm,.opus,.ogg,.flac,.m4a,.m4a';
+        fileInput.accept = 'image/jpeg,image/jpg,image/png,image/webp,image/gif,image/bmp,image/tiff,image/svg+xml,image/heic,image/heif,image/avif,audio/mpeg,audio/mp3,audio/wav,audio/wave,audio/x-wav,audio/ogg,audio/webm,audio/aac,audio/flac,audio/x-m4a,audio/mp4,audio/x-ms-wma,video/webm,.webm,.opus,.ogg,.flac,.m4a';
         fileInput.style.display = 'none';
         fileInput.id = 'image-upload-input';
         document.body.appendChild(fileInput);
@@ -1018,45 +1225,23 @@ if (notesBtn && dropdown) {
                 e.preventDefault();
                 e.stopPropagation();
                 mainContent.classList.remove('drag-over');
-                if (!this.currentRoom) {
-                    return UIManager.showError('Сначала займите гнездо');
-                }
+                if (!this.currentRoom) return UIManager.showError('Сначала займите гнездо');
                 const file = e.dataTransfer.files[0];
-                if (!file) {
-                    return;
-                }
-                const allowedImageTypes = [
-                    'image/jpeg', 'image/jpg', 'image/png', 'image/webp',
-                    'image/gif', 'image/bmp', 'image/tiff',
-                    'image/svg+xml', 'image/heic', 'image/heif', 'image/avif'
-                ];
-                const allowedAudioTypes = [
-                    'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/wave',
-                    'audio/x-wav', 'audio/ogg', 'audio/webm', 'audio/aac',
-                    'audio/flac', 'audio/x-m4a', 'audio/mp4', 'audio/x-ms-wma',
-                    'video/webm', 'audio/webm;codecs=opus', 'audio/opus',
-                    'application/ogg', 'audio/x-flac', 'audio/x-aac'
-                ];
+                if (!file) return;
+                const allowedImageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'image/bmp', 'image/tiff', 'image/svg+xml', 'image/heic', 'image/heif', 'image/avif'];
+                const allowedAudioTypes = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/wave', 'audio/x-wav', 'audio/ogg', 'audio/webm', 'audio/aac', 'audio/flac', 'audio/x-m4a', 'audio/mp4', 'audio/x-ms-wma', 'video/webm', 'audio/webm;codecs=opus', 'audio/opus', 'application/ogg', 'audio/x-flac', 'audio/x-aac'];
                 try {
                     const isImage = allowedImageTypes.includes(file.type);
-                    const isAudio = allowedAudioTypes.some(type => {
-                        if (type.includes(';')) return file.type === type;
-                        return file.type === type || file.type.startsWith(type.split(';')[0]);
-                    });
+                    const isAudio = allowedAudioTypes.some(type => type.includes(';') ? file.type === type : file.type === type || file.type.startsWith(type.split(';')[0]));
                     if (isImage) {
-                        if (file.size > 10 * 1024 * 1024) {
-                            return UIManager.showError('Файл слишком большой (макс. 10 МБ)');
-                        }
+                        if (file.size > 10 * 1024 * 1024) return UIManager.showError('Файл слишком большой (макс. 10 МБ)');
                         const urls = await TextChatManager.uploadImage(this, this.currentRoom, file);
                         await TextChatManager.sendMessage(this, urls, 'image');
                     } else if (isAudio) {
-                        if (file.size > 50 * 1024 * 1024) {
-                            return UIManager.showError('Аудиофайл слишком большой (макс. 50 МБ)');
-                        }
+                        if (file.size > 50 * 1024 * 1024) return UIManager.showError('Аудиофайл слишком большой (макс. 50 МБ)');
                         const result = await TextChatManager.uploadAudio(this, this.currentRoom, file);
                         await TextChatManager.sendMessage(this, { audioUrl: result.audioUrl }, 'audio');
                     } else {
-                        console.warn('Неподдерживаемый тип файла:', file.type);
                         return UIManager.showError('Поддерживаются только изображения и аудиофайлы');
                     }
                 } catch (error) {
@@ -1066,31 +1251,16 @@ if (notesBtn && dropdown) {
         }
         fileInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
-            if (!file) {
-                return;
-            }
+            if (!file) return;
             if (!this.currentRoom) {
                 fileInput.value = '';
                 return UIManager.showError('Сначала займите гнездо');
             }
-            const allowedImageTypes = [
-                'image/jpeg', 'image/jpg', 'image/png', 'image/webp',
-                'image/gif', 'image/bmp', 'image/tiff',
-                'image/svg+xml', 'image/heic', 'image/heif', 'image/avif'
-            ];
-            const allowedAudioTypes = [
-                'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/wave',
-                'audio/x-wav', 'audio/ogg', 'audio/webm', 'audio/aac',
-                'audio/flac', 'audio/x-m4a', 'audio/mp4', 'audio/x-ms-wma',
-                'video/webm', 'audio/webm;codecs=opus', 'audio/opus',
-                'application/ogg', 'audio/x-flac', 'audio/x-aac'
-            ];
+            const allowedImageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'image/bmp', 'image/tiff', 'image/svg+xml', 'image/heic', 'image/heif', 'image/avif'];
+            const allowedAudioTypes = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/wave', 'audio/x-wav', 'audio/ogg', 'audio/webm', 'audio/aac', 'audio/flac', 'audio/x-m4a', 'audio/mp4', 'audio/x-ms-wma', 'video/webm', 'audio/webm;codecs=opus', 'audio/opus', 'application/ogg', 'audio/x-flac', 'audio/x-aac'];
             try {
                 const isImage = allowedImageTypes.includes(file.type);
-                const isAudio = allowedAudioTypes.some(type => {
-                    if (type.includes(';')) return file.type === type;
-                    return file.type === type || file.type.startsWith(type.split(';')[0]);
-                });
+                const isAudio = allowedAudioTypes.some(type => type.includes(';') ? file.type === type : file.type === type || file.type.startsWith(type.split(';')[0]));
                 if (isImage) {
                     if (file.size > 10 * 1024 * 1024) {
                         fileInput.value = '';
@@ -1107,7 +1277,6 @@ if (notesBtn && dropdown) {
                     await TextChatManager.sendMessage(this, { audioUrl: result.audioUrl }, 'audio');
                 } else {
                     fileInput.value = '';
-                    console.warn('Неподдерживаемый тип файла:', file.type);
                     return UIManager.showError('Поддерживаются только изображения и аудиофайлы');
                 }
             } catch (error) {
@@ -1124,17 +1293,16 @@ if (notesBtn && dropdown) {
             for (const item of items) {
                 if (item.kind === 'file' && item.type.startsWith('image/')) {
                     const file = item.getAsFile();
-                    if (file) { imageFile = file; break; }
+                    if (file) {
+                        imageFile = file;
+                        break;
+                    }
                 }
             }
             if (!imageFile) return;
             e.preventDefault();
             if (!this.currentRoom) return UIManager.showError('Сначала займите гнездо');
-            const allowedImageTypes = [
-                'image/jpeg', 'image/jpg', 'image/png', 'image/webp',
-                'image/gif', 'image/bmp', 'image/tiff',
-                'image/svg+xml', 'image/heic', 'image/heif', 'image/avif'
-            ];
+            const allowedImageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'image/bmp', 'image/tiff', 'image/svg+xml', 'image/heic', 'image/heif', 'image/avif'];
             if (!allowedImageTypes.includes(imageFile.type)) {
                 return UIManager.showError('Поддерживаются только изображения: JPEG, PNG, WebP, GIF, BMP, TIFF, SVG, HEIC, HEIF, AVIF');
             }
@@ -1303,11 +1471,7 @@ if (notesBtn && dropdown) {
             const recoveryState = this.consumerRecoveryState.get(producerId);
             if (!recoveryState || !recoveryState.exhausted) {
                 this.pendingProducersRef.push(producerData);
-                this._producersPendingConsume.push({
-                    producerId,
-                    producerData,
-                    addedAt: Date.now()
-                });
+                this._producersPendingConsume.push({ producerId, producerData, addedAt: Date.now() });
             }
             return false;
         }
@@ -1340,61 +1504,56 @@ if (notesBtn && dropdown) {
         });
     }
 
-async initAutoConnect() {
-    // 🔥 Если уже подключаемся или подключены - не мешаем
-    if (this._joinRoomInProgress || this.isConnected) {
-        console.log('🟢 initAutoConnect skipped: already connecting or connected');
-        return;
-    }
-    
-    this.processUrlParams();
-    try {
-        const autoLoggedIn = await AuthManager.tryAutoLogin(this);
-        if (autoLoggedIn) {
-            await ServerManager.loadServers(this, false);
-            await UIManager.fetchUsernames([this.userId]);
-            
-            if (this.pendingInviteCode || InviteManager.getPendingInvite()) {
-                const inviteApplied = await InviteManager.applyPendingInvite();
-                if (inviteApplied) {
+    async initAutoConnect() {
+        if (this._joinRoomInProgress || this.isConnected) {
+            return;
+        }
+        this.processUrlParams();
+        try {
+            const autoLoggedIn = await AuthManager.tryAutoLogin(this);
+            if (autoLoggedIn) {
+                await ServerManager.loadServers(this, false);
+                
+                // 🔥 ИСПРАВЛЕНИЕ: Явно загружаем аватар текущего пользователя
+                await AvatarManager.fetchUser(this.userId);
+                
+                await UIManager.fetchUsernames([this.userId]);
+                if (this.pendingInviteCode || InviteManager.getPendingInvite()) {
+                    const inviteApplied = await InviteManager.applyPendingInvite();
+                    if (inviteApplied) {
+                        this.clearPendingInvite();
+                        return;
+                    }
                     this.clearPendingInvite();
+                }
+                const lastServerId = localStorage.getItem('lastServerId');
+                const lastRoomId = localStorage.getItem('lastRoomId');
+                if (this.currentRoom === lastRoomId && this.isConnected) {
                     return;
                 }
-                this.clearPendingInvite();
-            }
-            
-            const lastServerId = localStorage.getItem('lastServerId');
-            const lastRoomId = localStorage.getItem('lastRoomId');
-            
-            // 🔥 Дополнительная проверка: не переподключаемся если уже в этой комнате
-            if (this.currentRoom === lastRoomId && this.isConnected) {
-                console.log('🟢 Already in target room, skipping reconnectToRoom');
-                return;
-            }
-            
-            if (lastServerId) {
-                const serverExists = this.servers.some((s) => s.id === lastServerId);
-                if (serverExists) {
-                    this.currentServerId = lastServerId;
-                    this.currentServer = this.servers.find((s) => s.id === lastServerId);
-                    await RoomManager.loadRoomsForServer(this, lastServerId);
-                    if (lastRoomId) {
-                        const roomExists = this.rooms?.some((r) => r.id === lastRoomId);
-                        if (roomExists) {
-                            this.currentRoom = lastRoomId;
-                            await this.reconnectToRoom(lastRoomId);
-                            return;
+                if (lastServerId) {
+                    const serverExists = this.servers.some((s) => s.id === lastServerId);
+                    if (serverExists) {
+                        this.currentServerId = lastServerId;
+                        this.currentServer = this.servers.find((s) => s.id === lastServerId);
+                        await RoomManager.loadRoomsForServer(this, lastServerId);
+                        if (lastRoomId) {
+                            const roomExists = this.rooms?.some((r) => r.id === lastRoomId);
+                            if (roomExists) {
+                                this.currentRoom = lastRoomId;
+                                await this.reconnectToRoom(lastRoomId);
+                                return;
+                            }
                         }
                     }
                 }
+                return;
             }
-            return;
+            AuthManager.showAuthModal(this);
+        } catch (err) {
+            UIManager.showError('Критическая ошибка: не удалось загрузить систему авторизации');
         }
-        AuthManager.showAuthModal(this);
-    } catch (err) {
-        UIManager.showError('Критическая ошибка: не удалось загрузить систему авторизации');
     }
-}
 
     clearPendingInvite() {
         this.pendingInviteCode = null;
@@ -1442,7 +1601,10 @@ async initAutoConnect() {
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
                 body: JSON.stringify({ serverId })
             });
-            if (response.ok) UIManager.clearUnreadForRoom(serverId, this.currentRoom);
+            if (response.ok) {
+                UIManager.clearUnreadForRoom(serverId, this.currentRoom);
+                this._updateTrayBadge();
+            }
         } catch (error) {}
     }
 
@@ -1494,32 +1656,21 @@ async initAutoConnect() {
             state.attempts++;
         }
         const roomId = this.currentRoom;
-        if (!roomId) {
-            console.log('[Network] Нет roomId, отмена');
-            return;
-        }
+        if (!roomId) return;
         const baseDelay = 1000;
         const maxDelay = 16000;
         const exponentialDelay = Math.min(baseDelay * Math.pow(2, state.attempts), maxDelay);
         const jitter = exponentialDelay * 0.2 * (Math.random() * 2 - 1);
         const delay = Math.max(baseDelay, Math.min(maxDelay, exponentialDelay + jitter));
-        console.log(`[Network] Переподключение через ${Math.round(delay)}ms (попытка ${state.attempts + 1})`);
-        if (state.timer) {
-            clearTimeout(state.timer);
-        }
+        if (state.timer) clearTimeout(state.timer);
         state.timer = setTimeout(async () => {
             this.transportRecoveryState.delete(key);
-            console.log(`[Network] Попытка переподключения #${state.attempts + 1} к комнате ${roomId}`);
             const wasMicUnmuted = this.isMicActive && !this.isMicPaused;
             try {
                 this._resetAllRecoveryState();
-                if (this.isMicActive && this.mediaData) {
-                    await MediaManager.stopMicrophone(this).catch(() => {});
-                }
+                if (this.isMicActive && this.mediaData) await MediaManager.stopMicrophone(this).catch(() => {});
                 this.destroySocket();
-                if (this.socket) {
-                    this.socket.emit('leave-room', { roomId });
-                }
+                if (this.socket) this.socket.emit('leave-room', { roomId });
                 MediaManager.disconnect(this);
                 TextChatManager.leaveTextRoom(this, roomId);
                 MembersManager.clearMembers();
@@ -1527,7 +1678,6 @@ async initAutoConnect() {
                 this.currentRoom = roomId;
                 await this.joinRoom(roomId, false);
                 this._resetSocketReconnectState();
-                console.log('[Network] Успешно переподключились!');
                 UIManager.updateStatus('Подключено', 'connected');
                 UIManager.addMessage('System', '✅ Подключение восстановлено', null, 'system');
                 SoundManager.playSound(SoundManager.SoundTypes.SOUND_CONNECTED);
@@ -1540,7 +1690,6 @@ async initAutoConnect() {
                     }, 2000);
                 }
             } catch (error) {
-                console.warn('[Network] Ошибка:', error.message);
                 this.currentRoom = roomId;
                 this._scheduleSocketReconnect(error.message);
             }
@@ -1551,9 +1700,7 @@ async initAutoConnect() {
 
     _resetSocketReconnectState() {
         const state = this.transportRecoveryState.get('socket');
-        if (state?.timer) {
-            clearTimeout(state.timer);
-        }
+        if (state?.timer) clearTimeout(state.timer);
         this.transportRecoveryState.delete('socket');
     }
 
@@ -1611,11 +1758,7 @@ async initAutoConnect() {
             UIManager.showError('Неверные данные для пересылки');
             return;
         }
-        this.socket.emit('forward-message', {
-            messageId,
-            sourceRoomId: this.currentRoom,
-            targetRoomId
-        });
+        this.socket.emit('forward-message', { messageId, sourceRoomId: this.currentRoom, targetRoomId });
     }
 
     async jumpToForwardSource(forwardedFrom) {
@@ -1694,11 +1837,8 @@ async initAutoConnect() {
                 this.pinnedMessages.set(roomId, sorted);
                 this.currentPinnedIndex.set(roomId, 0);
                 if (roomId === this.currentRoom) {
-                    if (sorted.length > 0) {
-                        UIManager.renderPinnedMessagesBar(this);
-                    } else {
-                        UIManager.hidePinnedMessagesBar();
-                    }
+                    if (sorted.length > 0) UIManager.renderPinnedMessagesBar(this);
+                    else UIManager.hidePinnedMessagesBar();
                 }
             }
         });
@@ -1710,9 +1850,7 @@ async initAutoConnect() {
         const pinned = this.pinnedMessages.get(roomId) || [];
         if (pinned.length === 0) return;
         let currentIndex = this.currentPinnedIndex.get(roomId) || 0;
-        if (currentIndex >= pinned.length) {
-            currentIndex = 0;
-        }
+        if (currentIndex >= pinned.length) currentIndex = 0;
         const targetMessage = pinned[currentIndex];
         if (targetMessage) {
             const found = UIManager.scrollToMessage(targetMessage.id, null, true);
@@ -1772,19 +1910,15 @@ async initAutoConnect() {
             }
             if (hasActiveMedia || (this.audioProducer && !this.audioProducer.closed)) {
                 if (this.socket && this.currentRoom) {
-                    this.socket.emit(
-                        'request-room-snapshot',
-                        { roomId: this.currentRoom },
-                        (response) => {
-                            if (response?.success && response.participants) {
-                                MembersManager.updateMember(this.userId, { isOnline: true, connectionState: 'connected' });
-                                UIManager.updateMembersListWithStatus(
-                                    response.participants.filter((p) => p.isOnline),
-                                    response.participants.filter((p) => !p.isOnline)
-                                );
-                            }
+                    this.socket.emit('request-room-snapshot', { roomId: this.currentRoom }, (response) => {
+                        if (response?.success && response.participants) {
+                            MembersManager.updateMember(this.userId, { isOnline: true, connectionState: 'connected' });
+                            UIManager.updateMembersListWithStatus(
+                                response.participants.filter((p) => p.isOnline),
+                                response.participants.filter((p) => !p.isOnline)
+                            );
                         }
-                    );
+                    });
                 }
             }
         }
@@ -1810,6 +1944,23 @@ async initAutoConnect() {
         }
     }
 
+    _updateTrayBadge() {
+        let total = 0;
+        if (UIManager.unreadCounts) {
+            for (const serverId in UIManager.unreadCounts) {
+                const serverData = UIManager.unreadCounts[serverId];
+                if (serverData && typeof serverData.total === 'number') {
+                    total += serverData.total;
+                }
+            }
+        }
+        if (window.electronAPI && typeof window.electronAPI.updateTrayBadge === 'function') {
+            window.electronAPI.updateTrayBadge(total);
+        } else {
+            window.postMessage({ type: 'ELECTRON_UPDATE_TRAY_BADGE', count: total, source: 'webview' }, '*');
+        }
+    }
+
     async loadUnreadCounts() {
         try {
             const response = await fetch(`${this.API_SERVER_URL}/api/messages/unread`, {
@@ -1817,7 +1968,10 @@ async initAutoConnect() {
             });
             if (response.ok) {
                 const data = await response.json();
-                if (data.unread) UIManager.syncUnreadCounts(data.unread);
+                if (data.unread) {
+                    UIManager.syncUnreadCounts(data.unread);
+                    this._updateTrayBadge();
+                }
             }
         } catch (error) {}
     }
@@ -1831,38 +1985,139 @@ async initAutoConnect() {
         this.stopPingInterval();
     }
 
-    updateMicButtonState() {
-        let status;
-        if (!this.isConnected) status = 'disconnected';
-        else if (this.isMicPaused) status = 'paused';
-        else if (this.isMicActive) status = 'active';
-        else status = 'connected';
-        UIManager.updateMicButton(status);
+updateMicButtonState() {
+    let status;
+    
+    if (!this.isConnected) {
+        status = 'disconnected';
+    } else if (this._isMediaInitializing) {
+        status = 'connecting';  // 🔥 Показываем загрузку во время инициализации
+    } else if (!this.audioProducer || this.audioProducer.closed) {
+        status = 'connected';   // Подключён к комнате, но микрофон не готов
+    } else if (this.isMicPaused) {
+        status = 'paused';      // Микрофон на паузе (выключен)
+    } else if (this.isMicActive) {
+        status = 'active';      // Микрофон активен (включён)
+    } else {
+        status = 'connected';
     }
+    
+    console.log('[VoiceClient] updateMicButtonState:', status, {
+        isConnected: this.isConnected,
+        hasProducer: !!this.audioProducer,
+        isMicActive: this.isMicActive,
+        isMicPaused: this.isMicPaused,
+        isMediaInitializing: this._isMediaInitializing
+    });
+    
+    UIManager.updateMicButton(status);
+}
 
-    async toggleMicrophone() {
-        if (this._micToggleDebounce) return;
-        this._micToggleDebounce = setTimeout(() => {
-            this._micToggleDebounce = null;
-        }, 500);
-        try {
-            if (!this.currentRoom) {
-                UIManager.showError('Микрофон доступен только в гнёздах');
-                return;
-            }
-            await MediaManager.toggleMicrophone(this);
-            this.updateMicButtonState();
-            if (this.isMicActive && !this.isMicPaused) {
+async toggleMicrophone() {
+    // Защита от быстрого прокликивания
+    if (this._micToggleDebounce) {
+        console.log('[VoiceClient] Toggle debounced - too fast');
+        return;
+    }
+    
+    this._micToggleDebounce = setTimeout(() => {
+        this._micToggleDebounce = null;
+    }, 300);
+    
+    try {
+        if (!this.currentRoom) {
+            UIManager.showError('Микрофон доступен только в гнёздах');
+            return;
+        }
+        
+        if (this._joinRoomInProgress) {
+            UIManager.showError('Подождите, идёт подключение к гнезду...');
+            return;
+        }
+        
+        console.log('[VoiceClient] Toggle microphone - current state:', {
+            hasProducer: !!this.audioProducer,
+            isMicActive: this.isMicActive,
+            isMicPaused: this.isMicPaused,
+            transportState: this.sendTransport?.connectionState
+        });
+        
+        // СЛУЧАЙ 1: Микрофон ещё не инициализирован
+        if (!this.audioProducer || this.audioProducer.closed) {
+            console.log('[VoiceClient] Initializing microphone on first toggle');
+            
+            this._isMediaInitializing = true;
+            UIManager.updateMicButton('connecting');
+            UIManager.showNotification('🎤 Подключение микрофона...', 'info', 2000);
+            
+            try {
+                await MediaManager.initMicrophone(this);
+                
+                console.log('[VoiceClient] After init - hasProducer:', !!this.audioProducer, 'isMicActive:', this.isMicActive);
+                
+                if (!this.audioProducer) {
+                    throw new Error('Микрофон не был инициализирован');
+                }
+                
+                // 🔥 ВАЖНО: Сбрасываем флаг ДО обновления кнопки
+                this._isMediaInitializing = false;
+                
+                this.updateMicButtonState();
                 SoundManager.playSound(SoundManager.SoundTypes.SOUND_MIC_ON);
-            } else if (this.isMicPaused) {
-                SoundManager.playSound(SoundManager.SoundTypes.SOUND_MIC_OFF);
+                this.sendMicStateToElectron();
+                
+                console.log('[VoiceClient] Microphone initialized and turned ON');
+            } catch (error) {
+                console.error('[VoiceClient] Failed to init microphone:', error);
+                this._isMediaInitializing = false; // 🔥 Сбрасываем при ошибке
+                this.isMicActive = false;
+                this.isMicPaused = true;
+                this.audioProducer = null;
+                UIManager.showError('Не удалось получить доступ к микрофону: ' + error.message);
+                this.updateMicButtonState();
             }
+            return;
+        }
+        
+        // СЛУЧАЙ 2: Микрофон уже инициализирован - переключаем паузу
+        const shouldEnable = this.isMicPaused === true;
+        
+        console.log('[VoiceClient] Toggle microphone - shouldEnable:', shouldEnable);
+        
+        try {
+            if (shouldEnable) {
+                await MediaManager.resumeMicrophone(this);
+                SoundManager.playSound(SoundManager.SoundTypes.SOUND_MIC_ON);
+                console.log('[VoiceClient] Microphone turned ON');
+            } else {
+                await MediaManager.pauseMicrophone(this);
+                SoundManager.playSound(SoundManager.SoundTypes.SOUND_MIC_OFF);
+                console.log('[VoiceClient] Microphone turned OFF (paused)');
+            }
+            
+            this.updateMicButtonState();
             this.sendMicStateToElectron();
+            
         } catch (error) {
+            console.error('[VoiceClient] Failed to toggle microphone:', error);
+            
+            if (error.message.includes('closed')) {
+                this.audioProducer = null;
+                this.isMicActive = false;
+                this.isMicPaused = true;
+            }
+            
             UIManager.showError('Ошибка микрофона: ' + error.message);
             this.updateMicButtonState();
         }
+        
+    } catch (error) {
+        console.error('[VoiceClient] Toggle microphone error:', error);
+        this._isMediaInitializing = false; // 🔥 Сбрасываем при любой ошибке
+        UIManager.showError('Ошибка микрофона: ' + error.message);
+        this.updateMicButtonState();
     }
+}
 
     sendMessage(text) {
         if (!text.trim() || !this.currentRoom) return;
@@ -1937,215 +2192,368 @@ async initAutoConnect() {
         try {
             const response = await fetch(`${this.API_SERVER_URL}/api/messages/${messageId}/reaction`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${this.token}`
-                },
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.token}` },
                 body: JSON.stringify({ emoji })
             });
-            if (!response.ok) {
-                throw new Error('Fallback reaction failed');
-            }
+            if (!response.ok) throw new Error('Fallback reaction failed');
         } catch (error) {}
     }
 
-    async _scrollToSavedPosition(roomId) {
-        const targetId = this.savedMaxSeenId;
-        if (!targetId) {
-            setTimeout(() => UIManager.scrollToBottom(), 100);
-            return;
-        }
-        await new Promise(resolve => setTimeout(resolve, 300));
-        const scrollWithRetry = async (maxAttempts = 10) => {
-            for (let attempt = 0; attempt < maxAttempts; attempt++) {
-                const msg = document.querySelector(`[data-message-id="${targetId}"]`);
-                if (!msg) {
-                    await new Promise(resolve => setTimeout(resolve, 200));
-                    continue;
-                }
-                msg.scrollIntoView({ behavior: 'instant', block: 'center' });
-                await new Promise(resolve => requestAnimationFrame(resolve));
-                const container = document.querySelector('.messages-container');
-                const containerRect = container.getBoundingClientRect();
-                const msgRect = msg.getBoundingClientRect();
-                if (msgRect.top >= containerRect.top - 50 && msgRect.top <= containerRect.top + 100) {
-                    msg.style.transition = 'background 0.3s';
-                    msg.style.background = 'rgba(88, 101, 242, 0.2)';
-                    setTimeout(() => { msg.style.background = ''; }, 1500);
-                    return true;
-                }
-                await new Promise(resolve => setTimeout(resolve, 100));
-            }
-            return false;
-        };
-        const success = await scrollWithRetry();
-        if (!success) {
-            setTimeout(() => UIManager.scrollToBottom(), 100);
+async _scrollToMessageId(roomId, messageId) {
+    if (!messageId) {
+        UIManager.scrollToBottom();
+        return;
+    }
+    
+    const container = document.querySelector('.messages-container');
+    if (!container) {
+        UIManager.scrollToBottom();
+        return;
+    }
+    
+    // Ждём появления сообщения в DOM
+    const maxAttempts = 30;
+    let targetElement = null;
+    
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        targetElement = container.querySelector(`.message[data-message-id="${messageId}"]`);
+        if (targetElement) break;
+        await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    
+    if (!targetElement) {
+        // Сообщение не найдено — пробуем подгрузить историю вокруг него
+        try {
+            await TextChatManager.loadMessagesAround(this, roomId, messageId, 50);
+            await new Promise(resolve => setTimeout(resolve, 300));
+            targetElement = container.querySelector(`.message[data-message-id="${messageId}"]`);
+        } catch (e) {
+            console.error('Failed to load messages around:', e);
         }
     }
+    
+    if (!targetElement) {
+        UIManager.scrollToBottom();
+        return;
+    }
+    
+    // Учитываем высоту бара закреплённых сообщений
+    const pinnedBar = document.getElementById('pinned-messages-bar');
+    const barHeight = (pinnedBar && pinnedBar.style.display !== 'none') ? pinnedBar.offsetHeight : 0;
+    
+    const targetPosition = targetElement.offsetTop - barHeight - 10;
+    container.scrollTop = Math.max(0, targetPosition);
+    
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    
+    // Подсветка сообщения
+    targetElement.style.transition = 'background 0.3s';
+    targetElement.style.background = 'rgba(88, 101, 242, 0.2)';
+    setTimeout(() => {
+        if (targetElement) targetElement.style.background = '';
+    }, 1500);
+}
 
-    async joinRoom(roomId, clearUnread = true) {
-        if (this.currentRoom === roomId && this.isConnected && this.socket?.connected) {
-            this._processPendingProducers();
-            return true;
+async joinRoom(roomId, clearUnread = true) {
+    if (this.currentRoom === roomId && this.isConnected && this.socket?.connected) {
+        this._processPendingProducers();
+        return true;
+    }
+    
+    const sidebar = document.querySelector('.sidebar');
+    const membersPanel = document.querySelector('.members-panel');
+    
+    if (sidebar) sidebar.classList.remove('open');
+    if (membersPanel) membersPanel.classList.remove('open');
+    
+    if (roomId) ScrollTracker.clearLastViewedMessage(roomId);
+    
+    this._resetAllRecoveryState();
+    this._abortMediaRequests();
+    this.setConnectionState(CONNECTION_STATE.CONNECTING, roomId);
+    
+    this._joinRoomInProgress = true;
+    this._isMediaInitializing = false;
+    this._pendingMicAction = null;
+    
+    this.pendingProducersRef = [];
+    this.consumedProducerIdsRef.clear();
+    this.consumerState.clear();
+    this._isProcessingConsumers = false;
+    this._transportReadyForConsume = false;
+    this._producersPendingConsume = [];
+    
+    try {
+        if (this.currentRoom && this.currentRoom !== roomId) {
+            if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
         }
+        await this.disconnectFromRoom();
+        
+        const joinRes = await this._fetchWithTimeout(
+            this.CHAT_API_URL,
+            { 
+                method: 'POST', 
+                body: JSON.stringify({ 
+                    roomId, 
+                    userId: this.userId, 
+                    token: this.token, 
+                    clientId: this.clientID 
+                }) 
+            }
+        );
+        
+        const joinData = await joinRes.json();
+        if (!joinData.success) throw new Error(joinData.error || 'Join failed');
+        if (!joinData.mediaData) throw new Error('No media data received');
+        
+        this.clientID = joinData.clientId;
+        this.mediaData = joinData.mediaData;
+        this.currentRoom = roomId;
+        this.roomType = 'voice';
+        localStorage.setItem('lastServerId', this.currentServerId);
+        localStorage.setItem('lastRoomId', this.currentRoom);
+        this.audioProducer = null;
+        this.isMicActive = false;
+        this.isMicPaused = true;
+        
+        this.setupSocketConnection();
+        let attempts = 0;
+        while (!this.socket?.connected && attempts < 50) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            attempts++;
+        }
+        if (!this.socket?.connected) throw new Error('WebSocket не подключился');
+        
+        await new Promise((resolve) => {
+            const timeout = setTimeout(() => resolve(), 2000);
+            const joinHandler = () => { clearTimeout(timeout); resolve(); };
+            this.socket.once('join-ack', joinHandler);
+            this.socket.emit('join-room', { roomId });
+        });
+        
+        await MediaManager.connect(this, roomId, joinData.mediaData);
+        
+        // ========== ПРИНУДИТЕЛЬНЫЙ ЗАПРОС ВСЕХ ПРОДЮСЕРОВ ==========
+        console.log('[joinRoom] Requesting all producers...');
+        
+        if (this.socket && this.socket.connected) {
+            this.socket.emit('request-room-snapshot', { roomId }, (response) => {
+                console.log('[joinRoom] Snapshot response:', {
+                    success: response?.success,
+                    producersCount: response?.producers?.length
+                });
+                
+                if (response?.success && response.producers) {
+                    for (const producer of response.producers) {
+                        if (producer.clientID !== this.clientID && !this.consumedProducerIdsRef.has(producer.id)) {
+                            console.log('[joinRoom] Adding producer:', producer.id);
+                            this.pendingProducersRef.push(producer);
+                        }
+                    }
+                    this._processPendingProducers();
+                }
+            });
+            
+            this.socket.emit('request-mic-states', { roomId });
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 500));
+        // ===========================================================
+        
+        this.updateMicButtonState();
+        await UIManager.updateRoomUI(this);
+        TextChatManager.joinTextRoom(this, roomId);
+        this.resetHistoryState();
+        
+        if (!this.token) throw new Error('Токен отсутствует');
+        
+        try {
+            const response = await fetch(`${this.API_SERVER_URL}/api/messages/${roomId}/view-position`, {
+                headers: { Authorization: `Bearer ${this.token}` }
+            });
+            if (response.ok) {
+                const data = await response.json();
+                this.savedMaxSeenId = data.maxSeen || null;
+                this.savedFirstUnreadId = data.firstUnread || null;
+            }
+        } catch (e) {
+            console.error('Failed to load view position:', e.message);
+        }
+        
+        ScrollTracker.setMaxSeenMessageId(roomId, this.savedMaxSeenId);
+        ScrollTracker.setFirstUnreadId(roomId, this.savedFirstUnreadId);
+        
+        this.fetchPinnedMessages(roomId);
+        await new Promise(resolve => setTimeout(resolve, 150));
+        
+        const result = await TextChatManager.loadMessages(this, roomId, 100);
+        if (result && result.messages?.length > 0) {
+            this.oldestMessageId = result.messages[0].id;
+            this.hasMoreHistory = result.hasMore;
+        } else {
+            this.hasMoreHistory = false;
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 150));
+        
+        UIManager.initScrollTracker(roomId);
+        
+        const firstUnreadId = ScrollTracker.getFirstUnreadId(roomId);
+        const maxSeenId = ScrollTracker.getMaxSeenMessageId(roomId);
+        
+        let hasRealUnread = false;
+        if (firstUnreadId) {
+            const unreadIds = ScrollTracker._unreadMessageIds.get(roomId) || [];
+            hasRealUnread = unreadIds.length > 0;
+        }
+        
+        if (hasRealUnread && firstUnreadId) {
+            await this._scrollToMessageId(roomId, firstUnreadId);
+        } else if (maxSeenId) {
+            await this._scrollToMessageId(roomId, maxSeenId);
+        } else {
+            UIManager.scrollToBottom();
+        }
+        
+        UIManager.updateScrollButtonCounter(roomId);
+        
+        if (this.hasMoreHistory) {
+            this.initHistoryObserver();
+        } else {
+            this.removeHistorySentinel();
+        }
+
+if (MembersManager.onlineMembers?.length > 0) {
+    MobileOnlineBar.update(MembersManager.onlineMembers);
+}
+        
+        if (clearUnread) {
+            await this.clearUnreadForCurrentRoom();
+        }
+        
+        this.setConnectionState(CONNECTION_STATE.CONNECTED, roomId);
+        this.isConnected = true;
+        this.sendMicStateToElectron();
+        
+        this._joinRoomInProgress = false;
+        this.startTrafficMonitor();    
+        return true;
+        
+    } catch (error) {
+        this._joinRoomInProgress = false;
+        this._isMediaInitializing = false;
+        this._pendingMicAction = null;
+        this.setConnectionState(CONNECTION_STATE.ERROR, roomId);
+        UIManager.updateStatus('Ошибка: ' + error.message, 'disconnected');
+        UIManager.showError('Не удалось занять гнездо: ' + error.message);
+        throw error;
+    }
+}
+
+async _scrollToSavedPosition(roomId) {
+    const targetId = this.savedMaxSeenId;
+    if (!targetId) {
+        UIManager.scrollToBottom();
+        return;
+    }
+    
+    const container = document.querySelector('.messages-container');
+    if (!container) {
+        UIManager.scrollToBottom();
+        return;
+    }
+    
+    const maxAttempts = 30;
+    let targetElement = null;
+    
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        targetElement = container.querySelector(`.message[data-message-id="${targetId}"]`);
+        if (targetElement) break;
+        await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    
+    if (!targetElement) {
+        UIManager.scrollToBottom();
+        return;
+    }
+    
+    const pinnedBar = document.getElementById('pinned-messages-bar');
+    const barHeight = (pinnedBar && pinnedBar.style.display !== 'none') ? pinnedBar.offsetHeight : 0;
+    
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = targetElement.getBoundingClientRect();
+    const targetOffsetTop = targetElement.offsetTop;
+    
+    const targetPosition = targetOffsetTop - barHeight - 10;
+    
+    container.scrollTop = Math.max(0, targetPosition);
+    
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    
+    const finalTargetRect = targetElement.getBoundingClientRect();
+    const finalContainerRect = container.getBoundingClientRect();
+    
+    if (finalTargetRect.top < finalContainerRect.top + barHeight || finalTargetRect.bottom > finalContainerRect.bottom) {
+        container.scrollTop = Math.max(0, targetElement.offsetTop - barHeight - 10);
+    }
+    
+    targetElement.style.transition = 'background 0.3s';
+    targetElement.style.background = 'rgba(88, 101, 242, 0.2)';
+    setTimeout(() => {
+        if (targetElement) targetElement.style.background = '';
+    }, 1500);
+}
+
+async disconnectFromRoom() {
+    // 🔥 ОСТАНАВЛИВАЕМ МОНИТОРИНГ ТРАФИКА
+    this.stopTrafficMonitor();
+    
+    if (this.currentRoom) {
         this._resetAllRecoveryState();
-        this._abortMediaRequests();
-        this.setConnectionState(CONNECTION_STATE.CONNECTING, roomId);
-        this._joinRoomInProgress = true;
+        if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
+        MediaManager.disconnect(this);
+        TextChatManager.leaveTextRoom(this, this.currentRoom);
+        MembersManager.clearMembers();
+        this.destroySocket();
+        this.removeHistorySentinel();
+        this.hasMoreHistory = true;
+        this.isHistoryLoading = false;
+        this.oldestMessageId = null;
+        
+        // Очищаем состояние ScrollTracker
+        ScrollTracker.clearLastViewedMessage(this.currentRoom);
+        
+        const oldRoom = this.currentRoom;
+        this.currentRoom = null;
+        this.isConnected = false;
+        this.isMicActive = false;
+        this.isMicPaused = false;
         this.pendingProducersRef = [];
         this.consumedProducerIdsRef.clear();
         this.consumerState.clear();
-        this._isProcessingConsumers = false;
         this._transportReadyForConsume = false;
         this._producersPendingConsume = [];
-        try {
-            if (this.currentRoom && this.currentRoom !== roomId) {
-                if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
-            }
-            await this.disconnectFromRoom();
-            const joinRes = await this._fetchWithTimeout(
-                this.CHAT_API_URL,
-                { method: 'POST', body: JSON.stringify({ roomId, userId: this.userId, token: this.token, clientId: this.clientID }) }
-            );
-            const joinData = await joinRes.json();
-            if (!joinData.success) throw new Error(joinData.error || 'Join failed');
-            if (!joinData.mediaData) throw new Error('No media data received');
-            this.clientID = joinData.clientId;
-            this.mediaData = joinData.mediaData;
-            this.currentRoom = roomId;
-            this.roomType = 'voice';
-            localStorage.setItem('lastServerId', this.currentServerId);
-            localStorage.setItem('lastRoomId', this.currentRoom);
-            this.audioProducer = null;
-            this.setupSocketConnection();
-            let attempts = 0;
-            while (!this.socket?.connected && attempts < 50) {
-                await new Promise((resolve) => setTimeout(resolve, 100));
-                attempts++;
-            }
-            if (!this.socket?.connected) throw new Error('WebSocket не подключился после 5 секунд');
-            await new Promise((resolve) => {
-                const timeout = setTimeout(() => resolve(), 2000);
-                const joinHandler = () => { clearTimeout(timeout); resolve(); };
-                this.socket.once('join-ack', joinHandler);
-                this.socket.emit('join-room', { roomId });
-            });
-            await MediaManager.connect(this, roomId, joinData.mediaData);
-            if (this.recvTransport) {
-                this._transportReadyForConsume = true;
-                this.recvTransport.once('connectionstatechange', (state) => {
-                    if (state === 'connected') {
-                        this._transportReadyForConsume = true;
-                        this._processPendingConsumeQueue();
-                    }
-                });
-            }
-            if (this.recvTransport?.connectionState === 'connected') {
-                this._processPendingProducers();
-            } else if (this.recvTransport) {
-                this.recvTransport.once('connectionstatechange', (state) => {
-                    if (state === 'connected') this._processPendingProducers();
-                });
-            }
-            this.updateMicButtonState();
-            if (this.socket) this.socket.emit('request-mic-states', { roomId });
-            await UIManager.updateRoomUI(this);
-            TextChatManager.joinTextRoom(this, roomId);
-            this.resetHistoryState();
-            if (!this.token) throw new Error('Токен отсутствует');
-            try {
-                const response = await fetch(`${this.API_SERVER_URL}/api/messages/${roomId}/view-position`, {
-                    headers: { Authorization: `Bearer ${this.token}` }
-                });
-                if (response.ok) {
-                    const data = await response.json();
-                    this.savedMaxSeenId = data.maxSeen || null;
-                    this.savedFirstUnreadId = data.firstUnread || null;
-                    if (this.savedMaxSeenId) ScrollTracker.setMaxSeenMessageId(roomId, this.savedMaxSeenId);
-                    if (this.savedFirstUnreadId) ScrollTracker.setFirstUnreadId(roomId, this.savedFirstUnreadId);
-                }
-            } catch (e) {}
-            const result = await TextChatManager.loadMessages(this, roomId, 100);
-            if (result && result.messages?.length > 0) {
-                this.oldestMessageId = result.messages[0].id;
-                this.hasMoreHistory = result.hasMore;
-            } else {
-                this.hasMoreHistory = false;
-            }
-            await this._scrollToSavedPosition(roomId);
-            UIManager.initScrollTracker(roomId);
-            UIManager.updateScrollButtonCounter(roomId);
-            if (this.hasMoreHistory) {
-                this.initHistoryObserver();
-            } else {
-                this.removeHistorySentinel();
-            }
-            this.fetchPinnedMessages(roomId);
-            if (clearUnread) {
-                await this.clearUnreadForCurrentRoom();
-            }
-            this.setConnectionState(CONNECTION_STATE.CONNECTED, roomId);
-            this.isConnected = true;
-            this.sendMicStateToElectron();
-            return true;
-        } catch (error) {
-            this._joinRoomInProgress = false;
-            this.setConnectionState(CONNECTION_STATE.ERROR, roomId);
-            UIManager.updateStatus('Ошибка: ' + error.message, 'disconnected');
-            UIManager.showError('Не удалось занять гнездо: ' + error.message);
-            throw error;
-        } finally {
-            this._joinRoomInProgress = false;
+        this.savedMaxSeenId = null;
+        this.savedFirstUnreadId = null;
+        this.updateMicButtonState();
+        this.setConnectionState(CONNECTION_STATE.DISCONNECTED);
+        this.sendMicStateToElectron();
+        
+        const container = document.querySelector('.messages-container');
+        if (container) {
+            container._scrollTrackerBound = false;
+            delete container._scrollSaveTimeout;
+            delete container._readCheckTimeout;
         }
+        UIManager.hidePinnedMessagesBar();
     }
-
-    async disconnectFromRoom() {
-        if (this.currentRoom) {
-            this._resetAllRecoveryState();
-            if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
-            MediaManager.disconnect(this);
-            TextChatManager.leaveTextRoom(this, this.currentRoom);
-            MembersManager.clearMembers();
-            this.destroySocket();
-            this.removeHistorySentinel();
-            this.hasMoreHistory = true;
-            this.isHistoryLoading = false;
-            this.oldestMessageId = null;
-            const oldRoom = this.currentRoom;
-            this.currentRoom = null;
-            this.isConnected = false;
-            this.isMicActive = false;
-            this.isMicPaused = false;
-            this.pendingProducersRef = [];
-            this.consumedProducerIdsRef.clear();
-            this.consumerState.clear();
-            this._transportReadyForConsume = false;
-            this._producersPendingConsume = [];
-            this.savedMaxSeenId = null;
-            this.savedFirstUnreadId = null;
-            this.updateMicButtonState();
-            this.setConnectionState(CONNECTION_STATE.DISCONNECTED);
-            this.sendMicStateToElectron();
-            const container = document.querySelector('.messages-container');
-            if (container) {
-                container._scrollTrackerBound = false;
-                delete container._scrollSaveTimeout;
-                delete container._readCheckTimeout;
-            }
-            UIManager.hidePinnedMessagesBar();
-        }
-    }
+}
 
     async reconnectToRoom(roomId, clearUnread = false) {
-console.log(`🔵 reconnectToRoom called: roomId=${roomId}, currentRoom=${this.currentRoom}, isConnected=${this.isConnected}`);
-    
-    // 🔥 Если уже в этой комнате - не переподключаемся
-    if (this.currentRoom === roomId && this.isConnected) {
-        console.log('🟢 Already connected to this room, skipping reconnect');
-        return true;
-    }    
-    const wasMicUnmuted = this.isMicActive && !this.isMicPaused;
+        if (this.currentRoom === roomId && this.isConnected) {
+            return true;
+        }
+        const wasMicUnmuted = this.isMicActive && !this.isMicPaused;
         if (this.isMicActive && this.mediaData) {
             await MediaManager.stopMicrophone(this).catch(() => {});
         }
@@ -2162,7 +2570,7 @@ console.log(`🔵 reconnectToRoom called: roomId=${roomId}, currentRoom=${this.c
             }
             return true;
         } catch (error) {
-            console.warn('[Reconnect] Не удалось:', error.message);
+            console.error('[Reconnect] Не удалось:', error.message);
             if (this.currentRoom) {
                 this._scheduleSocketReconnect(error.message);
             }
@@ -2170,35 +2578,39 @@ console.log(`🔵 reconnectToRoom called: roomId=${roomId}, currentRoom=${this.c
         }
     }
 
-    async leaveRoom() {
-        if (!this.currentRoom) return;
-        try {
-            this._resetAllRecoveryState();
-            if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
-            if (this.isConnected) MediaManager.disconnect(this);
-            await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.currentRoom}/leave`, {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' }
-            });
-            document.querySelectorAll('.member-volume-slider').forEach((s) => {
-                s.style.display = 'none';
-                s.dataset.producerId = '';
-            });
-            MembersManager.clearMembers();
-            this.currentRoom = null;
-            this.roomType = null;
-            this.savedMaxSeenId = null;
-            this.savedFirstUnreadId = null;
-            UIManager.updateRoomUI(this);
-            this.setConnectionState(CONNECTION_STATE.DISCONNECTED);
-            this.sendMicStateToElectron();
-            UIManager.hidePinnedMessagesBar();
-            return true;
-        } catch (error) {
-            UIManager.showError('Ошибка при покидании гнезда: ' + error.message);
-            return false;
-        }
+async leaveRoom() {
+    if (!this.currentRoom) return;
+    
+    // 🔥 ОСТАНАВЛИВАЕМ МОНИТОРИНГ ТРАФИКА
+    this.stopTrafficMonitor();
+    
+    try {
+        this._resetAllRecoveryState();
+        if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
+        if (this.isConnected) MediaManager.disconnect(this);
+        await fetch(`${this.API_SERVER_URL}/api/media/rooms/${this.currentRoom}/leave`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' }
+        });
+        document.querySelectorAll('.member-volume-slider').forEach((s) => {
+            s.style.display = 'none';
+            s.dataset.producerId = '';
+        });
+        MembersManager.clearMembers();
+        this.currentRoom = null;
+        this.roomType = null;
+        this.savedMaxSeenId = null;
+        this.savedFirstUnreadId = null;
+        UIManager.updateRoomUI(this);
+        this.setConnectionState(CONNECTION_STATE.DISCONNECTED);
+        this.sendMicStateToElectron();
+        UIManager.hidePinnedMessagesBar();
+        return true;
+    } catch (error) {
+        UIManager.showError('Ошибка при покидании гнезда: ' + error.message);
+        return false;
     }
+}
 
     autoConnect() {
         this.elements.sidebar.classList.add('open');
@@ -2317,26 +2729,28 @@ console.log(`🔵 reconnectToRoom called: roomId=${roomId}, currentRoom=${this.c
         };
     }
 
-    destroy() {
-        this._resetSocketReconnectState();
-        this._resetAllRecoveryState();
-        this.destroySocket();
-        this.stopPingInterval();
-        if (this._electronMessageHandler) {
-            window.removeEventListener('message', this._electronMessageHandler);
-        }
-        if (this.historyObserver) {
-            this.historyObserver.disconnect();
-            this.historyObserver = null;
-        }
-        console.log('[VoiceChatClient] Уничтожен');
+destroy() {
+    // 🔥 ОСТАНАВЛИВАЕМ МОНИТОРИНГ ТРАФИКА
+    this.stopTrafficMonitor();
+    
+    this._resetSocketReconnectState();
+    this._resetAllRecoveryState();
+    this.destroySocket();
+    this.stopPingInterval();
+    if (this._electronMessageHandler) {
+        window.removeEventListener('message', this._electronMessageHandler);
     }
-
-switchToNotes(mode, targetId = null) {
-    NoteStateManager.setView(mode, mode === 'personal' ? 'personal' : 'public', targetId);
-    NoteUIManager.switchView(mode, targetId);
-    return true;
+    if (this.historyObserver) {
+        this.historyObserver.disconnect();
+        this.historyObserver = null;
+    }
 }
+
+    switchToNotes(mode, targetId = null) {
+        NoteStateManager.setView(mode, mode === 'personal' ? 'personal' : 'public', targetId);
+        NoteUIManager.switchView(mode, targetId);
+        return true;
+    }
 
     openUserPublicNotes(userId) {
         if (!userId) return;

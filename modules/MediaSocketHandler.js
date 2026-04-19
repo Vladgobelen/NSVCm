@@ -29,17 +29,35 @@ class MediaSocketHandler {
     }
   }
 
-  handleExistingProducers(data) {
+handleExistingProducers(data) {
     if (!data?.producers || !Array.isArray(data.producers)) return;
+    
     for (const producer of data.producers) {
-      if (producer.clientID !== this.client.clientID && !this.client.consumedProducerIdsRef.has(producer.id)) {
-        this.client.pendingProducersRef.push(producer);
-      } else {
-        this.client.consumedProducerIdsRef.add(producer.id);
-      }
+        if (producer.clientID === this.client.clientID) {
+            this.client.consumedProducerIdsRef.add(producer.id);
+            continue;
+        }
+        
+        // 🔥 Ищем правильный userId
+        const member = Array.from(document.querySelectorAll('.member-item')).find(el => 
+            el.dataset.clientId === producer.clientID || 
+            el.dataset.userId === producer.userId
+        );
+        
+        if (member && !window.producerUserMap) {
+            window.producerUserMap = new Map();
+        }
+        if (member) {
+            window.producerUserMap.set(producer.id, member.dataset.userId);
+        }
+        
+        if (!this.client.consumedProducerIdsRef.has(producer.id)) {
+            this.client.pendingProducersRef.push(producer);
+        }
     }
+    
     this.client._processPendingProducers();
-  }
+}
 
   async handleConsumerParameters(data) {
     if (!this.client.consumedProducerIdsRef.has(data.producerId)) {
@@ -88,14 +106,26 @@ class MediaSocketHandler {
     UIManager.updateMemberMicState(peerId, true);
   }
 
-  handleNewProducer(data) {
+handleNewProducer(data) {
     if (data.clientID !== this.client.clientID && !this.client.consumedProducerIdsRef.has(data.producerId)) {
-      this.client.pendingProducersRef.push(data);
-      this.client._processPendingProducers();
+        // 🔥 ИСПРАВЛЕНИЕ: Ищем правильный userId через DOM
+        const member = Array.from(document.querySelectorAll('.member-item')).find(el => 
+            el.dataset.clientId === data.clientID || 
+            el.dataset.userId === data.userId
+        );
+        
+        if (member) {
+            // Сохраняем правильный userId в карту
+            if (!window.producerUserMap) window.producerUserMap = new Map();
+            window.producerUserMap.set(data.producerId, member.dataset.userId);
+        }
+        
+        this.client.pendingProducersRef.push(data);
+        this.client._processPendingProducers();
     } else {
-      this.client.consumedProducerIdsRef.add(data.producerId);
+        this.client.consumedProducerIdsRef.add(data.producerId);
     }
-  }
+}
 
   handleProducerClosed(data) {
     const { producerId } = data;
