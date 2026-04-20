@@ -5,6 +5,7 @@ import UIManager from './UIManager.js';
 import ScrollTracker from './ScrollTracker.js';
 import ContextMenuManager from './ContextMenuManager.js';
 import PollWidget from './PollWidget.js';
+import AvatarManager from './AvatarManager.js';
 
 class MessageRenderer {
     static client = null;
@@ -35,115 +36,176 @@ class MessageRenderer {
         });
     }
 
-static _createMessageElement(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = [], userId = null, broadcast = false, thumbnailUrl = null, replyTo = null, reactions = {}, poll = null, forwardedFrom = null, pollRef = null, embed = null, edited = false, editedAt = null) {
-    const safeUser = user || 'Unknown';
-    const safeText = text || '';
-    const client = this.client || window.voiceClient;
-    const isOwn = client && client.username && safeUser === client.username;
-    const isRead = !isOwn && client?.userId && Array.isArray(readBy) && readBy.includes(client.userId);
-    let isDirectedToMe = false;
-    let directedType = null;
-    if (!isOwn && client && client.userId && client.username) {
-        if (replyTo && replyTo.userId === client.userId) {
-            isDirectedToMe = true;
-            directedType = 'reply';
+    // 🔥 НОВЫЙ МЕТОД: Получение аватара из панели участников
+    static _getAvatarFromMembersPanel(userId) {
+        if (!userId) return null;
+        
+        // Способ 1: Из data-атрибута элемента панели участников (самый быстрый)
+        const memberItem = document.querySelector(`.member-item[data-user-id="${userId}"]`);
+        if (memberItem?.dataset.avatarUrl) {
+            return memberItem.dataset.avatarUrl;
         }
-        if (!isDirectedToMe && safeText) {
-            const lowerText = safeText.toLowerCase();
-            const lowerUsername = client.username.toLowerCase();
-            const escapedUsername = lowerUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const mentionPattern = new RegExp(`@${escapedUsername}(?=[\\s,.!?;:()\\[\\]{}"']|$)`, 'i');
-            if (mentionPattern.test(lowerText)) {
-                isDirectedToMe = true;
-                directedType = 'mention';
+        
+        // Способ 2: Поиск img внутри аватара панели участников
+        const avatarImg = memberItem?.querySelector('.member-avatar img');
+        if (avatarImg?.src && !avatarImg.src.includes('data:image')) {
+            return avatarImg.src;
+        }
+        
+        // Способ 3: Из мобильной панели онлайна
+        const mobileIcon = document.querySelector(`.mobile-online-icon[data-user-id="${userId}"]`);
+        if (mobileIcon) {
+            const mobileImg = mobileIcon.querySelector('img');
+            if (mobileImg?.src && !mobileImg.src.includes('data:image')) {
+                return mobileImg.src;
             }
-            if (!isDirectedToMe) {
-                const namePattern = new RegExp(`(?<=^|[\\s,.!?;:()\\[\\]{}"'])${escapedUsername}(?=[\\s,.!?;:()\\[\\]{}"']|$)`, 'i');
-                if (namePattern.test(lowerText)) {
+            if (mobileIcon.dataset.avatarUrl) {
+                return mobileIcon.dataset.avatarUrl;
+            }
+        }
+        
+        // Способ 4: Из кэша AvatarManager
+        const cachedUrl = AvatarManager?.getUrl(userId);
+        if (cachedUrl) {
+            return cachedUrl;
+        }
+        
+        return null;
+    }
+
+    // 🔥 НОВЫЙ МЕТОД: Обновление аватаров в уже отрендеренных сообщениях
+    static _updateMessageAvatarsForUser(userId) {
+        if (!userId) return;
+        
+        const avatarUrl = AvatarManager?.getUrl(userId);
+        if (!avatarUrl) return;
+        
+        const messages = document.querySelectorAll(`.message[data-user-id="${userId}"]`);
+        
+        messages.forEach(msgEl => {
+            const avatarContainer = msgEl.querySelector('.message-avatar');
+            if (avatarContainer && !avatarContainer.querySelector('img')) {
+                const fallback = avatarContainer.textContent?.trim() || '?';
+                avatarContainer.innerHTML = `<img src="${this.escapeHtml(avatarUrl)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.onerror=null; this.parentElement.innerHTML='${fallback}';">`;
+            }
+        });
+    }
+
+    static _createMessageElement(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = [], userId = null, broadcast = false, thumbnailUrl = null, replyTo = null, reactions = {}, poll = null, forwardedFrom = null, pollRef = null, embed = null, edited = false, editedAt = null) {
+        const safeUser = user || 'Unknown';
+        const safeText = text || '';
+        const client = this.client || window.voiceClient;
+        const isOwn = client && client.username && safeUser === client.username;
+        const isRead = !isOwn && client?.userId && Array.isArray(readBy) && readBy.includes(client.userId);
+        let isDirectedToMe = false;
+        let directedType = null;
+        if (!isOwn && client && client.userId && client.username) {
+            if (replyTo && replyTo.userId === client.userId) {
+                isDirectedToMe = true;
+                directedType = 'reply';
+            }
+            if (!isDirectedToMe && safeText) {
+                const lowerText = safeText.toLowerCase();
+                const lowerUsername = client.username.toLowerCase();
+                const escapedUsername = lowerUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const mentionPattern = new RegExp(`@${escapedUsername}(?=[\\s,.!?;:()\\[\\]{}"']|$)`, 'i');
+                if (mentionPattern.test(lowerText)) {
                     isDirectedToMe = true;
-                    directedType = 'name_mention';
+                    directedType = 'mention';
+                }
+                if (!isDirectedToMe) {
+                    const namePattern = new RegExp(`(?<=^|[\\s,.!?;:()\\[\\]{}"'])${escapedUsername}(?=[\\s,.!?;:()\\[\\]{}"']|$)`, 'i');
+                    if (namePattern.test(lowerText)) {
+                        isDirectedToMe = true;
+                        directedType = 'name_mention';
+                    }
                 }
             }
         }
-    }
-    const messageEl = document.createElement('div');
-    messageEl.className = `message ${type === 'system' ? 'system-message' : ''} ${type === 'poll' ? 'poll-message' : ''} ${type === 'audio' ? 'audio-message' : ''}`;
-    if (isRead) messageEl.classList.add('message-read');
-    messageEl.style.cssText = 'display: flex; width: 100%; align-items: flex-start; justify-content: ' + (isOwn ? 'flex-end' : 'flex-start') + '; padding: 0 10px; margin-bottom: 8px; cursor: pointer;';
-    messageEl.dataset.messageId = messageId;
-    messageEl.dataset.userId = userId;
-    messageEl.dataset.reactions = JSON.stringify(reactions);
-    messageEl.dataset.messageType = type;
-    if (edited) {
-        messageEl.dataset.edited = 'true';
-        messageEl.dataset.editedAt = editedAt;
-    }
-    if (isDirectedToMe) {
-        messageEl.classList.add('message-directed-to-me');
-        if (directedType === 'reply') messageEl.classList.add('message-reply-to-me');
-        else if (directedType === 'mention') messageEl.classList.add('message-mention-me');
-        else if (directedType === 'name_mention') messageEl.classList.add('message-name-mention-me');
-    }
-    if (embed) messageEl.dataset.embed = JSON.stringify(embed);
-    if (poll) {
-        const pollDataForDataset = { poll, messageId, pollRef };
-        if (client?.currentRoom) pollDataForDataset.roomId = client.currentRoom;
-        messageEl.dataset.pollData = JSON.stringify(pollDataForDataset);
-    }
-    if (pollRef) messageEl.dataset.pollRef = JSON.stringify(pollRef);
-    if (forwardedFrom) messageEl.dataset.forwardedFrom = JSON.stringify(forwardedFrom);
-    messageEl.addEventListener('contextmenu', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (messageId && userId) {
-            const msgObj = {
-                id: messageId, userId, username: safeUser, text: safeText, timestamp,
-                type, imageUrl, thumbnailUrl, poll, pollRef, forwardedFrom, embed,
-                edited, editedAt
-            };
-            if (forwardedFrom) ContextMenuManager.showForwardedMessageContextMenu(event, messageId, msgObj);
-            else ContextMenuManager.showMessageContextMenu(event, messageId, userId, safeUser, timestamp, msgObj);
+        const messageEl = document.createElement('div');
+        messageEl.className = `message ${type === 'system' ? 'system-message' : ''} ${type === 'poll' ? 'poll-message' : ''} ${type === 'audio' ? 'audio-message' : ''}`;
+        if (isRead) messageEl.classList.add('message-read');
+        messageEl.style.cssText = 'display: flex; width: 100%; align-items: flex-start; justify-content: ' + (isOwn ? 'flex-end' : 'flex-start') + '; padding: 0 10px; margin-bottom: 8px; cursor: pointer;';
+        messageEl.dataset.messageId = messageId;
+        messageEl.dataset.userId = userId;
+        messageEl.dataset.reactions = JSON.stringify(reactions);
+        messageEl.dataset.messageType = type;
+        if (edited) {
+            messageEl.dataset.edited = 'true';
+            messageEl.dataset.editedAt = editedAt;
         }
-    });
-    messageEl.addEventListener('click', (event) => {
-        if (event.button !== 0) return;
-        const blockedSelector = 'a, button, input, textarea, .reply-block, .message-context-menu, .reaction-pill, .reaction-picker-inline, .forwarded-badge, .poll-option, .poll-vote-btn, .embed-thumbnail, .embed-title, audio, .audio-player';
-        if (event.target.closest(blockedSelector)) return;
-        const shouldCopy = SettingsManager.getCopyOnClick();
-        if (shouldCopy) {
-            navigator.clipboard?.writeText(safeText).catch(() => {});
+        if (isDirectedToMe) {
+            messageEl.classList.add('message-directed-to-me');
+            if (directedType === 'reply') messageEl.classList.add('message-reply-to-me');
+            else if (directedType === 'mention') messageEl.classList.add('message-mention-me');
+            else if (directedType === 'name_mention') messageEl.classList.add('message-name-mention-me');
         }
-        messageEl.style.transition = 'background 0.15s';
-        messageEl.style.background = 'rgba(88, 101, 242, 0.15)';
-        setTimeout(() => messageEl.style.background = '', 150);
-    });
-    messageEl.addEventListener('dblclick', (event) => {
-        if (event.button !== 0) return;
-        const blockedSelector = 'a, button, input, textarea, .reply-block, .message-context-menu, .reaction-pill, .reaction-picker-inline, .forwarded-badge, .poll-option, .poll-vote-btn, .embed-thumbnail, .embed-title, audio, .audio-player, .image-thumbnail';
-        if (event.target.closest(blockedSelector)) return;
-        event.preventDefault();
-        event.stopPropagation();
-        this.toggleReactionPicker(messageId);
-    });
-    const time = timestamp ? new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-    let finalImageUrl = imageUrl?.startsWith('/') ? (client?.API_SERVER_URL || '') + imageUrl : imageUrl;
-    let finalThumbnailUrl = thumbnailUrl?.startsWith('/') ? (client?.API_SERVER_URL || '') + thumbnailUrl : thumbnailUrl;
-    const count = Array.isArray(readBy) ? readBy.length : 0;
-    let readStatusHtml = '';
-    if (Array.isArray(readBy) && type !== 'poll') {
-        let checkText = count === 0 ? '✓' : count === 1 ? '✓✓' : '✓✓✓';
-        let tooltip = count === 0 ? 'Доставлено' : count === 1 ? 'Прочитано' : 'Прочитано товарищем майором';
-        tooltip += `
-Прочитало: ${count}`;
-        readStatusHtml = `<span class="message-read-status-container" style="margin-left: 6px; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: #888;" title="${this.escapeHtml(tooltip)}"><span class="message-read-status" style="font-size: 12px; color: #5865f2;">${checkText}</span><span class="message-read-count">(${count})</span></span>`;
-    }
-    const editedBadgeHtml = edited
-    ? `<span class="message-edited-badge" title="${editedAt ? `Отредактировано: ${new Date(editedAt).toLocaleString('ru-RU')}` : 'Отредактировано'}">✏️</span>`
-    : '';
-    const forwardedBadgeHtml = forwardedFrom ? this._renderForwardedBadge(forwardedFrom) : '';
-    const embedHtml = embed ? this._renderEmbed(embed) : '';
-    const canEdit = isOwn && type !== 'poll' && type !== 'system' && type !== 'audio';
-    const headerHtml = `<div class="message-header">
+        if (embed) messageEl.dataset.embed = JSON.stringify(embed);
+        if (poll) {
+            const pollDataForDataset = { poll, messageId, pollRef };
+            if (client?.currentRoom) pollDataForDataset.roomId = client.currentRoom;
+            messageEl.dataset.pollData = JSON.stringify(pollDataForDataset);
+        }
+        if (pollRef) messageEl.dataset.pollRef = JSON.stringify(pollRef);
+        if (forwardedFrom) messageEl.dataset.forwardedFrom = JSON.stringify(forwardedFrom);
+        
+        messageEl.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (messageId && userId) {
+                const msgObj = {
+                    id: messageId, userId, username: safeUser, text: safeText, timestamp,
+                    type, imageUrl, thumbnailUrl, poll, pollRef, forwardedFrom, embed,
+                    edited, editedAt
+                };
+                if (forwardedFrom) ContextMenuManager.showForwardedMessageContextMenu(event, messageId, msgObj);
+                else ContextMenuManager.showMessageContextMenu(event, messageId, userId, safeUser, timestamp, msgObj);
+            }
+        });
+        
+        messageEl.addEventListener('click', (event) => {
+            if (event.button !== 0) return;
+            const blockedSelector = 'a, button, input, textarea, .reply-block, .message-context-menu, .reaction-pill, .reaction-picker-inline, .forwarded-badge, .poll-option, .poll-vote-btn, .embed-thumbnail, .embed-title, audio, .audio-player';
+            if (event.target.closest(blockedSelector)) return;
+            const shouldCopy = SettingsManager.getCopyOnClick();
+            if (shouldCopy) {
+                navigator.clipboard?.writeText(safeText).catch(() => {});
+            }
+            messageEl.style.transition = 'background 0.15s';
+            messageEl.style.background = 'rgba(88, 101, 242, 0.15)';
+            setTimeout(() => messageEl.style.background = '', 150);
+        });
+        
+        messageEl.addEventListener('dblclick', (event) => {
+            if (event.button !== 0) return;
+            const blockedSelector = 'a, button, input, textarea, .reply-block, .message-context-menu, .reaction-pill, .reaction-picker-inline, .forwarded-badge, .poll-option, .poll-vote-btn, .embed-thumbnail, .embed-title, audio, .audio-player, .image-thumbnail';
+            if (event.target.closest(blockedSelector)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.toggleReactionPicker(messageId);
+        });
+        
+        const time = timestamp ? new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+        let finalImageUrl = imageUrl?.startsWith('/') ? (client?.API_SERVER_URL || '') + imageUrl : imageUrl;
+        let finalThumbnailUrl = thumbnailUrl?.startsWith('/') ? (client?.API_SERVER_URL || '') + thumbnailUrl : thumbnailUrl;
+        const count = Array.isArray(readBy) ? readBy.length : 0;
+        
+        let readStatusHtml = '';
+        if (Array.isArray(readBy) && type !== 'poll') {
+            let checkText = count === 0 ? '✓' : count === 1 ? '✓✓' : '✓✓✓';
+            let tooltip = count === 0 ? 'Доставлено' : count === 1 ? 'Прочитано' : 'Прочитано товарищем майором';
+            tooltip += `\nПрочитало: ${count}`;
+            readStatusHtml = `<span class="message-read-status-container" style="margin-left: 6px; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: #888;" title="${this.escapeHtml(tooltip)}"><span class="message-read-status" style="font-size: 12px; color: #5865f2;">${checkText}</span><span class="message-read-count">(${count})</span></span>`;
+        }
+        
+        const editedBadgeHtml = edited
+            ? `<span class="message-edited-badge" title="${editedAt ? `Отредактировано: ${new Date(editedAt).toLocaleString('ru-RU')}` : 'Отредактировано'}">✏️</span>`
+            : '';
+        const forwardedBadgeHtml = forwardedFrom ? this._renderForwardedBadge(forwardedFrom) : '';
+        const embedHtml = embed ? this._renderEmbed(embed) : '';
+        const canEdit = isOwn && type !== 'poll' && type !== 'system' && type !== 'audio';
+        
+        const headerHtml = `<div class="message-header">
 <span class="message-username" style="font-weight:600; color:#fff;">${this.escapeHtml(safeUser)}</span>
 <span class="message-time">${time}</span>${readStatusHtml}${editedBadgeHtml}
 ${type !== 'poll' ? `
@@ -151,20 +213,21 @@ ${type !== 'poll' ? `
 <button class="message-reply-btn" title="Ответить">↩️</button>
 ` : ''}
 </div>`;
-    let contentBodyHtml = '';
-    if (type === 'image') {
-        const displayUrl = finalThumbnailUrl || finalImageUrl;
-        if (finalImageUrl) {
-            contentBodyHtml = `<div class="image-thumbnail" data-full-size="${finalImageUrl.replace(/"/g, '&quot;')}" style="cursor:pointer;"><img src="${displayUrl.replace(/"/g, '&quot;')}" alt="Изображение" loading="eager"><div class="image-overlay">🔍</div></div>`;
-        }
-    } else if (type === 'audio') {
-        let finalAudioUrl = imageUrl;
-        if (!finalAudioUrl) {
-            contentBodyHtml = `<div class="message-text" style="line-height:1.4;word-break:break-word;color:#e0e0e0;font-size:14px;">🎵 Аудиосообщение (файл недоступен)</div>`;
-        } else {
-            if (finalAudioUrl.startsWith('/')) finalAudioUrl = (client?.API_SERVER_URL || '') + finalAudioUrl;
-            const audioFileName = finalAudioUrl.split('/').pop().split('?')[0];
-            contentBodyHtml = `
+        
+        let contentBodyHtml = '';
+        if (type === 'image') {
+            const displayUrl = finalThumbnailUrl || finalImageUrl;
+            if (finalImageUrl) {
+                contentBodyHtml = `<div class="image-thumbnail" data-full-size="${finalImageUrl.replace(/"/g, '&quot;')}" style="cursor:pointer;"><img src="${displayUrl.replace(/"/g, '&quot;')}" alt="Изображение" loading="eager"><div class="image-overlay">🔍</div></div>`;
+            }
+        } else if (type === 'audio') {
+            let finalAudioUrl = imageUrl;
+            if (!finalAudioUrl) {
+                contentBodyHtml = `<div class="message-text" style="line-height:1.4;word-break:break-word;color:#e0e0e0;font-size:14px;">🎵 Аудиосообщение (файл недоступен)</div>`;
+            } else {
+                if (finalAudioUrl.startsWith('/')) finalAudioUrl = (client?.API_SERVER_URL || '') + finalAudioUrl;
+                const audioFileName = finalAudioUrl.split('/').pop().split('?')[0];
+                contentBodyHtml = `
 <div class="audio-player-container" style="margin: 8px 0; min-width: 250px;">
 <audio controls preload="metadata" style="width: 100%; max-width: 350px; height: 36px; border-radius: 8px;">
 <source src="${finalAudioUrl.replace(/"/g, '&quot;')}" type="audio/mpeg">
@@ -179,26 +242,45 @@ ${type !== 'poll' ? `
 </div>
 </div>
 `;
+            }
+        } else if (type === 'poll') {
+            const pollDataForContainer = { poll, messageId, pollRef };
+            if (client?.currentRoom) pollDataForContainer.roomId = client.currentRoom;
+            const pollDataAttr = JSON.stringify(pollDataForContainer).replace(/'/g, "&apos;");
+            contentBodyHtml = `<div class="poll-container" data-poll-data='${pollDataAttr}'></div>`;
+        } else {
+            const formatted = type === 'system' ? `<pre style="white-space:pre-wrap;font-family:monospace;font-size:12px;background:#1a1a2e;padding:8px;border-radius:4px;margin:0;">${this.escapeHtml(safeText)}</pre>` : this.escapeHtmlAndFormat(safeText);
+            contentBodyHtml = `<div class="message-text" style="line-height:1.4;word-break:break-word;color:#e0e0e0;font-size:14px;">${formatted}</div>`;
         }
-    } else if (type === 'poll') {
-        const pollDataForContainer = { poll, messageId, pollRef };
-        if (client?.currentRoom) pollDataForContainer.roomId = client.currentRoom;
-        const pollDataAttr = JSON.stringify(pollDataForContainer).replace(/'/g, "&apos;");
-        contentBodyHtml = `<div class="poll-container" data-poll-data='${pollDataAttr}'></div>`;
-    } else {
-        const formatted = type === 'system' ? `<pre style="white-space:pre-wrap;font-family:monospace;font-size:12px;background:#1a1a2e;padding:8px;border-radius:4px;margin:0;">${this.escapeHtml(safeText)}</pre>` : this.escapeHtmlAndFormat(safeText);
-        contentBodyHtml = `<div class="message-text" style="line-height:1.4;word-break:break-word;color:#e0e0e0;font-size:14px;">${formatted}</div>`;
-    }
-    const reactionsHtml = type !== 'poll' ? this._renderReactions(reactions, messageId) : '';
-    const bgColor = isOwn ? '#3a3a5c' : '#2d2d44';
-    const borderRadius = '10px';
-    const touchBlockStyle = '-webkit-touch-callout: none; -webkit-user-select: none; user-select: none;';
-    const ownClass = isOwn ? ' own' : '';
-    const replyOrientation = this._getReplyOrientation();
-    const replyClass = replyOrientation === 'top' ? 'reply-top' : 'reply-side';
-    let groupWrapperHtml = '';
-    if (replyTo && replyTo.id) {
-        groupWrapperHtml = `
+        
+        const reactionsHtml = type !== 'poll' ? this._renderReactions(reactions, messageId) : '';
+        const bgColor = isOwn ? '#3a3a5c' : '#2d2d44';
+        const borderRadius = '10px';
+        const touchBlockStyle = '-webkit-touch-callout: none; -webkit-user-select: none; user-select: none;';
+        const ownClass = isOwn ? ' own' : '';
+        const replyOrientation = this._getReplyOrientation();
+        const replyClass = replyOrientation === 'top' ? 'reply-top' : 'reply-side';
+        
+        // 🔥 ИЗМЕНЕНО: Рендеринг аватара
+        let avatarHtml = '';
+        if (!isOwn && type !== 'system' && type !== 'poll') {
+            const avatarUrl = this._getAvatarFromMembersPanel(userId);
+            const fallbackChar = safeUser.charAt(0).toUpperCase();
+            
+            if (avatarUrl) {
+                avatarHtml = `<div class="message-avatar" style="min-width:32px;width:32px;height:32px;border-radius:50%;background:#404060;display:flex;align-items:center;justify-content:center;margin-right:8px;flex-shrink:0;overflow:hidden;" data-fallback="${fallbackChar}">
+                    <img src="${this.escapeHtml(avatarUrl)}" alt="${this.escapeHtml(safeUser)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.onerror=null; this.parentElement.innerHTML=this.parentElement.dataset.fallback;">
+                </div>`;
+            } else {
+                avatarHtml = `<div class="message-avatar" style="min-width:32px;width:32px;height:32px;border-radius:50%;background:#404060;display:flex;align-items:center;justify-content:center;margin-right:8px;flex-shrink:0;color:#fff;">${fallbackChar}</div>`;
+            }
+        } else {
+            avatarHtml = '';
+        }
+        
+        let groupWrapperHtml = '';
+        if (replyTo && replyTo.id) {
+            groupWrapperHtml = `
 <div class="message-reply-group ${replyClass}${ownClass}" style="background:${bgColor};border-radius:${borderRadius};overflow:hidden;display:flex;max-width:85%;box-shadow:0 1px 3px rgba(0,0,0,0.2);${touchBlockStyle};">
 ${forwardedBadgeHtml}
 <div class="reply-block" data-reply-id="${replyTo.id}" style="background:#3a3a5c;padding:6px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;font-size:11px;color:#a0a0b0;box-sizing:border-box;min-width:130px;max-width:220px;">
@@ -213,8 +295,8 @@ ${reactionsHtml}
 </div>
 </div>
 `;
-    } else {
-        groupWrapperHtml = `
+        } else {
+            groupWrapperHtml = `
 <div class="message-reply-group${ownClass}" style="background:${bgColor};border-radius:${borderRadius};display:flex;flex-direction:column;max-width:85%;box-shadow:0 1px 3px rgba(0,0,0,0.2);${touchBlockStyle};">
 ${forwardedBadgeHtml}
 <div class="message-group-content${ownClass}" style="padding:8px 10px;display:flex;flex-direction:column;">
@@ -225,115 +307,125 @@ ${reactionsHtml}
 </div>
 </div>
 `;
-    }
-    const avatarHtml = (isOwn && type !== 'system' && type !== 'poll') ? '' : `<div class="message-avatar" style="min-width:32px;width:32px;height:32px;border-radius:50%;background:#404060;display:flex;align-items:center;justify-content:center;font-weight:bold;margin-right:8px;flex-shrink:0;color:#fff;">${safeUser.charAt(0).toUpperCase()}</div>`;
-    messageEl.innerHTML = isOwn ? `${groupWrapperHtml}${avatarHtml}` : `${avatarHtml}${groupWrapperHtml}`;
-    messageEl._messageObj = {
-        id: messageId, userId, username: safeUser, text: safeText, timestamp,
-        type, imageUrl, thumbnailUrl, poll, pollRef, forwardedFrom, embed,
-        edited, editedAt
-    };
-    const forwardedBadge = messageEl.querySelector('.forwarded-badge');
-    if (forwardedBadge) {
-        forwardedBadge.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const client = window.voiceClient;
-            if (client && typeof client.jumpToForwardSource === 'function') client.jumpToForwardSource(forwardedFrom);
-        });
-    }
-    const embedThumbnail = messageEl.querySelector('.embed-thumbnail');
-    if (embedThumbnail) {
-        const fullImage = embedThumbnail.dataset.fullImage;
-        if (fullImage) {
-            embedThumbnail.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.openImageModal(fullImage);
-            });
-            embedThumbnail.style.cursor = 'pointer';
         }
-    }
-    const embedImageContainer = messageEl.querySelector('.embed-image-container');
-    if (embedImageContainer) {
-        const fullImage = embedImageContainer.dataset.fullImage;
-        if (fullImage) {
-            embedImageContainer.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.openImageModal(fullImage);
-            });
-            embedImageContainer.style.cursor = 'pointer';
-        }
-    }
-    const pollContainer = messageEl.querySelector('.poll-container');
-    if (pollContainer && poll) {
-        setTimeout(() => {
-            if (pollContainer.isConnected) {
-                const pollDataForRender = { poll, messageId, roomId: client?.currentRoom, userId: client?.userId, pollRef };
-                PollWidget.render(pollContainer, pollDataForRender, client);
-            }
-        }, 0);
-    }
-    const replyBlock = messageEl.querySelector('.reply-block');
-    if (replyBlock && replyTo) {
-        replyBlock.addEventListener('click', () => this.handleReplyClick(replyTo.id));
-    }
-    const replyBtn = messageEl.querySelector('.message-reply-btn');
-    if (replyBtn) {
-        const msgObj = {
+        
+        messageEl.innerHTML = isOwn ? `${groupWrapperHtml}${avatarHtml}` : `${avatarHtml}${groupWrapperHtml}`;
+        
+        messageEl._messageObj = {
             id: messageId, userId, username: safeUser, text: safeText, timestamp,
-            type, imageUrl, thumbnailUrl, poll, pollRef, embed,
+            type, imageUrl, thumbnailUrl, poll, pollRef, forwardedFrom, embed,
             edited, editedAt
         };
-        replyBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            UIManager.setReplyTarget(msgObj);
-        });
-    }
-    const editBtn = messageEl.querySelector('.message-edit-btn');
-    if (editBtn) {
-        editBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
+        
+        const forwardedBadge = messageEl.querySelector('.forwarded-badge');
+        if (forwardedBadge) {
+            forwardedBadge.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const client = window.voiceClient;
+                if (client && typeof client.jumpToForwardSource === 'function') client.jumpToForwardSource(forwardedFrom);
+            });
+        }
+        
+        const embedThumbnail = messageEl.querySelector('.embed-thumbnail');
+        if (embedThumbnail) {
+            const fullImage = embedThumbnail.dataset.fullImage;
+            if (fullImage) {
+                embedThumbnail.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.openImageModal(fullImage);
+                });
+                embedThumbnail.style.cursor = 'pointer';
+            }
+        }
+        
+        const embedImageContainer = messageEl.querySelector('.embed-image-container');
+        if (embedImageContainer) {
+            const fullImage = embedImageContainer.dataset.fullImage;
+            if (fullImage) {
+                embedImageContainer.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.openImageModal(fullImage);
+                });
+                embedImageContainer.style.cursor = 'pointer';
+            }
+        }
+        
+        const pollContainer = messageEl.querySelector('.poll-container');
+        if (pollContainer && poll) {
+            setTimeout(() => {
+                if (pollContainer.isConnected) {
+                    const pollDataForRender = { poll, messageId, roomId: client?.currentRoom, userId: client?.userId, pollRef };
+                    PollWidget.render(pollContainer, pollDataForRender, client);
+                }
+            }, 0);
+        }
+        
+        const replyBlock = messageEl.querySelector('.reply-block');
+        if (replyBlock && replyTo) {
+            replyBlock.addEventListener('click', () => this.handleReplyClick(replyTo.id));
+        }
+        
+        const replyBtn = messageEl.querySelector('.message-reply-btn');
+        if (replyBtn) {
             const msgObj = {
                 id: messageId, userId, username: safeUser, text: safeText, timestamp,
                 type, imageUrl, thumbnailUrl, poll, pollRef, embed,
                 edited, editedAt
             };
-            this.showMessageActionsPanel(editBtn, messageId, msgObj);
-        });
+            replyBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                UIManager.setReplyTarget(msgObj);
+            });
+        }
+        
+        const editBtn = messageEl.querySelector('.message-edit-btn');
+        if (editBtn) {
+            editBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const msgObj = {
+                    id: messageId, userId, username: safeUser, text: safeText, timestamp,
+                    type, imageUrl, thumbnailUrl, poll, pollRef, embed,
+                    edited, editedAt
+                };
+                this.showMessageActionsPanel(editBtn, messageId, msgObj);
+            });
+        }
+        
+        const imgThumb = messageEl.querySelector('.image-thumbnail');
+        if (imgThumb && finalImageUrl) {
+            let clickTimer = null;
+            imgThumb.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (clickTimer) {
+                    clearTimeout(clickTimer);
+                    clickTimer = null;
+                    return;
+                }
+                clickTimer = setTimeout(() => {
+                    this.openImageModal(finalImageUrl);
+                    clickTimer = null;
+                }, 200);
+            });
+            imgThumb.addEventListener('dblclick', (e) => {
+                e.stopPropagation();
+                if (clickTimer) {
+                    clearTimeout(clickTimer);
+                    clickTimer = null;
+                }
+                this.toggleReactionPicker(messageId);
+            });
+            imgThumb.addEventListener('mouseenter', () => {
+                const o = imgThumb.querySelector('.image-overlay');
+                if (o) o.style.display = 'flex';
+            });
+            imgThumb.addEventListener('mouseleave', () => {
+                const o = imgThumb.querySelector('.image-overlay');
+                if (o) o.style.display = 'none';
+            });
+        }
+        
+        return messageEl;
     }
-    const imgThumb = messageEl.querySelector('.image-thumbnail');
-    if (imgThumb && finalImageUrl) {
-        let clickTimer = null;
-        imgThumb.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (clickTimer) {
-                clearTimeout(clickTimer);
-                clickTimer = null;
-                return;
-            }
-            clickTimer = setTimeout(() => {
-                this.openImageModal(finalImageUrl);
-                clickTimer = null;
-            }, 200);
-        });
-        imgThumb.addEventListener('dblclick', (e) => {
-            e.stopPropagation();
-            if (clickTimer) {
-                clearTimeout(clickTimer);
-                clickTimer = null;
-            }
-            this.toggleReactionPicker(messageId);
-        });
-        imgThumb.addEventListener('mouseenter', () => {
-            const o = imgThumb.querySelector('.image-overlay');
-            if (o) o.style.display = 'flex';
-        });
-        imgThumb.addEventListener('mouseleave', () => {
-            const o = imgThumb.querySelector('.image-overlay');
-            if (o) o.style.display = 'none';
-        });
-    }
-    return messageEl;
-}
 
     static initReplyOrientationObserver() {
         if (this._replyOrientationObserver) return;
@@ -346,233 +438,257 @@ ${reactionsHtml}
         this._replyOrientationObserver = { handler };
     }
 
-static showMessageActionsPanel(anchorButton, messageId, messageObj) {
-    const client = this.client || window.voiceClient;
-    if (!client) return;
-    
-    // Удаляем существующую панель
-    const existingPanel = document.querySelector('.message-actions-panel');
-    if (existingPanel) existingPanel.remove();
-    
-    const isOwnMessage = client.userId === messageObj.userId;
-    const canDelete = ContextMenuManager._canDeleteMessage(client, messageId, messageObj.userId, messageObj);
-    
-    const panel = document.createElement('div');
-    panel.className = 'message-actions-panel';
-    panel.style.cssText = `
-        position: absolute;
-        background: #2d2d44;
-        border: 1px solid #404060;
-        border-radius: 8px;
-        padding: 4px;
-        display: flex;
-        gap: 4px;
-        z-index: 10000;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-        animation: fadeIn 0.15s ease;
-    `;
-    
-    // Позиционируем панель над кнопкой
-    const rect = anchorButton.getBoundingClientRect();
-    panel.style.left = `${rect.left - 120}px`;
-    panel.style.top = `${rect.top - 50}px`;
-    
-    // Кнопка "Редактировать" (только для своих текстовых сообщений)
-    if (isOwnMessage && messageObj.type === 'text') {
-        const editAction = this._createActionButton('✏️', 'Редактировать', () => {
-            this.startEditingMessage(messageId, messageObj);
+    static showMessageActionsPanel(anchorButton, messageId, messageObj) {
+        const client = this.client || window.voiceClient;
+        if (!client) return;
+        
+        const existingPanel = document.querySelector('.message-actions-panel');
+        if (existingPanel) existingPanel.remove();
+        
+        const isOwnMessage = client.userId === messageObj.userId;
+        const canDelete = ContextMenuManager._canDeleteMessage(client, messageId, messageObj.userId, messageObj);
+        
+        const panel = document.createElement('div');
+        panel.className = 'message-actions-panel';
+        panel.style.cssText = `
+            position: absolute;
+            background: #2d2d44;
+            border: 1px solid #404060;
+            border-radius: 8px;
+            padding: 4px;
+            display: flex;
+            gap: 4px;
+            z-index: 10000;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            animation: fadeIn 0.15s ease;
+        `;
+        
+        const rect = anchorButton.getBoundingClientRect();
+        panel.style.left = `${rect.left - 120}px`;
+        panel.style.top = `${rect.top - 50}px`;
+        
+        if (isOwnMessage && messageObj.type === 'text') {
+            const editAction = this._createActionButton('✏️', 'Редактировать', () => {
+                this.startEditingMessage(messageId, messageObj);
+                panel.remove();
+            });
+            panel.appendChild(editAction);
+        }
+        
+        const copyAction = this._createActionButton('📋', 'Копировать', () => {
+            navigator.clipboard?.writeText(messageObj.text || '').catch(() => {});
+            UIManager.showError('Текст скопирован');
             panel.remove();
         });
-        panel.appendChild(editAction);
+        panel.appendChild(copyAction);
+        
+        if (canDelete) {
+            const deleteAction = this._createActionButton('🗑️', 'Удалить', () => {
+                UIManager.confirmDeleteMessage(messageId);
+                panel.remove();
+            }, true);
+            panel.appendChild(deleteAction);
+        }
+        
+        document.body.appendChild(panel);
+        
+        const closeHandler = (e) => {
+            if (!panel.contains(e.target) && !anchorButton.contains(e.target)) {
+                panel.remove();
+                document.removeEventListener('click', closeHandler);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', closeHandler), 100);
     }
-    
-    // Кнопка "Копировать"
-    const copyAction = this._createActionButton('📋', 'Копировать', () => {
-        navigator.clipboard?.writeText(messageObj.text || '').catch(() => {});
-        UIManager.showError('Текст скопирован');
-        panel.remove();
-    });
-    panel.appendChild(copyAction);
-    
-    // Кнопка "Удалить"
-    if (canDelete) {
-        const deleteAction = this._createActionButton('🗑️', 'Удалить', () => {
-            UIManager.confirmDeleteMessage(messageId);
-            panel.remove();
-        }, true);
-        panel.appendChild(deleteAction);
+
+    static _createActionButton(icon, title, onClick, isDanger = false) {
+        const btn = document.createElement('button');
+        btn.innerHTML = icon;
+        btn.title = title;
+        btn.style.cssText = `
+            background: ${isDanger ? 'rgba(237, 66, 69, 0.1)' : 'transparent'};
+            border: none;
+            color: ${isDanger ? '#ed4245' : '#e0e0e0'};
+            font-size: 18px;
+            width: 40px;
+            height: 40px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        `;
+        btn.addEventListener('mouseenter', () => {
+            btn.style.background = isDanger ? 'rgba(237, 66, 69, 0.2)' : '#3d3d5c';
+        });
+        btn.addEventListener('mouseleave', () => {
+            btn.style.background = isDanger ? 'rgba(237, 66, 69, 0.1)' : 'transparent';
+        });
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            onClick();
+        });
+        return btn;
     }
-    
-    document.body.appendChild(panel);
-    
-    // Закрытие по клику вне панели
-    const closeHandler = (e) => {
-        if (!panel.contains(e.target) && !anchorButton.contains(e.target)) {
-            panel.remove();
-            document.removeEventListener('click', closeHandler);
-        }
-    };
-    setTimeout(() => document.addEventListener('click', closeHandler), 100);
-}
 
-static _createActionButton(icon, title, onClick, isDanger = false) {
-    const btn = document.createElement('button');
-    btn.innerHTML = icon;
-    btn.title = title;
-    btn.style.cssText = `
-        background: ${isDanger ? 'rgba(237, 66, 69, 0.1)' : 'transparent'};
-        border: none;
-        color: ${isDanger ? '#ed4245' : '#e0e0e0'};
-        font-size: 18px;
-        width: 40px;
-        height: 40px;
-        border-radius: 6px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: background 0.2s;
-    `;
-    btn.addEventListener('mouseenter', () => {
-        btn.style.background = isDanger ? 'rgba(237, 66, 69, 0.2)' : '#3d3d5c';
-    });
-    btn.addEventListener('mouseleave', () => {
-        btn.style.background = isDanger ? 'rgba(237, 66, 69, 0.1)' : 'transparent';
-    });
-    btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        onClick();
-    });
-    return btn;
-}
-
-static startEditingMessage(messageId, messageObj) {
-    const msgEl = document.querySelector(`.message[data-message-id="${messageId}"]`);
-    if (!msgEl) return;
-    
-    const contentContainer = msgEl.querySelector('.message-group-content') || 
-                             msgEl.querySelector('.message-reply-group > div:last-child');
-    if (!contentContainer) return;
-    
-    const textContainer = contentContainer.querySelector('.message-text');
-    if (!textContainer) return;
-    
-    // Берём актуальный текст из DOM, а не из старого объекта
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = textContainer.innerHTML;
-    const originalText = tempDiv.textContent || tempDiv.innerText || messageObj.text || '';
-    
-    // Создаём редактор
-    const editorContainer = document.createElement('div');
-    editorContainer.className = 'message-editor-container';
-    editorContainer.style.cssText = 'margin: 8px 0; width: 100%;';
-    
-    const textarea = document.createElement('textarea');
-    textarea.value = originalText;
-    textarea.style.cssText = `
-        width: 100%;
-        min-height: 60px;
-        max-height: 200px;
-        padding: 8px 10px;
-        background: #1a1a2e;
-        border: 1px solid #404060;
-        color: #e0e0e0;
-        border-radius: 6px;
-        font-size: 13px;
-        font-family: inherit;
-        resize: vertical;
-        outline: none;
-    `;
-    
-    const controls = document.createElement('div');
-    controls.style.cssText = 'display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px;';
-    
-    const saveBtn = document.createElement('button');
-    saveBtn.textContent = 'Сохранить';
-    saveBtn.style.cssText = `
-        padding: 6px 12px;
-        background: #5865f2;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 12px;
-    `;
-    
-    const cancelBtn = document.createElement('button');
-    cancelBtn.textContent = 'Отмена';
-    cancelBtn.style.cssText = `
-        padding: 6px 12px;
-        background: #404060;
-        color: #e0e0e0;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 12px;
-    `;
-    
-    controls.appendChild(cancelBtn);
-    controls.appendChild(saveBtn);
-    
-    editorContainer.appendChild(textarea);
-    editorContainer.appendChild(controls);
-    
-    // Заменяем текст на редактор
-    textContainer.style.display = 'none';
-    textContainer.parentNode.insertBefore(editorContainer, textContainer.nextSibling);
-    
-    // Фокус на текстовое поле
-    textarea.focus();
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-    
-    const cleanup = () => {
-        editorContainer.remove();
-        textContainer.style.display = '';
-    };
-    
-    const doSave = async () => {
-        const newText = textarea.value.trim();
-        if (!newText) {
-            UIManager.showError('Сообщение не может быть пустым');
-            return;
-        }
+    static startEditingMessage(messageId, messageObj) {
+        const msgEl = document.querySelector(`.message[data-message-id="${messageId}"]`);
+        if (!msgEl) return;
         
-        // Получаем актуальный текст из DOM для сравнения
-        const currentTempDiv = document.createElement('div');
-        currentTempDiv.innerHTML = textContainer.innerHTML;
-        const currentText = currentTempDiv.textContent || currentTempDiv.innerText || '';
+        const contentContainer = msgEl.querySelector('.message-group-content') || 
+                                 msgEl.querySelector('.message-reply-group > div:last-child');
+        if (!contentContainer) return;
         
-        if (newText === currentText) {
-            cleanup();
-            return;
-        }
+        const textContainer = contentContainer.querySelector('.message-text');
+        if (!textContainer) return;
         
-        const client = this.client || window.voiceClient;
-        if (!client) {
-            UIManager.showError('Клиент не инициализирован');
-            return;
-        }
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = textContainer.innerHTML;
+        const originalText = tempDiv.textContent || tempDiv.innerText || messageObj.text || '';
         
-        saveBtn.textContent = '...';
-        saveBtn.disabled = true;
-        cancelBtn.disabled = true;
-        textarea.disabled = true;
+        const editorContainer = document.createElement('div');
+        editorContainer.className = 'message-editor-container';
+        editorContainer.style.cssText = 'margin: 8px 0; width: 100%;';
         
-        try {
-            // Пробуем через сокет
-            if (client.socket?.connected) {
-                client.socket.emit('edit-message', {
-                    messageId,
-                    roomId: client.currentRoom,
-                    newText
-                }, (response) => {
-                    if (response?.success) {
+        const textarea = document.createElement('textarea');
+        textarea.value = originalText;
+        textarea.style.cssText = `
+            width: 100%;
+            min-height: 60px;
+            max-height: 200px;
+            padding: 8px 10px;
+            background: #1a1a2e;
+            border: 1px solid #404060;
+            color: #e0e0e0;
+            border-radius: 6px;
+            font-size: 13px;
+            font-family: inherit;
+            resize: vertical;
+            outline: none;
+        `;
+        
+        const controls = document.createElement('div');
+        controls.style.cssText = 'display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px;';
+        
+        const saveBtn = document.createElement('button');
+        saveBtn.textContent = 'Сохранить';
+        saveBtn.style.cssText = `
+            padding: 6px 12px;
+            background: #5865f2;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        `;
+        
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'Отмена';
+        cancelBtn.style.cssText = `
+            padding: 6px 12px;
+            background: #404060;
+            color: #e0e0e0;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        `;
+        
+        controls.appendChild(cancelBtn);
+        controls.appendChild(saveBtn);
+        
+        editorContainer.appendChild(textarea);
+        editorContainer.appendChild(controls);
+        
+        textContainer.style.display = 'none';
+        textContainer.parentNode.insertBefore(editorContainer, textContainer.nextSibling);
+        
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+        
+        const cleanup = () => {
+            editorContainer.remove();
+            textContainer.style.display = '';
+        };
+        
+        const doSave = async () => {
+            const newText = textarea.value.trim();
+            if (!newText) {
+                UIManager.showError('Сообщение не может быть пустым');
+                return;
+            }
+            
+            const currentTempDiv = document.createElement('div');
+            currentTempDiv.innerHTML = textContainer.innerHTML;
+            const currentText = currentTempDiv.textContent || currentTempDiv.innerText || '';
+            
+            if (newText === currentText) {
+                cleanup();
+                return;
+            }
+            
+            const client = this.client || window.voiceClient;
+            if (!client) {
+                UIManager.showError('Клиент не инициализирован');
+                return;
+            }
+            
+            saveBtn.textContent = '...';
+            saveBtn.disabled = true;
+            cancelBtn.disabled = true;
+            textarea.disabled = true;
+            
+            try {
+                if (client.socket?.connected) {
+                    client.socket.emit('edit-message', {
+                        messageId,
+                        roomId: client.currentRoom,
+                        newText
+                    }, (response) => {
+                        if (response?.success) {
+                            textContainer.innerHTML = this.escapeHtmlAndFormat(newText);
+                            messageObj.text = newText;
+                            cleanup();
+                            this.highlightCodeBlocks(msgEl);
+                            
+                            const editedBadge = msgEl.querySelector('.message-edited-badge');
+                            if (!editedBadge) {
+                                const header = msgEl.querySelector('.message-header');
+                                if (header) {
+                                    const badge = document.createElement('span');
+                                    badge.className = 'message-edited-badge';
+                                    badge.innerHTML = '✏️';
+                                    badge.title = 'Отредактировано';
+                                    header.appendChild(badge);
+                                }
+                            } else {
+                                editedBadge.title = `Отредактировано: ${new Date().toLocaleString('ru-RU')}`;
+                            }
+                        } else {
+                            UIManager.showError(response?.error || 'Не удалось отредактировать сообщение');
+                            saveBtn.textContent = 'Сохранить';
+                            saveBtn.disabled = false;
+                            cancelBtn.disabled = false;
+                            textarea.disabled = false;
+                        }
+                    });
+                } else {
+                    const response = await fetch(`${client.API_SERVER_URL}/api/messages/${messageId}`, {
+                        method: 'PATCH',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            Authorization: `Bearer ${client.token}`
+                        },
+                        body: JSON.stringify({ text: newText, roomId: client.currentRoom })
+                    });
+                    
+                    if (response.ok) {
                         textContainer.innerHTML = this.escapeHtmlAndFormat(newText);
-                        messageObj.text = newText; // Обновляем объект для будущих редактирований
+                        messageObj.text = newText;
                         cleanup();
                         this.highlightCodeBlocks(msgEl);
                         
-                        // Добавляем/обновляем пометку редактирования
                         const editedBadge = msgEl.querySelector('.message-edited-badge');
                         if (!editedBadge) {
                             const header = msgEl.querySelector('.message-header');
@@ -587,76 +703,36 @@ static startEditingMessage(messageId, messageObj) {
                             editedBadge.title = `Отредактировано: ${new Date().toLocaleString('ru-RU')}`;
                         }
                     } else {
-                        UIManager.showError(response?.error || 'Не удалось отредактировать сообщение');
-                        saveBtn.textContent = 'Сохранить';
-                        saveBtn.disabled = false;
-                        cancelBtn.disabled = false;
-                        textarea.disabled = false;
+                        const error = await response.json().catch(() => ({}));
+                        throw new Error(error.error || 'Ошибка сервера');
                     }
-                });
-            } else {
-                // Fallback через HTTP
-                const response = await fetch(`${client.API_SERVER_URL}/api/messages/${messageId}`, {
-                    method: 'PATCH',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `Bearer ${client.token}`
-                    },
-                    body: JSON.stringify({ text: newText, roomId: client.currentRoom })
-                });
-                
-                if (response.ok) {
-                    textContainer.innerHTML = this.escapeHtmlAndFormat(newText);
-                    messageObj.text = newText; // Обновляем объект для будущих редактирований
-                    cleanup();
-                    this.highlightCodeBlocks(msgEl);
-                    
-                    const editedBadge = msgEl.querySelector('.message-edited-badge');
-                    if (!editedBadge) {
-                        const header = msgEl.querySelector('.message-header');
-                        if (header) {
-                            const badge = document.createElement('span');
-                            badge.className = 'message-edited-badge';
-                            badge.innerHTML = '✏️';
-                            badge.title = 'Отредактировано';
-                            header.appendChild(badge);
-                        }
-                    } else {
-                        editedBadge.title = `Отредактировано: ${new Date().toLocaleString('ru-RU')}`;
-                    }
-                } else {
-                    const error = await response.json().catch(() => ({}));
-                    throw new Error(error.error || 'Ошибка сервера');
                 }
+            } catch (error) {
+                UIManager.showError('Не удалось отредактировать: ' + error.message);
+                saveBtn.textContent = 'Сохранить';
+                saveBtn.disabled = false;
+                cancelBtn.disabled = false;
+                textarea.disabled = false;
             }
-        } catch (error) {
-            UIManager.showError('Не удалось отредактировать: ' + error.message);
-            saveBtn.textContent = 'Сохранить';
-            saveBtn.disabled = false;
-            cancelBtn.disabled = false;
-            textarea.disabled = false;
-        }
-    };
-    
-    cancelBtn.addEventListener('click', cleanup);
-    saveBtn.addEventListener('click', doSave);
-    
-    // Enter = сохранить, Shift+Enter = новая строка
-    textarea.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            doSave();
-        }
-    });
-    
-    // Escape = отмена
-    textarea.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            e.preventDefault();
-            cleanup();
-        }
-    });
-}
+        };
+        
+        cancelBtn.addEventListener('click', cleanup);
+        saveBtn.addEventListener('click', doSave);
+        
+        textarea.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                doSave();
+            }
+        });
+        
+        textarea.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                cleanup();
+            }
+        });
+    }
 
     static async prependMessagesBatch(messages) {
         const container = document.querySelector('.messages-container');
@@ -671,12 +747,12 @@ static startEditingMessage(messageId, messageObj) {
         for (const msg of messages) {
             if (existingIds.has(msg.id)) continue;
             hasNewMessages = true;
-const el = MessageRenderer._createMessageElement(
-    msg.username, msg.text, msg.timestamp, msg.type, msg.imageUrl, msg.id,
-    msg.readBy || [], msg.userId, false, msg.thumbnailUrl, msg.replyTo,
-    msg.reactions || {}, msg.poll, msg.forwardedFrom, msg.pollRef, msg.embed,
-    msg.edited || false, msg.editedAt || null
-);
+            const el = MessageRenderer._createMessageElement(
+                msg.username, msg.text, msg.timestamp, msg.type, msg.imageUrl, msg.id,
+                msg.readBy || [], msg.userId, false, msg.thumbnailUrl, msg.replyTo,
+                msg.reactions || {}, msg.poll, msg.forwardedFrom, msg.pollRef, msg.embed,
+                msg.edited || false, msg.editedAt || null
+            );
             if (el) {
                 el.classList.add('appeared');
                 fragment.appendChild(el);
@@ -804,51 +880,6 @@ const el = MessageRenderer._createMessageElement(
 `;
     }
 
-    static _togglePanels(showNotes) {
-        const chatArea = document.querySelector('.chat-area');
-        const chatHeader = document.querySelector('.chat-header');
-        const messagesContainer = document.querySelector('.messages-container');
-        const inputArea = document.querySelector('.input-area');
-        const notesView = document.getElementById('notes-view-container');
-        const threadView = document.getElementById('note-thread-container');
-        const membersPanel = document.querySelector('.members-panel');
-        const membersList = membersPanel?.querySelector('.members-list');
-        const notesListPanel = membersPanel?.querySelector('.notes-list-panel');
-        const newNoteBtn = document.getElementById('new-note-btn');
-        
-        if (chatArea) chatArea.style.display = 'flex';
-        if (chatHeader) chatHeader.style.display = 'flex';
-
-        if (showNotes) {
-            if (messagesContainer) messagesContainer.style.display = 'none';
-            if (inputArea) inputArea.style.display = 'none';
-            if (notesView) {
-                notesView.style.display = 'flex';
-                notesView.style.flex = '1';
-                notesView.style.width = '100%';
-                notesView.style.height = '100%';
-            }
-            if (threadView) threadView.style.display = 'none';
-            if (membersPanel) membersPanel.style.display = 'flex';
-            if (membersList) membersList.style.display = 'none';
-            if (notesListPanel) notesListPanel.style.display = 'block';
-            if (newNoteBtn) {
-                newNoteBtn.style.display = 'block';
-                newNoteBtn.style.width = 'calc(100% - 32px)';
-                newNoteBtn.style.minHeight = '44px';
-            }
-        } else {
-            if (messagesContainer) messagesContainer.style.display = 'block';
-            if (inputArea) inputArea.style.display = 'flex';
-            if (notesView) notesView.style.display = 'none';
-            if (threadView) threadView.style.display = 'none';
-            if (membersPanel) membersPanel.style.display = 'flex';
-            if (membersList) membersList.style.display = 'block';
-            if (notesListPanel) notesListPanel.style.display = 'none';
-            if (newNoteBtn) newNoteBtn.style.display = 'none';
-        }
-    }
-
     static async handleReplyClick(messageId) {
         const container = document.querySelector('.messages-container');
         const target = container?.querySelector(`.message[data-message-id="${messageId}"]`);
@@ -891,39 +922,39 @@ const el = MessageRenderer._createMessageElement(
         modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
     }
 
-static async addMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = [], userId = null, broadcast = false, thumbnailUrl = null, targetContainer = null, replyTo = null, reactions = {}, poll = null, forwardedFrom = null, pollRef = null, embed = null, edited = false, editedAt = null) {
-    const container = targetContainer || document.querySelector('.messages-container');
-    if (!container) return;
-    if (messageId && container.querySelector(`.message[data-message-id="${messageId}"]`)) return;
-    const messageElement = MessageRenderer._createMessageElement(user, text, timestamp, type, imageUrl, messageId, readBy, userId, broadcast, thumbnailUrl, replyTo, reactions, poll, forwardedFrom, pollRef, embed, edited, editedAt);
-    if (!messageElement) return;
-    container.appendChild(messageElement);
-    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 200;
-    if (isNearBottom) container.scrollTop = container.scrollHeight;
-    setTimeout(() => {
-        messageElement.classList.add('appeared');
-        ScrollTracker._checkScrollVisibility(container);
-        this.highlightCodeBlocks(container);
-    }, 10);
-}
+    static async addMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = [], userId = null, broadcast = false, thumbnailUrl = null, targetContainer = null, replyTo = null, reactions = {}, poll = null, forwardedFrom = null, pollRef = null, embed = null, edited = false, editedAt = null) {
+        const container = targetContainer || document.querySelector('.messages-container');
+        if (!container) return;
+        if (messageId && container.querySelector(`.message[data-message-id="${messageId}"]`)) return;
+        const messageElement = MessageRenderer._createMessageElement(user, text, timestamp, type, imageUrl, messageId, readBy, userId, broadcast, thumbnailUrl, replyTo, reactions, poll, forwardedFrom, pollRef, embed, edited, editedAt);
+        if (!messageElement) return;
+        container.appendChild(messageElement);
+        const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 200;
+        if (isNearBottom) container.scrollTop = container.scrollHeight;
+        setTimeout(() => {
+            messageElement.classList.add('appeared');
+            ScrollTracker._checkScrollVisibility(container);
+            this.highlightCodeBlocks(container);
+        }, 10);
+    }
 
-static async prependMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = [], userId = null, broadcast = false, thumbnailUrl = null, replyTo = null, reactions = {}, poll = null, forwardedFrom = null, pollRef = null, embed = null, edited = false, editedAt = null) {
-    const container = document.querySelector('.messages-container');
-    if (!container) return;
-    const sentinel = container.querySelector('.history-sentinel');
-    const refNode = sentinel ? sentinel.nextSibling : container.firstChild;
-    const oldScrollHeight = container.scrollHeight;
-    const messageElement = MessageRenderer._createMessageElement(user, text, timestamp, type, imageUrl, messageId, readBy, userId, broadcast, thumbnailUrl, replyTo, reactions, poll, forwardedFrom, pollRef, embed, edited, editedAt);
-    if (!messageElement) return;
-    container.insertBefore(messageElement, refNode);
-    requestAnimationFrame(async () => {
-        messageElement.classList.add('appeared');
-        const newScrollHeight = container.scrollHeight;
-        container.scrollTop = newScrollHeight - oldScrollHeight;
-        ScrollTracker._checkScrollVisibility(container);
-        await this.highlightCodeBlocks(container);
-    });
-}
+    static async prependMessage(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = [], userId = null, broadcast = false, thumbnailUrl = null, replyTo = null, reactions = {}, poll = null, forwardedFrom = null, pollRef = null, embed = null, edited = false, editedAt = null) {
+        const container = document.querySelector('.messages-container');
+        if (!container) return;
+        const sentinel = container.querySelector('.history-sentinel');
+        const refNode = sentinel ? sentinel.nextSibling : container.firstChild;
+        const oldScrollHeight = container.scrollHeight;
+        const messageElement = MessageRenderer._createMessageElement(user, text, timestamp, type, imageUrl, messageId, readBy, userId, broadcast, thumbnailUrl, replyTo, reactions, poll, forwardedFrom, pollRef, embed, edited, editedAt);
+        if (!messageElement) return;
+        container.insertBefore(messageElement, refNode);
+        requestAnimationFrame(async () => {
+            messageElement.classList.add('appeared');
+            const newScrollHeight = container.scrollHeight;
+            container.scrollTop = newScrollHeight - oldScrollHeight;
+            ScrollTracker._checkScrollVisibility(container);
+            await this.highlightCodeBlocks(container);
+        });
+    }
 
     static async highlightCodeBlocks(container = null) {
         if (typeof Prism === 'undefined') return;
@@ -1064,403 +1095,380 @@ static async prependMessage(user, text, timestamp = null, type = 'text', imageUr
         return processed;
     }
 
-static openImageModal(imageUrl) {
-    const existingModal = document.querySelector('.image-modal-overlay');
-    if (existingModal) existingModal.remove();
-    
-    const modalOverlay = document.createElement('div');
-    modalOverlay.className = 'image-modal-overlay';
-    modalOverlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.9); display: flex; justify-content: center; align-items: center; z-index: 10000; overflow: hidden; touch-action: none;';
-    
-    const imageContainer = document.createElement('div');
-    imageContainer.style.cssText = 'display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; touch-action: none;';
-    
-    const imageElement = document.createElement('img');
-    imageElement.src = imageUrl;
-    imageElement.style.cssText = 'max-width: 90%; max-height: 90%; object-fit: contain; border-radius: 8px; box-shadow: 0 0 20px rgba(0, 0, 0, 0.5); transition: transform 0.05s ease-out; cursor: grab; touch-action: none;';
-    imageElement.draggable = false;
-    
-    // Переменные для масштабирования
-    let scale = 1;
-    const MIN_SCALE = 0.5;
-    const MAX_SCALE = 5;
-    const ZOOM_STEP = 0.1;
-    
-    // Переменные для перетаскивания
-    let isDragging = false;
-    let hasMoved = false; // Флаг: было ли движение (для отмены клика)
-    let startX = 0;
-    let startY = 0;
-    let translateX = 0;
-    let translateY = 0;
-    const MOVE_THRESHOLD = 5; // Порог движения в пикселях
-    
-    // Переменные для pinch-to-zoom (мобильные)
-    let initialDistance = 0;
-    let initialScale = 1;
-    let pinchCenterX = 0;
-    let pinchCenterY = 0;
-    
-    // Переменные для тапов (мобильные)
-    let touchStartTime = 0;
-    let lastTap = 0;
-    
-    const closeBtn = document.createElement('button');
-    closeBtn.innerHTML = '✕';
-    closeBtn.style.cssText = 'position: absolute; top: 20px; right: 20px; background: rgba(255, 255, 255, 0.2); border: none; color: white; font-size: 24px; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; display: flex; justify-content: center; align-items: center; z-index: 10001;';
-    closeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        modalOverlay.remove();
-    });
-    
-    const resetZoomBtn = document.createElement('button');
-    resetZoomBtn.innerHTML = '🔄';
-    resetZoomBtn.style.cssText = 'position: absolute; bottom: 20px; right: 20px; background: rgba(255, 255, 255, 0.2); border: none; color: white; font-size: 20px; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; display: flex; justify-content: center; align-items: center; z-index: 10001;';
-    resetZoomBtn.title = 'Сбросить масштаб';
-    resetZoomBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        scale = 1;
-        translateX = 0;
-        translateY = 0;
-        updateTransform();
-        imageElement.style.cursor = 'grab';
-    });
-    
-    const zoomIndicator = document.createElement('div');
-    zoomIndicator.style.cssText = 'position: absolute; bottom: 20px; left: 20px; background: rgba(0, 0, 0, 0.6); color: white; padding: 6px 12px; border-radius: 20px; font-size: 14px; z-index: 10001; opacity: 0; transition: opacity 0.3s;';
-    zoomIndicator.textContent = '100%';
-    
-    const updateTransform = () => {
-        imageElement.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
-        zoomIndicator.textContent = Math.round(scale * 100) + '%';
+    static openImageModal(imageUrl) {
+        const existingModal = document.querySelector('.image-modal-overlay');
+        if (existingModal) existingModal.remove();
         
-        if (scale > 1) {
-            imageElement.style.cursor = isDragging ? 'grabbing' : 'grab';
-        } else {
-            imageElement.style.cursor = 'default';
+        const modalOverlay = document.createElement('div');
+        modalOverlay.className = 'image-modal-overlay';
+        modalOverlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.9); display: flex; justify-content: center; align-items: center; z-index: 10000; overflow: hidden; touch-action: none;';
+        
+        const imageContainer = document.createElement('div');
+        imageContainer.style.cssText = 'display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; touch-action: none;';
+        
+        const imageElement = document.createElement('img');
+        imageElement.src = imageUrl;
+        imageElement.style.cssText = 'max-width: 90%; max-height: 90%; object-fit: contain; border-radius: 8px; box-shadow: 0 0 20px rgba(0, 0, 0, 0.5); transition: transform 0.05s ease-out; cursor: grab; touch-action: none;';
+        imageElement.draggable = false;
+        
+        let scale = 1;
+        const MIN_SCALE = 0.5;
+        const MAX_SCALE = 5;
+        const ZOOM_STEP = 0.1;
+        
+        let isDragging = false;
+        let hasMoved = false;
+        let startX = 0;
+        let startY = 0;
+        let translateX = 0;
+        let translateY = 0;
+        const MOVE_THRESHOLD = 5;
+        
+        let initialDistance = 0;
+        let initialScale = 1;
+        let pinchCenterX = 0;
+        let pinchCenterY = 0;
+        
+        let touchStartTime = 0;
+        let lastTap = 0;
+        
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '✕';
+        closeBtn.style.cssText = 'position: absolute; top: 20px; right: 20px; background: rgba(255, 255, 255, 0.2); border: none; color: white; font-size: 24px; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; display: flex; justify-content: center; align-items: center; z-index: 10001;';
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            modalOverlay.remove();
+        });
+        
+        const resetZoomBtn = document.createElement('button');
+        resetZoomBtn.innerHTML = '🔄';
+        resetZoomBtn.style.cssText = 'position: absolute; bottom: 20px; right: 20px; background: rgba(255, 255, 255, 0.2); border: none; color: white; font-size: 20px; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; display: flex; justify-content: center; align-items: center; z-index: 10001;';
+        resetZoomBtn.title = 'Сбросить масштаб';
+        resetZoomBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            scale = 1;
             translateX = 0;
             translateY = 0;
-        }
-    };
-    
-    const showZoomIndicator = () => {
-        zoomIndicator.style.opacity = '1';
-        clearTimeout(zoomIndicator.hideTimeout);
-        zoomIndicator.hideTimeout = setTimeout(() => {
-            zoomIndicator.style.opacity = '0';
-        }, 1000);
-    };
-    
-    // === Вспомогательные функции для touch ===
-    const getTouchDistance = (touches) => {
-        const dx = touches[0].clientX - touches[1].clientX;
-        const dy = touches[0].clientY - touches[1].clientY;
-        return Math.sqrt(dx * dx + dy * dy);
-    };
-    
-    const getTouchCenter = (touches) => {
-        return {
-            x: (touches[0].clientX + touches[1].clientX) / 2,
-            y: (touches[0].clientY + touches[1].clientY) / 2
-        };
-    };
-    
-    // === MOUSE EVENTS (десктоп) ===
-    
-    imageElement.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        
-        const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
-        const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale + delta));
-        
-        if (newScale !== scale) {
-            const rect = imageElement.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-            const mouseY = e.clientY - rect.top;
-            
-            const scaleRatio = newScale / scale;
-            
-            translateX = translateX - (mouseX - rect.width / 2) * (scaleRatio - 1);
-            translateY = translateY - (mouseY - rect.height / 2) * (scaleRatio - 1);
-            
-            scale = newScale;
             updateTransform();
-            showZoomIndicator();
-        }
-    }, { passive: false });
-    
-    imageElement.addEventListener('mousedown', (e) => {
-        if (e.button === 0) {
+            imageElement.style.cursor = 'grab';
+        });
+        
+        const zoomIndicator = document.createElement('div');
+        zoomIndicator.style.cssText = 'position: absolute; bottom: 20px; left: 20px; background: rgba(0, 0, 0, 0.6); color: white; padding: 6px 12px; border-radius: 20px; font-size: 14px; z-index: 10001; opacity: 0; transition: opacity 0.3s;';
+        zoomIndicator.textContent = '100%';
+        
+        const updateTransform = () => {
+            imageElement.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+            zoomIndicator.textContent = Math.round(scale * 100) + '%';
+            
+            if (scale > 1) {
+                imageElement.style.cursor = isDragging ? 'grabbing' : 'grab';
+            } else {
+                imageElement.style.cursor = 'default';
+                translateX = 0;
+                translateY = 0;
+            }
+        };
+        
+        const showZoomIndicator = () => {
+            zoomIndicator.style.opacity = '1';
+            clearTimeout(zoomIndicator.hideTimeout);
+            zoomIndicator.hideTimeout = setTimeout(() => {
+                zoomIndicator.style.opacity = '0';
+            }, 1000);
+        };
+        
+        const getTouchDistance = (touches) => {
+            const dx = touches[0].clientX - touches[1].clientX;
+            const dy = touches[0].clientY - touches[1].clientY;
+            return Math.sqrt(dx * dx + dy * dy);
+        };
+        
+        const getTouchCenter = (touches) => {
+            return {
+                x: (touches[0].clientX + touches[1].clientX) / 2,
+                y: (touches[0].clientY + touches[1].clientY) / 2
+            };
+        };
+        
+        imageElement.addEventListener('wheel', (e) => {
             e.preventDefault();
             e.stopPropagation();
             
-            hasMoved = false;
-            isDragging = true;
-            startX = e.clientX;
-            startY = e.clientY;
+            const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+            const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale + delta));
             
-            if (scale > 1) {
-                imageElement.style.cursor = 'grabbing';
-                imageElement.style.transition = 'none';
+            if (newScale !== scale) {
+                const rect = imageElement.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                const scaleRatio = newScale / scale;
+                
+                translateX = translateX - (mouseX - rect.width / 2) * (scaleRatio - 1);
+                translateY = translateY - (mouseY - rect.height / 2) * (scaleRatio - 1);
+                
+                scale = newScale;
+                updateTransform();
+                showZoomIndicator();
             }
-        }
-    });
-    
-    window.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
+        }, { passive: false });
         
-        const moveX = Math.abs(e.clientX - startX);
-        const moveY = Math.abs(e.clientY - startY);
+        imageElement.addEventListener('mousedown', (e) => {
+            if (e.button === 0) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                hasMoved = false;
+                isDragging = true;
+                startX = e.clientX;
+                startY = e.clientY;
+                
+                if (scale > 1) {
+                    imageElement.style.cursor = 'grabbing';
+                    imageElement.style.transition = 'none';
+                }
+            }
+        });
         
-        // Если движение больше порога, считаем что было перетаскивание
-        if (moveX > MOVE_THRESHOLD || moveY > MOVE_THRESHOLD) {
-            hasMoved = true;
-        }
-        
-        if (scale > 1) {
-            e.preventDefault();
-            const deltaX = e.clientX - startX;
-            const deltaY = e.clientY - startY;
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
             
-            translateX += deltaX;
-            translateY += deltaY;
-            
-            startX = e.clientX;
-            startY = e.clientY;
-            
-            updateTransform();
-        }
-    });
-    
-    window.addEventListener('mouseup', (e) => {
-        if (!isDragging) return;
-        
-        isDragging = false;
-        
-        if (scale > 1) {
-            imageElement.style.cursor = 'grab';
-            imageElement.style.transition = 'transform 0.05s ease-out';
-        }
-        
-        // Сбрасываем флаг движения после небольшой задержки
-        setTimeout(() => {
-            hasMoved = false;
-        }, 100);
-    });
-    
-    // === TOUCH EVENTS (мобильные) ===
-    
-    imageElement.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        
-        hasMoved = false;
-        touchStartTime = Date.now();
-        
-        const touches = e.touches;
-        
-        if (touches.length === 1) {
-            isDragging = true;
-            startX = touches[0].clientX;
-            startY = touches[0].clientY;
-        } else if (touches.length === 2) {
-            isDragging = false;
-            hasMoved = true; // Два пальца - точно жест, не клик
-            initialDistance = getTouchDistance(touches);
-            initialScale = scale;
-            
-            const center = getTouchCenter(touches);
-            pinchCenterX = center.x;
-            pinchCenterY = center.y;
-        }
-    }, { passive: false });
-    
-    imageElement.addEventListener('touchmove', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        
-        const touches = e.touches;
-        
-        if (touches.length === 1 && isDragging) {
-            const moveX = Math.abs(touches[0].clientX - startX);
-            const moveY = Math.abs(touches[0].clientY - startY);
+            const moveX = Math.abs(e.clientX - startX);
+            const moveY = Math.abs(e.clientY - startY);
             
             if (moveX > MOVE_THRESHOLD || moveY > MOVE_THRESHOLD) {
                 hasMoved = true;
             }
             
             if (scale > 1) {
-                const deltaX = touches[0].clientX - startX;
-                const deltaY = touches[0].clientY - startY;
+                e.preventDefault();
+                const deltaX = e.clientX - startX;
+                const deltaY = e.clientY - startY;
                 
                 translateX += deltaX;
                 translateY += deltaY;
                 
-                startX = touches[0].clientX;
-                startY = touches[0].clientY;
+                startX = e.clientX;
+                startY = e.clientY;
                 
                 updateTransform();
             }
-        } else if (touches.length === 2) {
-            const currentDistance = getTouchDistance(touches);
-            const center = getTouchCenter(touches);
+        });
+        
+        window.addEventListener('mouseup', (e) => {
+            if (!isDragging) return;
             
-            if (initialDistance > 0) {
-                const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, initialScale * (currentDistance / initialDistance)));
-                
-                if (newScale !== scale) {
-                    const rect = imageElement.getBoundingClientRect();
-                    const pinchRelativeX = pinchCenterX - rect.left;
-                    const pinchRelativeY = pinchCenterY - rect.top;
-                    
-                    const scaleRatio = newScale / scale;
-                    
-                    translateX = translateX - (pinchRelativeX - rect.width / 2) * (scaleRatio - 1);
-                    translateY = translateY - (pinchRelativeY - rect.height / 2) * (scaleRatio - 1);
-                    
-                    scale = newScale;
-                    updateTransform();
-                    showZoomIndicator();
-                }
+            isDragging = false;
+            
+            if (scale > 1) {
+                imageElement.style.cursor = 'grab';
+                imageElement.style.transition = 'transform 0.05s ease-out';
             }
             
-            pinchCenterX = center.x;
-            pinchCenterY = center.y;
-            initialDistance = currentDistance;
-            initialScale = scale;
-        }
-    }, { passive: false });
-    
-    imageElement.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+            setTimeout(() => {
+                hasMoved = false;
+            }, 100);
+        });
         
-        const now = Date.now();
-        const touchDuration = now - touchStartTime;
+        imageElement.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            hasMoved = false;
+            touchStartTime = Date.now();
+            
+            const touches = e.touches;
+            
+            if (touches.length === 1) {
+                isDragging = true;
+                startX = touches[0].clientX;
+                startY = touches[0].clientY;
+            } else if (touches.length === 2) {
+                isDragging = false;
+                hasMoved = true;
+                initialDistance = getTouchDistance(touches);
+                initialScale = scale;
+                
+                const center = getTouchCenter(touches);
+                pinchCenterX = center.x;
+                pinchCenterY = center.y;
+            }
+        }, { passive: false });
         
-        // Проверка на двойной тап
-        const timeSinceLastTap = now - lastTap;
-        if (timeSinceLastTap < 300 && timeSinceLastTap > 0 && !hasMoved && e.touches.length === 0) {
-            // Двойной тап - открыть в новой вкладке
+        imageElement.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const touches = e.touches;
+            
+            if (touches.length === 1 && isDragging) {
+                const moveX = Math.abs(touches[0].clientX - startX);
+                const moveY = Math.abs(touches[0].clientY - startY);
+                
+                if (moveX > MOVE_THRESHOLD || moveY > MOVE_THRESHOLD) {
+                    hasMoved = true;
+                }
+                
+                if (scale > 1) {
+                    const deltaX = touches[0].clientX - startX;
+                    const deltaY = touches[0].clientY - startY;
+                    
+                    translateX += deltaX;
+                    translateY += deltaY;
+                    
+                    startX = touches[0].clientX;
+                    startY = touches[0].clientY;
+                    
+                    updateTransform();
+                }
+            } else if (touches.length === 2) {
+                const currentDistance = getTouchDistance(touches);
+                const center = getTouchCenter(touches);
+                
+                if (initialDistance > 0) {
+                    const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, initialScale * (currentDistance / initialDistance)));
+                    
+                    if (newScale !== scale) {
+                        const rect = imageElement.getBoundingClientRect();
+                        const pinchRelativeX = pinchCenterX - rect.left;
+                        const pinchRelativeY = pinchCenterY - rect.top;
+                        
+                        const scaleRatio = newScale / scale;
+                        
+                        translateX = translateX - (pinchRelativeX - rect.width / 2) * (scaleRatio - 1);
+                        translateY = translateY - (pinchRelativeY - rect.height / 2) * (scaleRatio - 1);
+                        
+                        scale = newScale;
+                        updateTransform();
+                        showZoomIndicator();
+                    }
+                }
+                
+                pinchCenterX = center.x;
+                pinchCenterY = center.y;
+                initialDistance = currentDistance;
+                initialScale = scale;
+            }
+        }, { passive: false });
+        
+        imageElement.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const now = Date.now();
+            
+            const timeSinceLastTap = now - lastTap;
+            if (timeSinceLastTap < 300 && timeSinceLastTap > 0 && !hasMoved && e.touches.length === 0) {
+                if (clickTimer) {
+                    clearTimeout(clickTimer);
+                    clickTimer = null;
+                }
+                window.open(imageUrl, '_blank');
+                lastTap = 0;
+            } else {
+                lastTap = now;
+            }
+            
+            if (e.touches.length === 0) {
+                isDragging = false;
+                initialDistance = 0;
+            } else if (e.touches.length === 1) {
+                startX = e.touches[0].clientX;
+                startY = e.touches[0].clientY;
+            }
+            
+            setTimeout(() => {
+                hasMoved = false;
+            }, 100);
+        }, { passive: false });
+        
+        imageElement.addEventListener('touchcancel', (e) => {
+            isDragging = false;
+            hasMoved = false;
+            initialDistance = 0;
+        }, { passive: false });
+        
+        let clickTimer = null;
+        
+        imageElement.addEventListener('click', (e) => {
+            e.stopPropagation();
+            
+            if (hasMoved) {
+                return;
+            }
+            
+            if (clickTimer) {
+                clearTimeout(clickTimer);
+                clickTimer = null;
+                return;
+            }
+            
+            clickTimer = setTimeout(() => {
+                if (!hasMoved) {
+                    modalOverlay.remove();
+                }
+                clickTimer = null;
+            }, 200);
+        });
+        
+        imageElement.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            hasMoved = true;
             if (clickTimer) {
                 clearTimeout(clickTimer);
                 clickTimer = null;
             }
             window.open(imageUrl, '_blank');
-            lastTap = 0;
-        } else {
-            lastTap = now;
-        }
+        });
         
-        if (e.touches.length === 0) {
-            isDragging = false;
-            initialDistance = 0;
-        } else if (e.touches.length === 1) {
-            startX = e.touches[0].clientX;
-            startY = e.touches[0].clientY;
-        }
+        imageElement.addEventListener('auxclick', (e) => {
+            if (e.button === 1) {
+                e.preventDefault();
+                e.stopPropagation();
+                hasMoved = true;
+                scale = 1;
+                translateX = 0;
+                translateY = 0;
+                updateTransform();
+                showZoomIndicator();
+            }
+        });
         
-        // Сбрасываем флаг движения после задержки
-        setTimeout(() => {
-            hasMoved = false;
-        }, 100);
-    }, { passive: false });
-    
-    imageElement.addEventListener('touchcancel', (e) => {
-        isDragging = false;
-        hasMoved = false;
-        initialDistance = 0;
-    }, { passive: false });
-    
-    // === КЛИКИ (общие) ===
-    
-    let clickTimer = null;
-    
-    imageElement.addEventListener('click', (e) => {
-        e.stopPropagation();
+        imageElement.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+        });
         
-        // Если было движение (перетаскивание или зум) - игнорируем клик
-        if (hasMoved) {
-            return;
-        }
+        imageContainer.appendChild(imageElement);
+        modalOverlay.appendChild(imageContainer);
+        modalOverlay.appendChild(closeBtn);
+        modalOverlay.appendChild(resetZoomBtn);
+        modalOverlay.appendChild(zoomIndicator);
         
-        if (clickTimer) {
-            clearTimeout(clickTimer);
-            clickTimer = null;
-            return;
-        }
-        
-        clickTimer = setTimeout(() => {
-            // Дополнительная проверка: если было движение за время таймера - не закрываем
-            if (!hasMoved) {
+        modalOverlay.addEventListener('click', (e) => {
+            if (e.target === modalOverlay || e.target === imageContainer) {
                 modalOverlay.remove();
             }
-            clickTimer = null;
-        }, 200);
-    });
-    
-    imageElement.addEventListener('dblclick', (e) => {
-        e.stopPropagation();
-        hasMoved = true; // Предотвращаем последующий click
-        if (clickTimer) {
-            clearTimeout(clickTimer);
-            clickTimer = null;
-        }
-        window.open(imageUrl, '_blank');
-    });
-    
-    // Сброс масштаба по средней кнопке мыши
-    imageElement.addEventListener('auxclick', (e) => {
-        if (e.button === 1) {
-            e.preventDefault();
-            e.stopPropagation();
-            hasMoved = true;
-            scale = 1;
-            translateX = 0;
-            translateY = 0;
-            updateTransform();
-            showZoomIndicator();
-        }
-    });
-    
-    // Предотвращаем контекстное меню на картинке
-    imageElement.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-    });
-    
-    imageContainer.appendChild(imageElement);
-    modalOverlay.appendChild(imageContainer);
-    modalOverlay.appendChild(closeBtn);
-    modalOverlay.appendChild(resetZoomBtn);
-    modalOverlay.appendChild(zoomIndicator);
-    
-    // Клик по оверлею - закрыть
-    modalOverlay.addEventListener('click', (e) => {
-        if (e.target === modalOverlay || e.target === imageContainer) {
-            modalOverlay.remove();
-        }
-    });
-    
-    // Escape - закрыть
-    const escHandler = (e) => {
-        if (e.key === 'Escape') {
-            modalOverlay.remove();
-            document.removeEventListener('keydown', escHandler);
-        }
-    };
-    document.addEventListener('keydown', escHandler);
-    
-    document.body.style.overflow = 'hidden';
-    
-    const originalRemove = modalOverlay.remove;
-    modalOverlay.remove = function() {
-        document.body.style.overflow = '';
-        originalRemove.call(this);
-    };
-    
-    document.body.appendChild(modalOverlay);
-}
+        });
+        
+        const escHandler = (e) => {
+            if (e.key === 'Escape') {
+                modalOverlay.remove();
+                document.removeEventListener('keydown', escHandler);
+            }
+        };
+        document.addEventListener('keydown', escHandler);
+        
+        document.body.style.overflow = 'hidden';
+        
+        const originalRemove = modalOverlay.remove;
+        modalOverlay.remove = function() {
+            document.body.style.overflow = '';
+            originalRemove.call(this);
+        };
+        
+        document.body.appendChild(modalOverlay);
+    }
 
     static updateMessageReadStatus(messageId, readBy) {
         const msgEl = document.querySelector(`.message[data-message-id="${messageId}"]`);
@@ -1518,12 +1526,12 @@ static openImageModal(imageUrl) {
         if (this.openPickers.has(messageId)) this.updateInlinePickerButtons(msgEl, reactions);
     }
 
-static _renderEmbed(embed) {
-    if (!embed) return '';
-    if (embed.error) {
-        const url = embed.url || '';
-        const hostname = (() => { try { return new URL(url).hostname; } catch { return ''; } })();
-        return `
+    static _renderEmbed(embed) {
+        if (!embed) return '';
+        if (embed.error) {
+            const url = embed.url || '';
+            const hostname = (() => { try { return new URL(url).hostname; } catch { return ''; } })();
+            return `
 <div class="message-embed embed-error">
 <div class="embed-content">
 <div class="embed-header">
@@ -1533,19 +1541,19 @@ static _renderEmbed(embed) {
 <div class="embed-description" style="color:#888;font-size:12px;">⚠️ Не удалось загрузить превью</div>
 </div>
 </div>`;
-    }
-    if (embed.provider === 'direct_media' && embed.image) {
-        const imageUrl = embed.imageData?.thumbnailPath || embed.image;
-        const fullImageUrl = embed.imageData?.localPath || embed.image;
-        return `
+        }
+        if (embed.provider === 'direct_media' && embed.image) {
+            const imageUrl = embed.imageData?.thumbnailPath || embed.image;
+            const fullImageUrl = embed.imageData?.localPath || embed.image;
+            return `
 <div class="message-embed embed-image-only">
 <div class="embed-image-container" data-full-image="${this.escapeHtml(fullImageUrl)}">
 <img src="${this.escapeHtml(imageUrl)}" alt="Изображение" loading="eager" style="max-width:100%; max-height:400px; border-radius:8px; cursor:pointer;">
 </div>
 </div>`;
-    }
-    if (embed.provider === 'direct_media' && embed.video) {
-        return `
+        }
+        if (embed.provider === 'direct_media' && embed.video) {
+            return `
 <div class="message-embed embed-video">
 <div class="embed-content">
 <div class="embed-header">
@@ -1555,30 +1563,30 @@ static _renderEmbed(embed) {
 <div class="embed-description" style="color:#888;font-size:12px;">Нажмите для просмотра</div>
 </div>
 </div>`;
-    }
-    const title = this.escapeHtml(embed.title || 'Без названия');
-    const description = this.escapeHtml(embed.description || '');
-    const siteName = this.escapeHtml(embed.siteName || '');
-    const url = embed.url || '';
-    let imageHtml = '';
-    if (embed.imageData && embed.imageData.thumbnailPath) {
-        const imageUrl = embed.imageData.thumbnailPath;
-        const fullImageUrl = embed.imageData.localPath || embed.image;
-        imageHtml = `
+        }
+        const title = this.escapeHtml(embed.title || 'Без названия');
+        const description = this.escapeHtml(embed.description || '');
+        const siteName = this.escapeHtml(embed.siteName || '');
+        const url = embed.url || '';
+        let imageHtml = '';
+        if (embed.imageData && embed.imageData.thumbnailPath) {
+            const imageUrl = embed.imageData.thumbnailPath;
+            const fullImageUrl = embed.imageData.localPath || embed.image;
+            imageHtml = `
 <div class="embed-thumbnail" data-full-image="${this.escapeHtml(fullImageUrl)}">
 <img src="${this.escapeHtml(imageUrl)}" alt="${title}" loading="eager">
 </div>`;
-    } else if (embed.image) {
-        imageHtml = `
+        } else if (embed.image) {
+            imageHtml = `
 <div class="embed-thumbnail">
 <img src="${this.escapeHtml(embed.image)}" alt="${title}" loading="eager" referrerpolicy="no-referrer">
 </div>`;
-    }
-    let faviconHtml = '';
-    if (embed.favicon) {
-        faviconHtml = `<img class="embed-favicon" src="${this.escapeHtml(embed.favicon)}" alt="" loading="eager">`;
-    }
-    return `
+        }
+        let faviconHtml = '';
+        if (embed.favicon) {
+            faviconHtml = `<img class="embed-favicon" src="${this.escapeHtml(embed.favicon)}" alt="" loading="eager">`;
+        }
+        return `
 <div class="message-embed" data-embed-url="${this.escapeHtml(url)}">
 ${imageHtml}
 <div class="embed-content">
@@ -1591,7 +1599,7 @@ ${description ? `<div class="embed-description">${description}</div>` : ''}
 </div>
 </div>
 `;
-}
+    }
 
     static updateMessageEmbed(messageId, embed) {
         const msgEl = document.querySelector(`.message[data-message-id="${messageId}"]`);

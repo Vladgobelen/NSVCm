@@ -363,6 +363,10 @@ static showNotification(message, type = 'info', duration = 3000) {
     return notification;
 }
 
+static updateMessageAvatarsForUser(userId) {
+    MessageRenderer._updateMessageAvatarsForUser(userId);
+}
+
 static updateMicButton(status) {
     const STATES = {
         disconnected: { class: 'disconnected', text: '🎤', title: 'Не подключен к голосовому каналу' },

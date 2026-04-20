@@ -1,3 +1,5 @@
+import UIManager from './UIManager.js';
+
 class AvatarManager {
     static _cache = new Map();
     static _client = null;
@@ -34,6 +36,10 @@ class AvatarManager {
             const data = await response.json();
             const avatarUrl = data.avatarUrl || data.url;
             this._cache.set(userId, avatarUrl);
+            
+            // 🔥 НОВОЕ: Обновляем UI после загрузки аватара
+            this._updateUIAfterFetch([userId]);
+            
             return avatarUrl;
         }).catch((error) => {
             console.error('❌ [AvatarManager] Critical upload error:', error.message);
@@ -55,6 +61,8 @@ class AvatarManager {
                 const data = await response.json();
                 if (data.avatarUrl) {
                     this._cache.set(userId, data.avatarUrl);
+                    // 🔥 НОВОЕ: Обновляем UI после загрузки
+                    this._updateUIAfterFetch([userId]);
                     return true;
                 }
             }
@@ -66,7 +74,7 @@ class AvatarManager {
 
     static async fetchUsers(userIds) {
         if (!Array.isArray(userIds) || userIds.length === 0) return false;
-        // Фильтруем только тех, кого нет в кэше и кто валиден
+        
         const missing = userIds.filter(id => id && !this._cache.has(id));
         if (missing.length === 0) return false;
         
@@ -88,12 +96,37 @@ class AvatarManager {
             }
         } catch (error) {
             console.error('❌ [AvatarManager] Critical batch fetch error:', error.message);
-            // Фоллбэк: пробуем загрузить по одному
             for (const uid of missing) {
                 if (await this.fetchUser(uid)) updated = true;
             }
         }
+        
+        // 🔥 НОВОЕ: После загрузки обновляем все аватары в UI
+        if (updated) {
+            this._updateUIAfterFetch(missing);
+        }
+        
         return updated;
+    }
+
+    // 🔥 НОВЫЙ МЕТОД: Обновление UI после загрузки аватаров
+    static _updateUIAfterFetch(userIds) {
+        // Обновляем аватары в панели участников
+        import('./MemberListRenderer.js').then(module => {
+            module.default.updateAllAvatars();
+        }).catch(() => {});
+        
+        // Обновляем аватары в мобильной панели
+        import('./MobileOnlineBar.js').then(module => {
+            module.default.updateAllAvatars();
+        }).catch(() => {});
+        
+        // Обновляем аватары в сообщениях чата
+        import('./MessageRenderer.js').then(module => {
+            userIds.forEach(userId => {
+                module.default._updateMessageAvatarsForUser(userId);
+            });
+        }).catch(() => {});
     }
 }
 
