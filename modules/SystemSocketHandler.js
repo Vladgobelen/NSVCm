@@ -165,37 +165,58 @@ class SystemSocketHandler {
         UIManager.showLiveNotification(this.client, payload);
     }
 
-    handlePersonalNotification(payload) {
-        let shouldShowBanner = false;
-        let soundType = null;
+handlePersonalNotification(payload) {
+    console.log('🔔 [PERSONAL] ========== НАЧАЛО ОБРАБОТКИ ==========');
+    console.log('🔔 [PERSONAL] Получен payload:', JSON.stringify(payload, null, 2));
+    console.log('🔔 [PERSONAL] currentRoom:', this.client.currentRoom);
+    console.log('🔔 [PERSONAL] roomId из payload:', payload.roomId);
+    
+    let shouldShowBanner = false;
+    let soundType = null;
 
-        if (payload.type === 'reply') {
-            shouldShowBanner = SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_REPLY);
-            soundType = SoundManager.SoundTypes.SOUND_REPLY;
-        } else if (payload.type === 'mention' || payload.type === 'name_mention') {
-            shouldShowBanner = SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_MENTION);
-            soundType = SoundManager.SoundTypes.SOUND_MENTION;
-        } else if (payload.isDirectMessage) {
-            shouldShowBanner = SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_DM);
-            soundType = SoundManager.SoundTypes.SOUND_DM;
-        }
-
-        if (shouldShowBanner) {
-            UIManager.showLiveNotification(this.client, payload);
-        }
-
-        // 🔥 ИСПРАВЛЕНИЕ ДУБЛЕЙ:
-        // Если мы находимся в комнате, откуда пришло уведомление, то ChatSocketHandler 
-        // уже воспроизвел специфичный звук (например, SOUND_CURRENT_REPLY).
-        // Этот хендлер пытается воспроизвести общий звук (SOUND_REPLY), и из-за разных
-        // идентификаторов SoundManager играл оба звука подряд.
-        // Теперь мы проверяем контекст: если мы уже в этой комнате — заглушаем звук.
-        const isCurrentContext = payload.roomId === this.client.currentRoom;
-
-        if (soundType && !isCurrentContext) {
-            SoundManager.playSound(soundType);
-        }
+    if (payload.type === 'reply') {
+        console.log('🔔 [PERSONAL] Тип: reply');
+        shouldShowBanner = SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_REPLY);
+        soundType = SoundManager.SoundTypes.SOUND_REPLY;
+        console.log('🔔 [PERSONAL] NOTIFY_REPLY enabled:', shouldShowBanner);
+    } else if (payload.type === 'mention' || payload.type === 'name_mention') {
+        console.log('🔔 [PERSONAL] Тип: mention/name_mention');
+        shouldShowBanner = SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_MENTION);
+        soundType = SoundManager.SoundTypes.SOUND_MENTION;
+        console.log('🔔 [PERSONAL] NOTIFY_MENTION enabled:', shouldShowBanner);
+    } else if (payload.isDirectMessage) {
+        console.log('🔔 [PERSONAL] Тип: direct message');
+        shouldShowBanner = SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_DM);
+        soundType = SoundManager.SoundTypes.SOUND_DM;
+        console.log('🔔 [PERSONAL] NOTIFY_DM enabled:', shouldShowBanner);
+    } else {
+        console.log('🔔 [PERSONAL] Неизвестный тип payload:', payload.type);
     }
+
+    console.log('🔔 [PERSONAL] shouldShowBanner итог:', shouldShowBanner);
+    console.log('🔔 [PERSONAL] soundType итог:', soundType);
+
+    if (shouldShowBanner) {
+        console.log('🔔 [PERSONAL] ВЫЗЫВАЕМ UIManager.showLiveNotification');
+        UIManager.showLiveNotification(this.client, payload);
+    } else {
+        console.log('🔔 [PERSONAL] ПРОПУСКАЕМ баннер (shouldShowBanner = false)');
+    }
+
+    const isCurrentContext = payload.roomId === this.client.currentRoom;
+    console.log('🔔 [PERSONAL] isCurrentContext:', isCurrentContext, `(${payload.roomId} === ${this.client.currentRoom})`);
+
+    if (soundType && !isCurrentContext) {
+        console.log('🔔 [PERSONAL] ВОСПРОИЗВОДИМ звук:', soundType);
+        SoundManager.playSound(soundType);
+    } else if (soundType && isCurrentContext) {
+        console.log('🔔 [PERSONAL] ПРОПУСКАЕМ звук (текущий контекст)');
+    } else if (!soundType) {
+        console.log('🔔 [PERSONAL] Нет soundType для воспроизведения');
+    }
+    
+    console.log('🔔 [PERSONAL] ========== КОНЕЦ ОБРАБОТКИ ==========');
+}
 
     async handleInitSecondaryChat(data) {
         if (data?.roomId && !this.client.secondaryChat.enabled) {

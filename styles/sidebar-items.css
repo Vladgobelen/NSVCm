@@ -1,0 +1,22 @@
+.server-item,
+.room-item {
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+.server-item:hover,
+.room-item:hover {
+  background: var(--bg-modifier);
+}
+
+.server-item.active,
+.room-item.active {
+  background: var(--accent);
+}

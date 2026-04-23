@@ -55,7 +55,7 @@ class ModalManager {
         input.focus();
     }
 
-    static _renderSettingsContent() {
+    static _renderSettingsContent(client) {
         const soundGroups = SoundManager.getGroupedSoundTypes();
         let soundsHtml = '';
         for (const group of soundGroups) {
@@ -83,9 +83,19 @@ class ModalManager {
             `;
         }
 
-        // ✅ Инициализируем SettingsManager и получаем настройку
         SettingsManager.init();
         const copyOnClick = SettingsManager.getCopyOnClick();
+
+        // Чтение аудио настроек из клиента
+        const audioDTX = client?.audioDTX ?? true;
+        const audioNoiseSuppression = client?.audioNoiseSuppression ?? true;
+        const audioEchoCancellation = client?.audioEchoCancellation ?? true;
+        const audioAutoGainControl = client?.audioAutoGainControl ?? true;
+        const audioRNNoise = client?.audioRNNoise ?? true;
+        const audioMaxBitrate = client?.audioMaxBitrate ?? 48;
+        const audioInputGain = client?.audioInputGain ?? 1.0;
+        const audioChannelMode = client?.audioChannelMode ?? 'mono';
+	const audioEchoCancellationType = client?.audioEchoCancellationType ?? 'browser';
 
         return `
         <div class="settings-modal-container">
@@ -93,11 +103,11 @@ class ModalManager {
                 <button class="settings-tab active" data-tab="general">⚙️ Основные</button>
                 <button class="settings-tab" data-tab="sounds">🔊 Звуки</button>
                 <button class="settings-tab" data-tab="ui">💬 Интерфейс</button>
+                <button class="settings-tab" data-tab="audio">🎤 Аудио</button>
             </div>
             <div class="settings-tab-content active" data-tab-content="general">
                 <div class="settings-section">
-                    <button id="force-refresh-btn" style="width: 100%; padding: 12px; background: #5865f2; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s, transform 0.1s; display: flex; align-items: center; justify-content: center; gap: 8px;">⚡ Принудительно обновить</button>
-                    <div style="margin-top: 12px; font-size: 12px; color: #888; text-align: center; line-height: 1.4;">Очистит Service Worker кэш и перезагрузит страницу</div>
+                    <div style="padding: 20px; text-align: center; color: #888; font-size: 13px;">Основные настройки</div>
                 </div>
             </div>
             <div class="settings-tab-content" data-tab-content="sounds">
@@ -114,6 +124,63 @@ class ModalManager {
                         <input type="checkbox" id="copy-on-click-checkbox" style="width: 18px; height: 18px; cursor: pointer; accent-color: #5865f2;" ${copyOnClick ? 'checked' : ''}>
                         <span>Копировать сообщение в буфер при клике</span>
                     </label>
+                </div>
+            </div>
+            <div class="settings-tab-content" data-tab-content="audio">
+                <div class="audio-settings-container" style="padding: 8px 0; display: flex; flex-direction: column; gap: 16px;">
+                    <label style="display: flex; align-items: center; gap: 10px; color: #b0b0c0; font-size: 13px; cursor: pointer;">
+                        <input type="checkbox" id="audio-dtx" ${audioDTX ? 'checked' : ''}>
+                        <span>🔇 DTX (не передавать тишину)</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 10px; color: #b0b0c0; font-size: 13px; cursor: pointer;">
+                        <input type="checkbox" id="audio-noise" ${audioNoiseSuppression ? 'checked' : ''}>
+                        <span>🎛️ Шумоподавление браузера</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 10px; color: #b0b0c0; font-size: 13px; cursor: pointer;">
+                        <input type="checkbox" id="audio-echo" ${audioEchoCancellation ? 'checked' : ''}>
+                        <span>🔄 Эхоподавление (AEC)</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 10px; color: #b0b0c0; font-size: 13px; cursor: pointer;">
+                        <input type="checkbox" id="audio-agc" ${audioAutoGainControl ? 'checked' : ''}>
+                        <span>📢 Автоусиление (AGC)</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 10px; color: #b0b0c0; font-size: 13px; cursor: pointer;">
+                        <input type="checkbox" id="audio-rnnoise" ${audioRNNoise ? 'checked' : ''}>
+                        <span>🧠 RNNoise (нейросетевое шумоподавление)</span>
+                    </label>
+                    
+                    <div style="margin-top: 8px;">
+                        <label style="display: flex; justify-content: space-between; color: #b0b0c0; font-size: 13px; margin-bottom: 8px;">
+                            <span>📊 Макс. битрейт: <span id="bitrate-value">${audioMaxBitrate}</span> kbps</span>
+                        </label>
+                        <input type="range" id="audio-bitrate" min="16" max="128" value="${audioMaxBitrate}" step="8" style="width: 100%; margin: 8px 0;">
+                    </div>
+                    
+                    <div style="margin-top: 8px;">
+                        <label style="display: flex; justify-content: space-between; color: #b0b0c0; font-size: 13px; margin-bottom: 8px;">
+                            <span>🎤 Усиление микрофона: <span id="gain-value">${Math.round(audioInputGain * 100)}</span>%</span>
+                        </label>
+                        <input type="range" id="audio-gain" min="0" max="200" value="${Math.round(audioInputGain * 100)}" step="10" style="width: 100%; margin: 8px 0;">
+                    </div>
+                    
+                    <div style="margin-top: 8px;">
+                        <label style="display: block; color: #b0b0c0; font-size: 13px; margin-bottom: 8px;">📻 Режим канала:</label>
+                        <select id="audio-channels" style="width: 100%; padding: 8px 12px; background: #1a1a2e; border: 1px solid #404060; color: #e0e0e0; border-radius: 6px; font-size: 13px;">
+                            <option value="mono" ${audioChannelMode === 'mono' ? 'selected' : ''}>Моно</option>
+                            <option value="stereo" ${audioChannelMode === 'stereo' ? 'selected' : ''}>Стерео</option>
+                        </select>
+			<div style="margin-top: 8px;">
+    <label style="display: block; color: #b0b0c0; font-size: 13px; margin-bottom: 8px;">🔄 Тип эхоподавления:</label>
+    <select id="audio-echo-type" style="width: 100%; padding: 8px 12px; background: #1a1a2e; border: 1px solid #404060; color: #e0e0e0; border-radius: 6px; font-size: 13px;">
+        <option value="browser" ${audioEchoCancellationType === 'browser' ? 'selected' : ''}>Браузерное</option>
+        <option value="system" ${audioEchoCancellationType === 'system' ? 'selected' : ''}>Системное</option>
+    </select>
+</div>
+                    </div>
+                    
+                    <div class="audio-settings-footer" style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #404060;">
+                        <button id="audio-reset-defaults" style="width: 100%; padding: 10px; background: #404060; color: #e0e0e0; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background 0.2s ease;">Сбросить настройки аудио</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -134,15 +201,15 @@ class ModalManager {
             <button id="close-settings-modal" style="position: absolute; top: 12px; right: 12px; background: none; border: none; color: #aaa; font-size: 22px; cursor: pointer; line-height: 1; z-index: 10;">&times;</button>
             <h3 style="margin: 0; padding: 20px 24px 16px; color: #e0e0e0; font-size: 16px; font-weight: 600; border-bottom: 1px solid #404060;">⚙️ Настройки</h3>
             <div id="settings-dynamic-content" style="padding: 20px 24px; overflow-y: auto; flex: 1;">
-                ${this._renderSettingsContent()}
+                ${this._renderSettingsContent(client)}
             </div>
         </div>
         `;
         document.body.appendChild(modal);
         this._initSettingsTabs(modal);
         this._initSoundCheckboxes(modal);
+        this._initAudioSettings(modal, client); // <-- Вызов метода инициализации аудио
 
-        // ✅ Инициализация чекбокса копирования через SettingsManager
         const copyCheckbox = modal.querySelector('#copy-on-click-checkbox');
         if (copyCheckbox) {
             copyCheckbox.addEventListener('change', (e) => {
@@ -151,34 +218,12 @@ class ModalManager {
         }
 
         const closeBtn = modal.querySelector('#close-settings-modal');
-        const refreshBtn = modal.querySelector('#force-refresh-btn');
         const closeModal = () => {
             modal.style.opacity = '0';
             setTimeout(() => modal.remove(), 200);
         };
         closeBtn.addEventListener('click', closeModal);
         modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
-        if (refreshBtn) {
-            refreshBtn.addEventListener('mouseenter', () => refreshBtn.style.background = '#4752c4');
-            refreshBtn.addEventListener('mouseleave', () => refreshBtn.style.background = '#5865f2');
-            refreshBtn.addEventListener('mousedown', () => refreshBtn.style.transform = 'scale(0.98)');
-            refreshBtn.addEventListener('mouseup', () => refreshBtn.style.transform = 'scale(1)');
-            refreshBtn.addEventListener('click', () => {
-                refreshBtn.disabled = true;
-                refreshBtn.textContent = '⏳ Очистка...';
-                try {
-                    if ('caches' in window) {
-                        caches.keys().then(keys => keys.forEach(key => caches.delete(key)));
-                    }
-                    sessionStorage.clear();
-                    const url = new URL(window.location.href);
-                    url.searchParams.set('v', Date.now());
-                    window.location.href = url.toString();
-                } catch (e) {
-                    window.location.reload(true);
-                }
-            });
-        }
     }
 
     static _initSettingsTabs(modal) {
@@ -216,6 +261,78 @@ class ModalManager {
                     const soundType = cb.dataset.soundType;
                     cb.checked = SoundManager.isEnabled(soundType);
                 });
+            });
+        }
+    }
+
+    static _initAudioSettings(modal, client) {
+        if (!client) return;
+
+        const dtxCheckbox = modal.querySelector('#audio-dtx');
+        const noiseCheckbox = modal.querySelector('#audio-noise');
+        const echoCheckbox = modal.querySelector('#audio-echo');
+        const agcCheckbox = modal.querySelector('#audio-agc');
+        const rnnoiseCheckbox = modal.querySelector('#audio-rnnoise');
+        const bitrateSlider = modal.querySelector('#audio-bitrate');
+        const bitrateValue = modal.querySelector('#bitrate-value');
+        const gainSlider = modal.querySelector('#audio-gain');
+        const gainValue = modal.querySelector('#gain-value');
+        const channelsSelect = modal.querySelector('#audio-channels');
+        const echoTypeSelect = modal.querySelector('#audio-echo-type');
+	const resetBtn = modal.querySelector('#audio-reset-defaults');
+
+        const saveAudioSettings = () => {
+            client.audioDTX = dtxCheckbox?.checked ?? true;
+            client.audioNoiseSuppression = noiseCheckbox?.checked ?? true;
+            client.audioEchoCancellation = echoCheckbox?.checked ?? true;
+            client.audioAutoGainControl = agcCheckbox?.checked ?? true;
+            client.audioRNNoise = rnnoiseCheckbox?.checked ?? true;
+            client.audioMaxBitrate = parseInt(bitrateSlider?.value || '48', 10);
+            client.audioInputGain = parseInt(gainSlider?.value || '100', 10) / 100;
+            client.audioChannelMode = channelsSelect?.value || 'mono';
+            client.audioEchoCancellationType = echoTypeSelect?.value || 'browser';
+	    client.saveAudioSettings();
+        };
+
+        if (dtxCheckbox) dtxCheckbox.addEventListener('change', saveAudioSettings);
+        if (noiseCheckbox) noiseCheckbox.addEventListener('change', saveAudioSettings);
+        if (echoCheckbox) echoCheckbox.addEventListener('change', saveAudioSettings);
+        if (agcCheckbox) agcCheckbox.addEventListener('change', saveAudioSettings);
+        if (rnnoiseCheckbox) rnnoiseCheckbox.addEventListener('change', saveAudioSettings);
+
+        if (bitrateSlider && bitrateValue) {
+            bitrateSlider.addEventListener('input', () => {
+                bitrateValue.textContent = bitrateSlider.value;
+            });
+            bitrateSlider.addEventListener('change', saveAudioSettings);
+        }
+
+        if (gainSlider && gainValue) {
+            gainSlider.addEventListener('input', () => {
+                gainValue.textContent = gainSlider.value;
+            });
+            gainSlider.addEventListener('change', saveAudioSettings);
+        }
+
+        if (channelsSelect) {
+            channelsSelect.addEventListener('change', saveAudioSettings);
+        }
+
+        if (resetBtn) {
+            resetBtn.addEventListener('click', () => {
+                client.resetAudioSettingsToDefaults();
+                
+                if (dtxCheckbox) dtxCheckbox.checked = client.audioDTX;
+                if (noiseCheckbox) noiseCheckbox.checked = client.audioNoiseSuppression;
+                if (echoCheckbox) echoCheckbox.checked = client.audioEchoCancellation;
+                if (agcCheckbox) agcCheckbox.checked = client.audioAutoGainControl;
+                if (rnnoiseCheckbox) rnnoiseCheckbox.checked = client.audioRNNoise;
+                if (bitrateSlider) bitrateSlider.value = client.audioMaxBitrate;
+                if (bitrateValue) bitrateValue.textContent = client.audioMaxBitrate;
+                if (gainSlider) gainSlider.value = Math.round(client.audioInputGain * 100);
+                if (gainValue) gainValue.textContent = Math.round(client.audioInputGain * 100);
+                if (channelsSelect) channelsSelect.value = client.audioChannelMode;
+if (echoTypeSelect) echoTypeSelect.value = client.audioEchoCancellationType;
             });
         }
     }

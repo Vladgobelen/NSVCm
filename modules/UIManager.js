@@ -39,10 +39,11 @@ class UIManager {
         MobileOnlineBar.init();
         this._initReactionTooltips();
     }
-static initDesktopSwipe() {
-    // Отключено - используем CSS медиа-запросы
-    return;
-}
+
+    static initDesktopSwipe() {
+        return;
+    }
+
     static _initReactionTooltips() {
         if (this._tooltipsInitialized) return;
         this._tooltipsInitialized = true;
@@ -232,17 +233,14 @@ static initDesktopSwipe() {
 
     static updateMembersList(members) { MemberListRenderer.updateMembersList(members); }
     
-static updateMembersListWithStatus(onlineMembers, offlineMembers) {
-    if (AvatarManager) {
-        const allMembers = [...(onlineMembers || []), ...(offlineMembers || [])];
-        // Загружаем аватары асинхронно, не блокируя UI
-        AvatarManager.fetchUsers(allMembers.map(m => m.userId)).catch(() => {});
-        
-        // Обновляем панель только если есть реальные изменения
-        MobileOnlineBar.update(onlineMembers);
+    static updateMembersListWithStatus(onlineMembers, offlineMembers) {
+        if (AvatarManager) {
+            const allMembers = [...(onlineMembers || []), ...(offlineMembers || [])];
+            AvatarManager.fetchUsers(allMembers.map(m => m.userId)).catch(() => {});
+            MobileOnlineBar.update(onlineMembers);
+        }
+        MemberListRenderer.updateMembersListWithStatus(onlineMembers, offlineMembers);
     }
-    MemberListRenderer.updateMembersListWithStatus(onlineMembers, offlineMembers);
-}
 
     static syncVolumeSliders() { MemberListRenderer.syncVolumeSliders(); }
     static showVolumeSliderByUserId(producerId, userId) { MemberListRenderer.showVolumeSliderByUserId(producerId, userId); }
@@ -302,106 +300,98 @@ static updateMembersListWithStatus(onlineMembers, offlineMembers) {
         }
     }
 
-static showNotification(message, type = 'info', duration = 3000) {
-    // Удаляем предыдущее уведомление если есть
-    const existingNotification = document.querySelector('.mic-notification');
-    if (existingNotification) {
-        existingNotification.remove();
-    }
-    
-    const notification = document.createElement('div');
-    notification.className = `mic-notification mic-notification-${type}`;
-    notification.style.cssText = `
-        position: fixed;
-        bottom: 80px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: ${type === 'error' ? '#ed4245' : type === 'success' ? '#2ecc71' : '#5865f2'};
-        color: white;
-        padding: 10px 20px;
-        border-radius: 8px;
-        font-size: 14px;
-        font-weight: 500;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        z-index: 10000;
-        animation: slideUp 0.3s ease;
-        white-space: nowrap;
-    `;
-    notification.textContent = message;
-    
-    // Добавляем стили если их нет
-    if (!document.getElementById('mic-notification-styles')) {
-        const style = document.createElement('style');
-        style.id = 'mic-notification-styles';
-        style.textContent = `
-            @keyframes slideUp {
-                from { opacity: 0; transform: translate(-50%, 20px); }
-                to { opacity: 1; transform: translate(-50%, 0); }
-            }
-            @keyframes slideDown {
-                from { opacity: 1; transform: translate(-50%, 0); }
-                to { opacity: 0; transform: translate(-50%, 20px); }
-            }
-            .mic-notification.fade-out {
-                animation: slideDown 0.3s ease forwards;
-            }
-        `;
-        document.head.appendChild(style);
-    }
-    
-    document.body.appendChild(notification);
-    
-    // Если duration > 0 - автоматически скрываем
-    if (duration > 0) {
-        setTimeout(() => {
-            notification.classList.add('fade-out');
-            setTimeout(() => notification.remove(), 300);
-        }, duration);
-    }
-    
-    // 🔥 ВОЗВРАЩАЕМ ЭЛЕМЕНТ чтобы можно было обновить
-    return notification;
-}
-
-static updateMessageAvatarsForUser(userId) {
-    MessageRenderer._updateMessageAvatarsForUser(userId);
-}
-
-static updateMicButton(status) {
-    const STATES = {
-        disconnected: { class: 'disconnected', text: '🎤', title: 'Не подключен к голосовому каналу' },
-        connecting: { class: 'connecting', text: '🎤', title: 'Подключение микрофона...' },
-        connected: { class: 'connected', text: '🎤', title: 'Микрофон выключен (нажмите чтобы включить)' },
-        active: { class: 'active', text: '🔴', title: 'Микрофон включен (нажмите чтобы выключить)' },
-        paused: { class: 'paused', text: '⏸️', title: 'Микрофон на паузе (нажмите чтобы включить)' },
-        error: { class: 'error', text: '❌', title: 'Ошибка доступа к микрофону' }
-    };
-    
-    const state = STATES[status] || STATES.disconnected;
-    
-    ['.mic-button', '.mic-toggle-btn'].forEach(sel => {
-        const element = document.querySelector(sel);
-        if (element) {
-            // Удаляем все возможные классы состояний
-            element.classList.remove('disconnected', 'connecting', 'connected', 'active', 'paused', 'error');
-            // Добавляем нужный класс
-            element.classList.add(state.class);
-            element.textContent = state.text;
-            element.title = state.title;
-            
-            // 🔥 НЕ МЕНЯЕМ position и не добавляем ::after псевдоэлементы!
-            // Только меняем прозрачность для состояния connecting
-            if (status === 'connecting') {
-                element.style.opacity = '0.7';
-                element.style.cursor = 'wait';
-            } else {
-                element.style.opacity = '';
-                element.style.cursor = '';
-                element.style.pointerEvents = '';
-            }
+    static showNotification(message, type = 'info', duration = 3000) {
+        const existingNotification = document.querySelector('.mic-notification');
+        if (existingNotification) {
+            existingNotification.remove();
         }
-    });
-}
+        
+        const notification = document.createElement('div');
+        notification.className = `mic-notification mic-notification-${type}`;
+        notification.style.cssText = `
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: ${type === 'error' ? '#ed4245' : type === 'success' ? '#2ecc71' : '#5865f2'};
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 10000;
+            animation: slideUp 0.3s ease;
+            white-space: nowrap;
+        `;
+        notification.textContent = message;
+        
+        if (!document.getElementById('mic-notification-styles')) {
+            const style = document.createElement('style');
+            style.id = 'mic-notification-styles';
+            style.textContent = `
+                @keyframes slideUp {
+                    from { opacity: 0; transform: translate(-50%, 20px); }
+                    to { opacity: 1; transform: translate(-50%, 0); }
+                }
+                @keyframes slideDown {
+                    from { opacity: 1; transform: translate(-50%, 0); }
+                    to { opacity: 0; transform: translate(-50%, 20px); }
+                }
+                .mic-notification.fade-out {
+                    animation: slideDown 0.3s ease forwards;
+                }
+            `;
+            document.head.appendChild(style);
+        }
+        
+        document.body.appendChild(notification);
+        
+        if (duration > 0) {
+            setTimeout(() => {
+                notification.classList.add('fade-out');
+                setTimeout(() => notification.remove(), 300);
+            }, duration);
+        }
+        
+        return notification;
+    }
+
+    static updateMessageAvatarsForUser(userId) {
+        MessageRenderer._updateMessageAvatarsForUser(userId);
+    }
+
+    static updateMicButton(status) {
+        const STATES = {
+            disconnected: { class: 'disconnected', text: '🎤', title: 'Не подключен к голосовому каналу' },
+            connecting: { class: 'connecting', text: '🎤', title: 'Подключение микрофона...' },
+            connected: { class: 'connected', text: '🎤', title: 'Микрофон выключен (нажмите чтобы включить)' },
+            active: { class: 'active', text: '🔴', title: 'Микрофон включен (нажмите чтобы выключить)' },
+            paused: { class: 'paused', text: '⏸️', title: 'Микрофон на паузе (нажмите чтобы включить)' },
+            error: { class: 'error', text: '❌', title: 'Ошибка доступа к микрофону' }
+        };
+        
+        const state = STATES[status] || STATES.disconnected;
+        
+        ['.mic-button', '.mic-toggle-btn'].forEach(sel => {
+            const element = document.querySelector(sel);
+            if (element) {
+                element.classList.remove('disconnected', 'connecting', 'connected', 'active', 'paused', 'error');
+                element.classList.add(state.class);
+                element.textContent = state.text;
+                element.title = state.title;
+                
+                if (status === 'connecting') {
+                    element.style.opacity = '0.7';
+                    element.style.cursor = 'wait';
+                } else {
+                    element.style.opacity = '';
+                    element.style.cursor = '';
+                    element.style.pointerEvents = '';
+                }
+            }
+        });
+    }
 
     static updateAudioStatus(activeConsumers) {
         const statusElement = document.querySelector('.audio-status');
@@ -415,70 +405,76 @@ static updateMicButton(status) {
         if (titleElement) titleElement.textContent = title;
     }
 
-static async updateRoomUI(client) {
-    const c = client || this.client;
-    if (!c) return;
-    
-    const messagesContainer = document.querySelector('.messages-container');
-    if (messagesContainer) {
-        const sentinel = messagesContainer.querySelector('.history-sentinel');
-        const children = Array.from(messagesContainer.children);
-        for (const child of children) if (child !== sentinel) messagesContainer.removeChild(child);
-        if (sentinel && messagesContainer.firstChild !== sentinel) messagesContainer.prepend(sentinel);
-    }
-    
-    // 🔥 Сбрасываем ТОЛЬКО контейнеры чата, НЕ трогаем заметки!
-    const notesView = document.getElementById('notes-view-container');
-    const threadView = document.getElementById('note-thread-container');
-    
-    if (notesView) {
-        notesView.style.display = 'none';
-    }
-    if (threadView) {
-        threadView.style.display = 'none';
-    }
-    
-    let roomTitle = 'Выберите гнездо';
-    if (c.currentRoom) {
-        const currentRoomData = c.rooms?.find(room => room.id === c.currentRoom);
-        if (currentRoomData) {
-            const isPrivate = RoomManager.isPrivateRoom(c.currentRoom);
-            if (isPrivate) {
-                const displayName = await RoomManager.getPrivateRoomDisplayName(c.currentRoom, c.userId, c.currentServer);
-                roomTitle = `👤 ${displayName || currentRoomData.name}`;
+    static async updateRoomUI(client) {
+        const c = client || this.client;
+        if (!c) return;
+        
+        const messagesContainer = document.querySelector('.messages-container');
+        if (messagesContainer) {
+            const sentinel = messagesContainer.querySelector('.history-sentinel');
+            const children = Array.from(messagesContainer.children);
+            for (const child of children) if (child !== sentinel) messagesContainer.removeChild(child);
+            if (sentinel && messagesContainer.firstChild !== sentinel) messagesContainer.prepend(sentinel);
+        }
+        
+        const notesView = document.getElementById('notes-view-container');
+        const threadView = document.getElementById('note-thread-container');
+        
+        if (notesView) {
+            notesView.style.display = 'none';
+        }
+        if (threadView) {
+            threadView.style.display = 'none';
+        }
+        
+        let roomTitle = 'Выберите гнездо';
+        if (c.currentRoom) {
+            const currentRoomData = c.rooms?.find(room => room.id === c.currentRoom);
+            if (currentRoomData) {
+                const isPrivate = RoomManager.isPrivateRoom(c.currentRoom);
+                if (isPrivate) {
+                    const displayName = await RoomManager.getPrivateRoomDisplayName(c.currentRoom, c.userId, c.currentServer);
+                    roomTitle = `👤 ${displayName || currentRoomData.name}`;
+                } else {
+                    roomTitle = `Гнездо: ${currentRoomData.name}`;
+                }
             } else {
-                roomTitle = `Гнездо: ${currentRoomData.name}`;
-            }
-        } else {
-            const isPrivate = RoomManager.isPrivateRoom(c.currentRoom);
-            if (isPrivate) {
-                const displayName = await RoomManager.getPrivateRoomDisplayName(c.currentRoom, c.userId, c.currentServer);
-                roomTitle = `👤 ${displayName || c.currentRoom}`;
-            } else {
-                roomTitle = `Гнездо: ${c.currentRoom}`;
+                const isPrivate = RoomManager.isPrivateRoom(c.currentRoom);
+                if (isPrivate) {
+                    const displayName = await RoomManager.getPrivateRoomDisplayName(c.currentRoom, c.userId, c.currentServer);
+                    roomTitle = `👤 ${displayName || c.currentRoom}`;
+                } else {
+                    roomTitle = `Гнездо: ${c.currentRoom}`;
+                }
             }
         }
-    }
-    this.updateRoomTitle(roomTitle);
-    
-    if (c.isConnected) {
-        if (c.isMicPaused) this.updateMicButton('paused');
-        else if (c.isMicActive) this.updateMicButton('active');
-        else this.updateMicButton('connected');
+        this.updateRoomTitle(roomTitle);
+        
+if (c.isConnected) {
+    if (!c.audioProducer || c.audioProducer.closed) {
+        this.updateMicButton('connected');
+    } else if (c.isMicPaused) {
+        this.updateMicButton('paused');
+    } else if (c.isMicActive) {
+        this.updateMicButton('active');
     } else {
-        this.updateMicButton('disconnected');
+        this.updateMicButton('connected');
     }
-    
-    this.updateRoomTitleBadge(c);
-    this.updateTotalBadge();
-    
-    if (window.innerWidth <= 768) {
-        const sidebar = document.querySelector('.sidebar');
-        if (sidebar) {
-            sidebar.classList.remove('open');
+} else {
+    this.updateMicButton('disconnected');
+}
+        
+        this.updateRoomTitleBadge(c);
+        this.updateTotalBadge();
+        
+        if (window.innerWidth <= 768) {
+            const sidebar = document.querySelector('.sidebar');
+            if (sidebar) {
+                sidebar.classList.remove('open');
+            }
         }
     }
-}
+
     static showLiveNotification(client, payload) {
         this.hideLiveNotification();
         window.postMessage({ type: 'ELECTRON_SHOW_NOTIFICATION', title: payload.sender, body: payload.roomName || 'Новое сообщение', source: 'webview' }, '*');
@@ -546,157 +542,141 @@ static async updateRoomUI(client) {
         for (let i = 0; i < missing.length; i += batchSize) await Promise.all(missing.slice(i, i + batchSize).map(uid => this.fetchUsername(uid)));
     }
 
-static renderPinnedMessagesBar(client) {
-    if (!client || !client.currentRoom) return;
-    const roomId = client.currentRoom;
-    const pinned = client.pinnedMessages.get(roomId) || [];
-    
-    let bar = document.getElementById('pinned-messages-bar');
-    const messagesContainer = document.querySelector('.messages-container');
-    
-    // Проверяем, был ли бар уже видим
-    const wasVisible = bar && bar.style.display === 'flex';
-    const oldScrollTop = messagesContainer ? messagesContainer.scrollTop : 0;
-    const oldBarHeight = wasVisible ? bar.offsetHeight : 0;
-    
-    if (!bar) {
-        bar = document.createElement('div');
-        bar.id = 'pinned-messages-bar';
-        bar.className = 'pinned-messages-bar';
-        const chatArea = document.querySelector('.chat-area');
-        if (chatArea && messagesContainer) {
-            chatArea.insertBefore(bar, messagesContainer);
-        } else return;
-    }
-    
-    // Если нет сообщений - скрываем бар
-    if (pinned.length === 0) { 
-        if (wasVisible) {
-            // Бар был видим, сейчас скроется - компенсируем скролл
-            bar.style.display = 'none';
-            bar.innerHTML = '';
-            if (messagesContainer) {
-                // Уменьшаем скролл на высоту бара
-                messagesContainer.scrollTop = Math.max(0, oldScrollTop - oldBarHeight);
-            }
-        } else {
-            bar.style.display = 'none';
-            bar.innerHTML = '';
-        }
-        return; 
-    }
-    
-    const currentMessage = client.getCurrentPinnedMessage(roomId);
-    if (!currentMessage) { 
-        if (wasVisible) {
-            bar.style.display = 'none';
-            bar.innerHTML = '';
-            if (messagesContainer) {
-                messagesContainer.scrollTop = Math.max(0, oldScrollTop - oldBarHeight);
-            }
-        } else {
-            bar.style.display = 'none';
-            bar.innerHTML = '';
-        }
-        return; 
-    }
-    
-    const displayText = currentMessage.text && currentMessage.text.length > 50 
-        ? currentMessage.text.substring(0, 50) + '...' 
-        : (currentMessage.text || 'Изображение');
-    
-    // Показываем бар
-    bar.style.display = 'flex';
-    bar.innerHTML = `
-        <div class="pinned-message-content">
-            <span class="pinned-icon">📌</span>
-            <span class="pinned-author">${this.escapeHtml(currentMessage.username)}:</span>
-            <span class="pinned-text">${this.escapeHtml(displayText)}</span>
-        </div>
-        <div class="pinned-actions">
-            <span class="pinned-counter">${pinned.length}</span>
-            <button class="pinned-expand-btn" title="Показать все закрепленные">📋</button>
-            <button class="pinned-close-btn" title="Скрыть" style="display: none;">✕</button>
-        </div>
-    `;
-    
-    // 🔥 КОМПЕНСАЦИЯ: Если бар только что появился (был скрыт)
-    if (!wasVisible && messagesContainer) {
-        // Даем браузеру отрисовать бар
-        requestAnimationFrame(() => {
-            const newBarHeight = bar.offsetHeight;
-            // Увеличиваем скролл на высоту бара, чтобы сохранить видимую позицию
-            messagesContainer.scrollTop = oldScrollTop + newBarHeight;
-        });
-    } else if (wasVisible && messagesContainer) {
-        // Бар был видим, но мог изменить высоту
-        requestAnimationFrame(() => {
-            const newBarHeight = bar.offsetHeight;
-            const heightDelta = newBarHeight - oldBarHeight;
-            if (heightDelta !== 0) {
-                messagesContainer.scrollTop = oldScrollTop + heightDelta;
-            }
-        });
-    }
-    
-    bar.querySelector('.pinned-message-content').addEventListener('click', () => { 
-        if (client && typeof client.scrollToNextPinnedMessage === 'function') {
-            client.scrollToNextPinnedMessage();
-        }
-    });
-    
-    bar.querySelector('.pinned-expand-btn').addEventListener('click', e => { 
-        e.stopPropagation(); 
-        this.openPinnedMessagesModal(client); 
-    });
-}
-
-static hidePinnedMessagesBar() {
-    const bar = document.getElementById('pinned-messages-bar');
-    const messagesContainer = document.querySelector('.messages-container');
-    
-    if (bar) {
-        const wasVisible = bar.style.display === 'flex';
-        const barHeight = bar.offsetHeight;
+    static renderPinnedMessagesBar(client) {
+        if (!client || !client.currentRoom) return;
+        const roomId = client.currentRoom;
+        const pinned = client.pinnedMessages.get(roomId) || [];
+        
+        let bar = document.getElementById('pinned-messages-bar');
+        const messagesContainer = document.querySelector('.messages-container');
+        
+        const wasVisible = bar && bar.style.display === 'flex';
         const oldScrollTop = messagesContainer ? messagesContainer.scrollTop : 0;
+        const oldBarHeight = wasVisible ? bar.offsetHeight : 0;
         
-        bar.style.display = 'none';
-        bar.innerHTML = '';
-        
-        // Компенсируем скрытие бара
-        if (wasVisible && messagesContainer) {
-            messagesContainer.scrollTop = Math.max(0, oldScrollTop - barHeight);
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.id = 'pinned-messages-bar';
+            bar.className = 'pinned-messages-bar';
+            const chatArea = document.querySelector('.chat-area');
+            if (chatArea && messagesContainer) {
+                chatArea.insertBefore(bar, messagesContainer);
+            } else return;
         }
-    }
-}
-// 🔥 НОВЫЙ МЕТОД: Принудительный пересчет высоты viewport
-static _fixViewportHeight() {
-    // Даем DOM обновиться
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            // Вызываем глобальную функцию пересчета VH
-            if (window.mobileFix && typeof window.mobileFix.setVH === 'function') {
-                window.mobileFix.setVH();
+        
+        if (pinned.length === 0) { 
+            if (wasVisible) {
+                bar.style.display = 'none';
+                bar.innerHTML = '';
+                if (messagesContainer) {
+                    messagesContainer.scrollTop = Math.max(0, oldScrollTop - oldBarHeight);
+                }
+            } else {
+                bar.style.display = 'none';
+                bar.innerHTML = '';
             }
-            
-            // Дополнительно корректируем скролл контейнера сообщений
-            const container = document.querySelector('.messages-container');
-            const app = document.querySelector('.app');
-            
-            if (container && app) {
-                // Сохраняем относительную позицию скролла
-                const scrollRatio = container.scrollTop / (container.scrollHeight - container.clientHeight) || 0;
-                
-                // Ждем применения новых размеров
-                setTimeout(() => {
-                    // Восстанавливаем позицию скролла
-                    const newMaxScroll = container.scrollHeight - container.clientHeight;
-                    container.scrollTop = newMaxScroll * scrollRatio;
-                }, 50);
+            return; 
+        }
+        
+        const currentMessage = client.getCurrentPinnedMessage(roomId);
+        if (!currentMessage) { 
+            if (wasVisible) {
+                bar.style.display = 'none';
+                bar.innerHTML = '';
+                if (messagesContainer) {
+                    messagesContainer.scrollTop = Math.max(0, oldScrollTop - oldBarHeight);
+                }
+            } else {
+                bar.style.display = 'none';
+                bar.innerHTML = '';
+            }
+            return; 
+        }
+        
+        const displayText = currentMessage.text && currentMessage.text.length > 50 
+            ? currentMessage.text.substring(0, 50) + '...' 
+            : (currentMessage.text || 'Изображение');
+        
+        bar.style.display = 'flex';
+        bar.innerHTML = `
+            <div class="pinned-message-content">
+                <span class="pinned-icon">📌</span>
+                <span class="pinned-author">${this.escapeHtml(currentMessage.username)}:</span>
+                <span class="pinned-text">${this.escapeHtml(displayText)}</span>
+            </div>
+            <div class="pinned-actions">
+                <span class="pinned-counter">${pinned.length}</span>
+                <button class="pinned-expand-btn" title="Показать все закрепленные">📋</button>
+                <button class="pinned-close-btn" title="Скрыть" style="display: none;">✕</button>
+            </div>
+        `;
+        
+        if (!wasVisible && messagesContainer) {
+            requestAnimationFrame(() => {
+                const newBarHeight = bar.offsetHeight;
+                messagesContainer.scrollTop = oldScrollTop + newBarHeight;
+            });
+        } else if (wasVisible && messagesContainer) {
+            requestAnimationFrame(() => {
+                const newBarHeight = bar.offsetHeight;
+                const heightDelta = newBarHeight - oldBarHeight;
+                if (heightDelta !== 0) {
+                    messagesContainer.scrollTop = oldScrollTop + heightDelta;
+                }
+            });
+        }
+        
+        bar.querySelector('.pinned-message-content').addEventListener('click', () => { 
+            if (client && typeof client.scrollToNextPinnedMessage === 'function') {
+                client.scrollToNextPinnedMessage();
             }
         });
-    });
-}
+        
+        bar.querySelector('.pinned-expand-btn').addEventListener('click', e => { 
+            e.stopPropagation(); 
+            this.openPinnedMessagesModal(client); 
+        });
+    }
+
+    static hidePinnedMessagesBar() {
+        const bar = document.getElementById('pinned-messages-bar');
+        const messagesContainer = document.querySelector('.messages-container');
+        
+        if (bar) {
+            const wasVisible = bar.style.display === 'flex';
+            const barHeight = bar.offsetHeight;
+            const oldScrollTop = messagesContainer ? messagesContainer.scrollTop : 0;
+            
+            bar.style.display = 'none';
+            bar.innerHTML = '';
+            
+            if (wasVisible && messagesContainer) {
+                messagesContainer.scrollTop = Math.max(0, oldScrollTop - barHeight);
+            }
+        }
+    }
+
+    static _fixViewportHeight() {
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                if (window.mobileFix && typeof window.mobileFix.setVH === 'function') {
+                    window.mobileFix.setVH();
+                }
+                
+                const container = document.querySelector('.messages-container');
+                const app = document.querySelector('.app');
+                
+                if (container && app) {
+                    const scrollRatio = container.scrollTop / (container.scrollHeight - container.clientHeight) || 0;
+                    
+                    setTimeout(() => {
+                        const newMaxScroll = container.scrollHeight - container.clientHeight;
+                        container.scrollTop = newMaxScroll * scrollRatio;
+                    }, 50);
+                }
+            });
+        });
+    }
 
     static openPinnedMessagesModal(client) {
         if (!client || !client.currentRoom) return;
@@ -857,8 +837,6 @@ static _fixViewportHeight() {
         const emptyEl = container.querySelector('.notes-empty');
         if (emptyEl) emptyEl.style.display = 'none';
     }
-
-
 }
 
 export default UIManager;

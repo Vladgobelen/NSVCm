@@ -18,25 +18,8 @@ class MessageRenderer {
         this.client = client;
     }
 
-    static _getReplyOrientation() {
-        if (window.screen?.orientation) {
-            const type = window.screen.orientation.type;
-            return type.includes('portrait') ? 'top' : 'side';
-        }
-        return window.innerWidth > window.innerHeight ? 'side' : 'top';
-    }
 
-    static _updateAllReplyOrientations() {
-        const newOrientation = this._getReplyOrientation();
-        if (this._lastOrientation === newOrientation) return;
-        this._lastOrientation = newOrientation;
-        document.querySelectorAll('.message-reply-group').forEach(group => {
-            group.classList.remove('reply-side', 'reply-top');
-            group.classList.add(newOrientation === 'top' ? 'reply-top' : 'reply-side');
-        });
-    }
 
-    // 🔥 НОВЫЙ МЕТОД: Получение аватара из панели участников
     static _getAvatarFromMembersPanel(userId) {
         if (!userId) return null;
         
@@ -91,121 +74,136 @@ class MessageRenderer {
         });
     }
 
-    static _createMessageElement(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = [], userId = null, broadcast = false, thumbnailUrl = null, replyTo = null, reactions = {}, poll = null, forwardedFrom = null, pollRef = null, embed = null, edited = false, editedAt = null) {
-        const safeUser = user || 'Unknown';
-        const safeText = text || '';
-        const client = this.client || window.voiceClient;
-        const isOwn = client && client.username && safeUser === client.username;
-        const isRead = !isOwn && client?.userId && Array.isArray(readBy) && readBy.includes(client.userId);
-        let isDirectedToMe = false;
-        let directedType = null;
-        if (!isOwn && client && client.userId && client.username) {
-            if (replyTo && replyTo.userId === client.userId) {
+static _createMessageElement(user, text, timestamp = null, type = 'text', imageUrl = null, messageId = null, readBy = [], userId = null, broadcast = false, thumbnailUrl = null, replyTo = null, reactions = {}, poll = null, forwardedFrom = null, pollRef = null, embed = null, edited = false, editedAt = null) {
+    const safeUser = user || 'Unknown';
+    const safeText = text || '';
+    const client = this.client || window.voiceClient;
+    const isOwn = client && client.username && safeUser === client.username;
+    const isRead = !isOwn && client?.userId && Array.isArray(readBy) && readBy.includes(client.userId);
+    let isDirectedToMe = false;
+    let directedType = null;
+    
+    if (!isOwn && client && client.userId && client.username) {
+        if (replyTo && replyTo.userId === client.userId) {
+            isDirectedToMe = true;
+            directedType = 'reply';
+        }
+        if (!isDirectedToMe && safeText) {
+            const lowerText = safeText.toLowerCase();
+            const lowerUsername = client.username.toLowerCase();
+            const escapedUsername = lowerUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const mentionPattern = new RegExp(`@${escapedUsername}(?=[\\s,.!?;:()\\[\\]{}"']|$)`, 'i');
+            if (mentionPattern.test(lowerText)) {
                 isDirectedToMe = true;
-                directedType = 'reply';
+                directedType = 'mention';
             }
-            if (!isDirectedToMe && safeText) {
-                const lowerText = safeText.toLowerCase();
-                const lowerUsername = client.username.toLowerCase();
-                const escapedUsername = lowerUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const mentionPattern = new RegExp(`@${escapedUsername}(?=[\\s,.!?;:()\\[\\]{}"']|$)`, 'i');
-                if (mentionPattern.test(lowerText)) {
+            if (!isDirectedToMe) {
+                const namePattern = new RegExp(`(?<=^|[\\s,.!?;:()\\[\\]{}"'])${escapedUsername}(?=[\\s,.!?;:()\\[\\]{}"']|$)`, 'i');
+                if (namePattern.test(lowerText)) {
                     isDirectedToMe = true;
-                    directedType = 'mention';
-                }
-                if (!isDirectedToMe) {
-                    const namePattern = new RegExp(`(?<=^|[\\s,.!?;:()\\[\\]{}"'])${escapedUsername}(?=[\\s,.!?;:()\\[\\]{}"']|$)`, 'i');
-                    if (namePattern.test(lowerText)) {
-                        isDirectedToMe = true;
-                        directedType = 'name_mention';
-                    }
+                    directedType = 'name_mention';
                 }
             }
         }
-        const messageEl = document.createElement('div');
-        messageEl.className = `message ${type === 'system' ? 'system-message' : ''} ${type === 'poll' ? 'poll-message' : ''} ${type === 'audio' ? 'audio-message' : ''}`;
-        if (isRead) messageEl.classList.add('message-read');
-        messageEl.style.cssText = 'display: flex; width: 100%; align-items: flex-start; justify-content: ' + (isOwn ? 'flex-end' : 'flex-start') + '; padding: 0 10px; margin-bottom: 8px; cursor: pointer;';
-        messageEl.dataset.messageId = messageId;
-        messageEl.dataset.userId = userId;
-        messageEl.dataset.reactions = JSON.stringify(reactions);
-        messageEl.dataset.messageType = type;
-        if (edited) {
-            messageEl.dataset.edited = 'true';
-            messageEl.dataset.editedAt = editedAt;
+    }
+    
+    const messageEl = document.createElement('div');
+    messageEl.className = `message ${type === 'system' ? 'system-message' : ''} ${type === 'poll' ? 'poll-message' : ''} ${type === 'audio' ? 'audio-message' : ''}`;
+    if (isRead) messageEl.classList.add('message-read');
+    messageEl.style.cssText = 'display: flex; width: 100%; align-items: flex-start; justify-content: ' + (isOwn ? 'flex-end' : 'flex-start') + '; padding: 0 10px; margin-bottom: 8px; cursor: pointer;';
+    messageEl.dataset.messageId = messageId;
+    messageEl.dataset.userId = userId;
+    messageEl.dataset.reactions = JSON.stringify(reactions);
+    messageEl.dataset.messageType = type;
+    
+    if (edited) {
+        messageEl.dataset.edited = 'true';
+        messageEl.dataset.editedAt = editedAt;
+    }
+    
+    if (isDirectedToMe) {
+        messageEl.classList.add('message-directed-to-me');
+        if (directedType === 'reply') messageEl.classList.add('message-reply-to-me');
+        else if (directedType === 'mention') messageEl.classList.add('message-mention-me');
+        else if (directedType === 'name_mention') messageEl.classList.add('message-name-mention-me');
+    }
+    
+    if (embed) messageEl.dataset.embed = JSON.stringify(embed);
+    if (poll) {
+        const pollDataForDataset = { poll, messageId, pollRef };
+        if (client?.currentRoom) pollDataForDataset.roomId = client.currentRoom;
+        messageEl.dataset.pollData = JSON.stringify(pollDataForDataset);
+    }
+    if (pollRef) messageEl.dataset.pollRef = JSON.stringify(pollRef);
+    if (forwardedFrom) messageEl.dataset.forwardedFrom = JSON.stringify(forwardedFrom);
+    
+    messageEl.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (messageId && userId) {
+            const msgObj = {
+                id: messageId, userId, username: safeUser, text: safeText, timestamp,
+                type, imageUrl, thumbnailUrl, poll, pollRef, forwardedFrom, embed,
+                edited, editedAt
+            };
+            if (forwardedFrom) ContextMenuManager.showForwardedMessageContextMenu(event, messageId, msgObj);
+            else ContextMenuManager.showMessageContextMenu(event, messageId, userId, safeUser, timestamp, msgObj);
         }
-        if (isDirectedToMe) {
-            messageEl.classList.add('message-directed-to-me');
-            if (directedType === 'reply') messageEl.classList.add('message-reply-to-me');
-            else if (directedType === 'mention') messageEl.classList.add('message-mention-me');
-            else if (directedType === 'name_mention') messageEl.classList.add('message-name-mention-me');
+    });
+    
+    messageEl.addEventListener('click', (event) => {
+        if (event.button !== 0) return;
+        const blockedSelector = 'a, button, input, textarea, .reply-block, .message-context-menu, .reaction-pill, .reaction-picker-inline, .forwarded-badge, .poll-option, .poll-vote-btn, .embed-thumbnail, .embed-title, audio, .audio-player';
+        if (event.target.closest(blockedSelector)) return;
+        const shouldCopy = SettingsManager.getCopyOnClick();
+        if (shouldCopy) {
+            navigator.clipboard?.writeText(safeText).catch(() => {});
         }
-        if (embed) messageEl.dataset.embed = JSON.stringify(embed);
-        if (poll) {
-            const pollDataForDataset = { poll, messageId, pollRef };
-            if (client?.currentRoom) pollDataForDataset.roomId = client.currentRoom;
-            messageEl.dataset.pollData = JSON.stringify(pollDataForDataset);
-        }
-        if (pollRef) messageEl.dataset.pollRef = JSON.stringify(pollRef);
-        if (forwardedFrom) messageEl.dataset.forwardedFrom = JSON.stringify(forwardedFrom);
-        
-        messageEl.addEventListener('contextmenu', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            if (messageId && userId) {
-                const msgObj = {
-                    id: messageId, userId, username: safeUser, text: safeText, timestamp,
-                    type, imageUrl, thumbnailUrl, poll, pollRef, forwardedFrom, embed,
-                    edited, editedAt
-                };
-                if (forwardedFrom) ContextMenuManager.showForwardedMessageContextMenu(event, messageId, msgObj);
-                else ContextMenuManager.showMessageContextMenu(event, messageId, userId, safeUser, timestamp, msgObj);
-            }
-        });
-        
-        messageEl.addEventListener('click', (event) => {
-            if (event.button !== 0) return;
-            const blockedSelector = 'a, button, input, textarea, .reply-block, .message-context-menu, .reaction-pill, .reaction-picker-inline, .forwarded-badge, .poll-option, .poll-vote-btn, .embed-thumbnail, .embed-title, audio, .audio-player';
-            if (event.target.closest(blockedSelector)) return;
-            const shouldCopy = SettingsManager.getCopyOnClick();
-            if (shouldCopy) {
-                navigator.clipboard?.writeText(safeText).catch(() => {});
-            }
-            messageEl.style.transition = 'background 0.15s';
-            messageEl.style.background = 'rgba(88, 101, 242, 0.15)';
-            setTimeout(() => messageEl.style.background = '', 150);
-        });
-        
-        messageEl.addEventListener('dblclick', (event) => {
-            if (event.button !== 0) return;
-            const blockedSelector = 'a, button, input, textarea, .reply-block, .message-context-menu, .reaction-pill, .reaction-picker-inline, .forwarded-badge, .poll-option, .poll-vote-btn, .embed-thumbnail, .embed-title, audio, .audio-player, .image-thumbnail';
-            if (event.target.closest(blockedSelector)) return;
-            event.preventDefault();
-            event.stopPropagation();
-            this.toggleReactionPicker(messageId);
-        });
-        
-        const time = timestamp ? new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-        let finalImageUrl = imageUrl?.startsWith('/') ? (client?.API_SERVER_URL || '') + imageUrl : imageUrl;
-        let finalThumbnailUrl = thumbnailUrl?.startsWith('/') ? (client?.API_SERVER_URL || '') + thumbnailUrl : thumbnailUrl;
-        const count = Array.isArray(readBy) ? readBy.length : 0;
-        
-        let readStatusHtml = '';
-        if (Array.isArray(readBy) && type !== 'poll') {
-            let checkText = count === 0 ? '✓' : count === 1 ? '✓✓' : '✓✓✓';
-            let tooltip = count === 0 ? 'Доставлено' : count === 1 ? 'Прочитано' : 'Прочитано товарищем майором';
-            tooltip += `\nПрочитало: ${count}`;
-            readStatusHtml = `<span class="message-read-status-container" style="margin-left: 6px; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: #888;" title="${this.escapeHtml(tooltip)}"><span class="message-read-status" style="font-size: 12px; color: #5865f2;">${checkText}</span><span class="message-read-count">(${count})</span></span>`;
-        }
-        
-        const editedBadgeHtml = edited
-            ? `<span class="message-edited-badge" title="${editedAt ? `Отредактировано: ${new Date(editedAt).toLocaleString('ru-RU')}` : 'Отредактировано'}">✏️</span>`
-            : '';
-        const forwardedBadgeHtml = forwardedFrom ? this._renderForwardedBadge(forwardedFrom) : '';
-        const embedHtml = embed ? this._renderEmbed(embed) : '';
-        const canEdit = isOwn && type !== 'poll' && type !== 'system' && type !== 'audio';
-        
-        const headerHtml = `<div class="message-header">
+        messageEl.style.transition = 'background 0.15s';
+        messageEl.style.background = 'rgba(88, 101, 242, 0.15)';
+        setTimeout(() => messageEl.style.background = '', 150);
+    });
+    
+    messageEl.addEventListener('dblclick', (event) => {
+        if (event.button !== 0) return;
+        const blockedSelector = 'a, button, input, textarea, .reply-block, .message-context-menu, .reaction-pill, .reaction-picker-inline, .forwarded-badge, .poll-option, .poll-vote-btn, .embed-thumbnail, .embed-title, audio, .audio-player, .image-thumbnail';
+        if (event.target.closest(blockedSelector)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        this.toggleReactionPicker(messageId);
+    });
+    
+    const time = timestamp ? new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    
+    // 🔥 ИСПРАВЛЕНИЕ: Обработка URL для аудио и изображений
+    let finalImageUrl = imageUrl;
+    let finalThumbnailUrl = thumbnailUrl;
+    
+    if (finalImageUrl && finalImageUrl.startsWith('/')) {
+        finalImageUrl = (client?.API_SERVER_URL || '') + finalImageUrl;
+    }
+    if (finalThumbnailUrl && finalThumbnailUrl.startsWith('/')) {
+        finalThumbnailUrl = (client?.API_SERVER_URL || '') + finalThumbnailUrl;
+    }
+    
+    const count = Array.isArray(readBy) ? readBy.length : 0;
+    
+    let readStatusHtml = '';
+    if (Array.isArray(readBy) && type !== 'poll') {
+        let checkText = count === 0 ? '✓' : count === 1 ? '✓✓' : '✓✓✓';
+        let tooltip = count === 0 ? 'Доставлено' : count === 1 ? 'Прочитано' : 'Прочитано товарищем майором';
+        tooltip += `\nПрочитало: ${count}`;
+        readStatusHtml = `<span class="message-read-status-container" style="margin-left: 6px; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: #888;" title="${this.escapeHtml(tooltip)}"><span class="message-read-status" style="font-size: 12px; color: #5865f2;">${checkText}</span><span class="message-read-count">(${count})</span></span>`;
+    }
+    
+    const editedBadgeHtml = edited
+        ? `<span class="message-edited-badge" title="${editedAt ? `Отредактировано: ${new Date(editedAt).toLocaleString('ru-RU')}` : 'Отредактировано'}">✏️</span>`
+        : '';
+    const forwardedBadgeHtml = forwardedFrom ? this._renderForwardedBadge(forwardedFrom) : '';
+    const embedHtml = embed ? this._renderEmbed(embed) : '';
+    const canEdit = isOwn && type !== 'poll' && type !== 'system' && type !== 'audio';
+    
+    const headerHtml = `<div class="message-header">
 <span class="message-username" style="font-weight:600; color:#fff;">${this.escapeHtml(safeUser)}</span>
 <span class="message-time">${time}</span>${readStatusHtml}${editedBadgeHtml}
 ${type !== 'poll' ? `
@@ -213,74 +211,119 @@ ${type !== 'poll' ? `
 <button class="message-reply-btn" title="Ответить">↩️</button>
 ` : ''}
 </div>`;
+    
+    let contentBodyHtml = '';
+    
+    if (type === 'image') {
+        const displayUrl = finalThumbnailUrl || finalImageUrl;
+        if (finalImageUrl) {
+            contentBodyHtml = `<div class="image-thumbnail" data-full-size="${finalImageUrl.replace(/"/g, '&quot;')}" style="cursor:pointer;"><img src="${displayUrl.replace(/"/g, '&quot;')}" alt="Изображение" loading="eager"><div class="image-overlay">🔍</div></div>`;
+        }
+    } else if (type === 'audio') {
+        // 🔥 ИСПРАВЛЕНИЕ: Улучшенная обработка аудио URL
         
-        let contentBodyHtml = '';
-        if (type === 'image') {
-            const displayUrl = finalThumbnailUrl || finalImageUrl;
-            if (finalImageUrl) {
-                contentBodyHtml = `<div class="image-thumbnail" data-full-size="${finalImageUrl.replace(/"/g, '&quot;')}" style="cursor:pointer;"><img src="${displayUrl.replace(/"/g, '&quot;')}" alt="Изображение" loading="eager"><div class="image-overlay">🔍</div></div>`;
+        // 1. Сначала пытаемся взять из imageUrl (основной способ передачи)
+        let finalAudioUrl = finalImageUrl;
+        
+        // 2. Если URL нет, но есть объект сообщения в dataset, пробуем оттуда
+        if (!finalAudioUrl && messageEl._messageObj?.audioUrl) {
+            finalAudioUrl = messageEl._messageObj.audioUrl;
+        }
+        
+        // 3. Если всё ещё нет - проверяем, может URL был передан в text (для старых сообщений)
+        if (!finalAudioUrl && safeText) {
+            const urlMatch = safeText.match(/https?:\/\/[^\s]+\.(mp3|wav|ogg|webm|m4a|aac|flac|opus)(\?[^\s]*)?/i);
+            if (urlMatch) {
+                finalAudioUrl = urlMatch[0];
             }
-        } else if (type === 'audio') {
-            let finalAudioUrl = imageUrl;
-            if (!finalAudioUrl) {
-                contentBodyHtml = `<div class="message-text" style="line-height:1.4;word-break:break-word;color:#e0e0e0;font-size:14px;">🎵 Аудиосообщение (файл недоступен)</div>`;
-            } else {
-                if (finalAudioUrl.startsWith('/')) finalAudioUrl = (client?.API_SERVER_URL || '') + finalAudioUrl;
-                const audioFileName = finalAudioUrl.split('/').pop().split('?')[0];
-                contentBodyHtml = `
+        }
+        
+        // 4. Если URL есть, но он относительный - добавляем базовый URL
+        if (finalAudioUrl && finalAudioUrl.startsWith('/')) {
+            finalAudioUrl = (client?.API_SERVER_URL || '') + finalAudioUrl;
+        }
+        
+        if (!finalAudioUrl) {
+            // 🔥 Логирование для отладки
+            console.warn('[MessageRenderer] Audio URL missing:', {
+                messageId,
+                imageUrl,
+                safeText: safeText?.substring(0, 100),
+                hasMessageObj: !!messageEl._messageObj
+            });
+            
+            contentBodyHtml = `<div class="message-text" style="line-height:1.4;word-break:break-word;color:#e0e0e0;font-size:14px;">🎵 Аудиосообщение (файл недоступен)</div>`;
+        } else {
+            const audioFileName = finalAudioUrl.split('/').pop().split('?')[0];
+            const fileExtension = audioFileName.split('.').pop()?.toLowerCase() || 'audio';
+            
+            // Определяем MIME-тип для source элементов
+            const mimeTypes = {
+                'mp3': 'audio/mpeg',
+                'wav': 'audio/wav',
+                'ogg': 'audio/ogg',
+                'webm': 'audio/webm',
+                'm4a': 'audio/x-m4a',
+                'aac': 'audio/aac',
+                'flac': 'audio/flac',
+                'opus': 'audio/opus'
+            };
+            
+            const mimeType = mimeTypes[fileExtension] || 'audio/mpeg';
+            
+            contentBodyHtml = `
 <div class="audio-player-container" style="margin: 8px 0; min-width: 250px;">
-<audio controls preload="metadata" style="width: 100%; max-width: 350px; height: 36px; border-radius: 8px;">
-<source src="${finalAudioUrl.replace(/"/g, '&quot;')}" type="audio/mpeg">
-<source src="${finalAudioUrl.replace(/"/g, '&quot;')}" type="audio/mp4">
-<source src="${finalAudioUrl.replace(/"/g, '&quot;')}" type="audio/ogg">
-<source src="${finalAudioUrl.replace(/"/g, '&quot;')}" type="audio/webm">
-<source src="${finalAudioUrl.replace(/"/g, '&quot;')}" type="audio/x-m4a">
-</audio>
-<div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
-<span style="font-size: 12px; color: #888;">🎵 ${this.escapeHtml(audioFileName)}</span>
-<a href="${finalAudioUrl.replace(/"/g, '&quot;')}" download style="font-size: 12px; color: #5865f2; text-decoration: none;" target="_blank">📥</a>
-</div>
+    <audio controls preload="metadata" style="width: 100%; max-width: 350px; height: 36px; border-radius: 8px;">
+        <source src="${finalAudioUrl.replace(/"/g, '&quot;')}" type="${mimeType}">
+        Ваш браузер не поддерживает аудио элемент.
+    </audio>
+    <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+        <span style="font-size: 12px; color: #888;">🎵 ${this.escapeHtml(audioFileName)}</span>
+        <a href="${finalAudioUrl.replace(/"/g, '&quot;')}" download style="font-size: 12px; color: #5865f2; text-decoration: none;" target="_blank">📥</a>
+    </div>
 </div>
 `;
-            }
-        } else if (type === 'poll') {
-            const pollDataForContainer = { poll, messageId, pollRef };
-            if (client?.currentRoom) pollDataForContainer.roomId = client.currentRoom;
-            const pollDataAttr = JSON.stringify(pollDataForContainer).replace(/'/g, "&apos;");
-            contentBodyHtml = `<div class="poll-container" data-poll-data='${pollDataAttr}'></div>`;
-        } else {
-            const formatted = type === 'system' ? `<pre style="white-space:pre-wrap;font-family:monospace;font-size:12px;background:#1a1a2e;padding:8px;border-radius:4px;margin:0;">${this.escapeHtml(safeText)}</pre>` : this.escapeHtmlAndFormat(safeText);
-            contentBodyHtml = `<div class="message-text" style="line-height:1.4;word-break:break-word;color:#e0e0e0;font-size:14px;">${formatted}</div>`;
         }
+    } else if (type === 'poll') {
+        const pollDataForContainer = { poll, messageId, pollRef };
+        if (client?.currentRoom) pollDataForContainer.roomId = client.currentRoom;
+        const pollDataAttr = JSON.stringify(pollDataForContainer).replace(/'/g, "&apos;");
+        contentBodyHtml = `<div class="poll-container" data-poll-data='${pollDataAttr}'></div>`;
+    } else {
+        const formatted = type === 'system' 
+            ? `<pre style="white-space:pre-wrap;font-family:monospace;font-size:12px;background:#1a1a2e;padding:8px;border-radius:4px;margin:0;">${this.escapeHtml(safeText)}</pre>` 
+            : this.escapeHtmlAndFormat(safeText);
+        contentBodyHtml = `<div class="message-text" style="line-height:1.4;word-break:break-word;color:#e0e0e0;font-size:14px;">${formatted}</div>`;
+    }
+    
+    const reactionsHtml = type !== 'poll' ? this._renderReactions(reactions, messageId) : '';
+    const bgColor = isOwn ? '#3a3a5c' : '#2d2d44';
+    const borderRadius = '10px';
+    const touchBlockStyle = '-webkit-touch-callout: none; -webkit-user-select: none; user-select: none;';
+    const ownClass = isOwn ? ' own' : '';
+    const replyOrientation = this._getReplyOrientation();
+    const replyClass = replyOrientation === 'top' ? 'reply-top' : 'reply-side';
+    
+    // Рендеринг аватара
+    let avatarHtml = '';
+    if (!isOwn && type !== 'system' && type !== 'poll') {
+        const avatarUrl = this._getAvatarFromMembersPanel(userId);
+        const fallbackChar = safeUser.charAt(0).toUpperCase();
         
-        const reactionsHtml = type !== 'poll' ? this._renderReactions(reactions, messageId) : '';
-        const bgColor = isOwn ? '#3a3a5c' : '#2d2d44';
-        const borderRadius = '10px';
-        const touchBlockStyle = '-webkit-touch-callout: none; -webkit-user-select: none; user-select: none;';
-        const ownClass = isOwn ? ' own' : '';
-        const replyOrientation = this._getReplyOrientation();
-        const replyClass = replyOrientation === 'top' ? 'reply-top' : 'reply-side';
-        
-        // 🔥 ИЗМЕНЕНО: Рендеринг аватара
-        let avatarHtml = '';
-        if (!isOwn && type !== 'system' && type !== 'poll') {
-            const avatarUrl = this._getAvatarFromMembersPanel(userId);
-            const fallbackChar = safeUser.charAt(0).toUpperCase();
-            
-            if (avatarUrl) {
-                avatarHtml = `<div class="message-avatar" style="min-width:32px;width:32px;height:32px;border-radius:50%;background:#404060;display:flex;align-items:center;justify-content:center;margin-right:8px;flex-shrink:0;overflow:hidden;" data-fallback="${fallbackChar}">
-                    <img src="${this.escapeHtml(avatarUrl)}" alt="${this.escapeHtml(safeUser)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.onerror=null; this.parentElement.innerHTML=this.parentElement.dataset.fallback;">
-                </div>`;
-            } else {
-                avatarHtml = `<div class="message-avatar" style="min-width:32px;width:32px;height:32px;border-radius:50%;background:#404060;display:flex;align-items:center;justify-content:center;margin-right:8px;flex-shrink:0;color:#fff;">${fallbackChar}</div>`;
-            }
+        if (avatarUrl) {
+            avatarHtml = `<div class="message-avatar" style="min-width:32px;width:32px;height:32px;border-radius:50%;background:#404060;display:flex;align-items:center;justify-content:center;margin-right:8px;flex-shrink:0;overflow:hidden;" data-fallback="${fallbackChar}">
+                <img src="${this.escapeHtml(avatarUrl)}" alt="${this.escapeHtml(safeUser)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.onerror=null; this.parentElement.innerHTML=this.parentElement.dataset.fallback;">
+            </div>`;
         } else {
-            avatarHtml = '';
+            avatarHtml = `<div class="message-avatar" style="min-width:32px;width:32px;height:32px;border-radius:50%;background:#404060;display:flex;align-items:center;justify-content:center;margin-right:8px;flex-shrink:0;color:#fff;">${fallbackChar}</div>`;
         }
-        
-        let groupWrapperHtml = '';
-        if (replyTo && replyTo.id) {
-            groupWrapperHtml = `
+    } else {
+        avatarHtml = '';
+    }
+    
+    let groupWrapperHtml = '';
+    if (replyTo && replyTo.id) {
+        groupWrapperHtml = `
 <div class="message-reply-group ${replyClass}${ownClass}" style="background:${bgColor};border-radius:${borderRadius};overflow:hidden;display:flex;max-width:85%;box-shadow:0 1px 3px rgba(0,0,0,0.2);${touchBlockStyle};">
 ${forwardedBadgeHtml}
 <div class="reply-block" data-reply-id="${replyTo.id}" style="background:#3a3a5c;padding:6px 10px;cursor:pointer;display:flex;flex-direction:column;gap:2px;font-size:11px;color:#a0a0b0;box-sizing:border-box;min-width:130px;max-width:220px;">
@@ -295,8 +338,8 @@ ${reactionsHtml}
 </div>
 </div>
 `;
-        } else {
-            groupWrapperHtml = `
+    } else {
+        groupWrapperHtml = `
 <div class="message-reply-group${ownClass}" style="background:${bgColor};border-radius:${borderRadius};display:flex;flex-direction:column;max-width:85%;box-shadow:0 1px 3px rgba(0,0,0,0.2);${touchBlockStyle};">
 ${forwardedBadgeHtml}
 <div class="message-group-content${ownClass}" style="padding:8px 10px;display:flex;flex-direction:column;">
@@ -307,136 +350,174 @@ ${reactionsHtml}
 </div>
 </div>
 `;
+    }
+    
+    messageEl.innerHTML = isOwn ? `${groupWrapperHtml}${avatarHtml}` : `${avatarHtml}${groupWrapperHtml}`;
+    
+    // 🔥 ВАЖНО: Сохраняем объект сообщения ДО того, как он может понадобиться
+    messageEl._messageObj = {
+        id: messageId, 
+        userId, 
+        username: safeUser, 
+        text: safeText, 
+        timestamp,
+        type, 
+        imageUrl, 
+        audioUrl: finalImageUrl, // 🔥 Явно сохраняем аудио URL
+        thumbnailUrl, 
+        poll, 
+        pollRef, 
+        forwardedFrom, 
+        embed,
+        edited, 
+        editedAt
+    };
+    
+    // Остальные обработчики (forwardedBadge, embed, poll, reply, edit) остаются без изменений...
+    const forwardedBadge = messageEl.querySelector('.forwarded-badge');
+    if (forwardedBadge) {
+        forwardedBadge.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const client = window.voiceClient;
+            if (client && typeof client.jumpToForwardSource === 'function') client.jumpToForwardSource(forwardedFrom);
+        });
+    }
+    
+    const embedThumbnail = messageEl.querySelector('.embed-thumbnail');
+    if (embedThumbnail) {
+        const fullImage = embedThumbnail.dataset.fullImage;
+        if (fullImage) {
+            embedThumbnail.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.openImageModal(fullImage);
+            });
+            embedThumbnail.style.cursor = 'pointer';
         }
-        
-        messageEl.innerHTML = isOwn ? `${groupWrapperHtml}${avatarHtml}` : `${avatarHtml}${groupWrapperHtml}`;
-        
-        messageEl._messageObj = {
+    }
+    
+    const embedImageContainer = messageEl.querySelector('.embed-image-container');
+    if (embedImageContainer) {
+        const fullImage = embedImageContainer.dataset.fullImage;
+        if (fullImage) {
+            embedImageContainer.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.openImageModal(fullImage);
+            });
+            embedImageContainer.style.cursor = 'pointer';
+        }
+    }
+    
+    const pollContainer = messageEl.querySelector('.poll-container');
+    if (pollContainer && poll) {
+        setTimeout(() => {
+            if (pollContainer.isConnected) {
+                const pollDataForRender = { poll, messageId, roomId: client?.currentRoom, userId: client?.userId, pollRef };
+                PollWidget.render(pollContainer, pollDataForRender, client);
+            }
+        }, 0);
+    }
+    
+    const replyBlock = messageEl.querySelector('.reply-block');
+    if (replyBlock && replyTo) {
+        replyBlock.addEventListener('click', () => this.handleReplyClick(replyTo.id));
+    }
+    
+    const replyBtn = messageEl.querySelector('.message-reply-btn');
+    if (replyBtn) {
+        const msgObj = {
             id: messageId, userId, username: safeUser, text: safeText, timestamp,
-            type, imageUrl, thumbnailUrl, poll, pollRef, forwardedFrom, embed,
+            type, imageUrl, thumbnailUrl, poll, pollRef, embed,
             edited, editedAt
         };
-        
-        const forwardedBadge = messageEl.querySelector('.forwarded-badge');
-        if (forwardedBadge) {
-            forwardedBadge.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const client = window.voiceClient;
-                if (client && typeof client.jumpToForwardSource === 'function') client.jumpToForwardSource(forwardedFrom);
-            });
-        }
-        
-        const embedThumbnail = messageEl.querySelector('.embed-thumbnail');
-        if (embedThumbnail) {
-            const fullImage = embedThumbnail.dataset.fullImage;
-            if (fullImage) {
-                embedThumbnail.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.openImageModal(fullImage);
-                });
-                embedThumbnail.style.cursor = 'pointer';
-            }
-        }
-        
-        const embedImageContainer = messageEl.querySelector('.embed-image-container');
-        if (embedImageContainer) {
-            const fullImage = embedImageContainer.dataset.fullImage;
-            if (fullImage) {
-                embedImageContainer.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.openImageModal(fullImage);
-                });
-                embedImageContainer.style.cursor = 'pointer';
-            }
-        }
-        
-        const pollContainer = messageEl.querySelector('.poll-container');
-        if (pollContainer && poll) {
-            setTimeout(() => {
-                if (pollContainer.isConnected) {
-                    const pollDataForRender = { poll, messageId, roomId: client?.currentRoom, userId: client?.userId, pollRef };
-                    PollWidget.render(pollContainer, pollDataForRender, client);
-                }
-            }, 0);
-        }
-        
-        const replyBlock = messageEl.querySelector('.reply-block');
-        if (replyBlock && replyTo) {
-            replyBlock.addEventListener('click', () => this.handleReplyClick(replyTo.id));
-        }
-        
-        const replyBtn = messageEl.querySelector('.message-reply-btn');
-        if (replyBtn) {
+        replyBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            UIManager.setReplyTarget(msgObj);
+        });
+    }
+    
+    const editBtn = messageEl.querySelector('.message-edit-btn');
+    if (editBtn) {
+        editBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
             const msgObj = {
                 id: messageId, userId, username: safeUser, text: safeText, timestamp,
                 type, imageUrl, thumbnailUrl, poll, pollRef, embed,
                 edited, editedAt
             };
-            replyBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                UIManager.setReplyTarget(msgObj);
-            });
-        }
-        
-        const editBtn = messageEl.querySelector('.message-edit-btn');
-        if (editBtn) {
-            editBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const msgObj = {
-                    id: messageId, userId, username: safeUser, text: safeText, timestamp,
-                    type, imageUrl, thumbnailUrl, poll, pollRef, embed,
-                    edited, editedAt
-                };
-                this.showMessageActionsPanel(editBtn, messageId, msgObj);
-            });
-        }
-        
-        const imgThumb = messageEl.querySelector('.image-thumbnail');
-        if (imgThumb && finalImageUrl) {
-            let clickTimer = null;
-            imgThumb.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (clickTimer) {
-                    clearTimeout(clickTimer);
-                    clickTimer = null;
-                    return;
-                }
-                clickTimer = setTimeout(() => {
-                    this.openImageModal(finalImageUrl);
-                    clickTimer = null;
-                }, 200);
-            });
-            imgThumb.addEventListener('dblclick', (e) => {
-                e.stopPropagation();
-                if (clickTimer) {
-                    clearTimeout(clickTimer);
-                    clickTimer = null;
-                }
-                this.toggleReactionPicker(messageId);
-            });
-            imgThumb.addEventListener('mouseenter', () => {
-                const o = imgThumb.querySelector('.image-overlay');
-                if (o) o.style.display = 'flex';
-            });
-            imgThumb.addEventListener('mouseleave', () => {
-                const o = imgThumb.querySelector('.image-overlay');
-                if (o) o.style.display = 'none';
-            });
-        }
-        
-        return messageEl;
+            this.showMessageActionsPanel(editBtn, messageId, msgObj);
+        });
     }
+    
+    const imgThumb = messageEl.querySelector('.image-thumbnail');
+    if (imgThumb && finalImageUrl) {
+        let clickTimer = null;
+        imgThumb.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (clickTimer) {
+                clearTimeout(clickTimer);
+                clickTimer = null;
+                return;
+            }
+            clickTimer = setTimeout(() => {
+                this.openImageModal(finalImageUrl);
+                clickTimer = null;
+            }, 200);
+        });
+        imgThumb.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            if (clickTimer) {
+                clearTimeout(clickTimer);
+                clickTimer = null;
+            }
+            this.toggleReactionPicker(messageId);
+        });
+        imgThumb.addEventListener('mouseenter', () => {
+            const o = imgThumb.querySelector('.image-overlay');
+            if (o) o.style.display = 'flex';
+        });
+        imgThumb.addEventListener('mouseleave', () => {
+            const o = imgThumb.querySelector('.image-overlay');
+            if (o) o.style.display = 'none';
+        });
+    }
+    
+    return messageEl;
+}
 
-    static initReplyOrientationObserver() {
-        if (this._replyOrientationObserver) return;
-        this._lastOrientation = this._getReplyOrientation();
-        const handler = () => {
-            requestAnimationFrame(() => this._updateAllReplyOrientations());
-        };
-        window.addEventListener('resize', handler);
-        window.addEventListener('orientationchange', handler);
-        this._replyOrientationObserver = { handler };
+static _getReplyOrientation() {
+    // Проверяем медиа-запрос orientation — это надёжнее, чем сравнение размеров
+    if (window.matchMedia('(orientation: portrait)').matches) {
+        return 'top';
     }
+    return 'side';
+}
+
+static _updateAllReplyOrientations() {
+    const newOrientation = this._getReplyOrientation();
+    if (this._lastOrientation === newOrientation) return;
+    this._lastOrientation = newOrientation;
+    
+    document.querySelectorAll('.message-reply-group').forEach(group => {
+        group.classList.remove('reply-side', 'reply-top');
+        group.classList.add(newOrientation === 'top' ? 'reply-top' : 'reply-side');
+    });
+}
+
+static initReplyOrientationObserver() {
+    if (this._replyOrientationObserver) return;
+    
+    this._lastOrientation = this._getReplyOrientation();
+    
+    const handler = () => {
+        requestAnimationFrame(() => this._updateAllReplyOrientations());
+    };
+    
+    // Слушаем и orientationchange, и resize для надёжности
+    window.addEventListener('orientationchange', handler);
+    window.addEventListener('resize', handler);
+    
+    this._replyOrientationObserver = { handler };
+}
 
     static showMessageActionsPanel(anchorButton, messageId, messageObj) {
         const client = this.client || window.voiceClient;

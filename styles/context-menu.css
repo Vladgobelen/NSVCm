@@ -1,0 +1,87 @@
+.message-context-menu {
+  position: fixed;
+  background: #2d2d44;
+  border: 1px solid #404060;
+  border-radius: 8px;
+  padding: 8px 0;
+  min-width: 200px;
+  z-index: 10000;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  animation: contextMenuFadeIn 0.15s ease;
+}
+
+.context-menu-item {
+  padding: 10px 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #e0e0e0;
+  transition: background 0.2s;
+  user-select: none;
+}
+
+.context-menu-item:hover { background: #3d3d5c; }
+
+.context-menu-item.delete { color: #ed4245; }
+
+.context-menu-item.delete:hover { background: rgba(237, 66, 69, 0.1); }
+
+.mic-device-menu {
+  position: fixed;
+  background: #2d2d44;
+  border: 1px solid #404060;
+  border-radius: 8px;
+  padding: 4px 0;
+  min-width: 220px;
+  z-index: 10001;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  animation: contextMenuFadeIn 0.15s ease;
+}
+
+.mic-device-item {
+  padding: 10px 16px;
+  cursor: pointer;
+  color: #e0e0e0;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.2s ease;
+}
+
+.mic-device-item:hover { background: #3d3d5c; }
+
+.mic-device-item.active {
+  background: rgba(88, 101, 242, 0.2);
+  border-left: 3px solid #5865f2;
+}
+
+#notes-dropdown-menu {
+  position: absolute;
+  background: #2d2d44;
+  border: 1px solid #404060;
+  border-radius: 8px;
+  padding: 4px 0;
+  min-width: 180px;
+  z-index: 10000;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  animation: fadeIn 0.15s ease;
+}
+
+.notes-dropdown-item {
+  width: 100%;
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  color: #e0e0e0;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.2s ease;
+}
+
+.notes-dropdown-item:hover { background: #3d3d5c; }

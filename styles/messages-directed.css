@@ -1,0 +1,85 @@
+.message.message-directed-to-me .message-reply-group {
+  background: #1a1a30 !important;
+  box-shadow: 0 0 0 1px rgba(88, 101, 242, 0.2), 0 2px 6px rgba(0, 0, 0, 0.3) !important;
+}
+
+.message.message-reply-to-me .message-reply-group {
+  border-left: 3px solid #00b0f4 !important;
+  background: linear-gradient(90deg, rgba(0, 176, 244, 0.08) 0%, #1a1a30 100%) !important;
+}
+
+.message.message-mention-me .message-reply-group {
+  border-left: 3px solid #faa61a !important;
+  background: linear-gradient(90deg, rgba(250, 166, 26, 0.08) 0%, #1a1a30 100%) !important;
+}
+
+.message.message-name-mention-me .message-reply-group {
+  border-left: 3px solid #5865f2 !important;
+  background: linear-gradient(90deg, rgba(88, 101, 242, 0.06) 0%, #1a1a30 100%) !important;
+}
+
+.message.message-directed-to-me .message-reply-group.reply-side {
+  border-left-width: 4px !important;
+}
+
+.message.message-directed-to-me .message-reply-group.reply-top {
+  border-top: 3px solid transparent !important;
+}
+
+.message.message-reply-to-me .message-reply-group.reply-top {
+  border-top-color: #00b0f4 !important;
+}
+
+.message.message-mention-me .message-reply-group.reply-top {
+  border-top-color: #faa61a !important;
+}
+
+.message.message-name-mention-me .message-reply-group.reply-top {
+  border-top-color: #5865f2 !important;
+}
+
+.message.message-directed-to-me .message-username {
+  font-weight: 700 !important;
+}
+
+.message.message-reply-to-me .message-username {
+  color: #00b0f4 !important;
+}
+
+.message.message-mention-me .message-username {
+  color: #faa61a !important;
+}
+
+.message.message-name-mention-me .message-username {
+  color: #a0a0ff !important;
+}
+
+.message.message-directed-to-me:hover .message-reply-group {
+  box-shadow: 0 0 0 1px rgba(88, 101, 242, 0.4), 0 4px 8px rgba(0, 0, 0, 0.4) !important;
+}
+
+.message-text .mention-highlight {
+  background: rgba(250, 166, 26, 0.2);
+  color: #faa61a;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.message-text .reply-highlight {
+  background: rgba(0, 176, 244, 0.15);
+  color: #00b0f4;
+  padding: 1px 0;
+}
+
+.mention-highlight {
+  background: rgba(250, 166, 26, 0.2);
+  color: #faa61a;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.reply-to-me {
+  border-left: 3px solid #00b0f4 !important;
+}

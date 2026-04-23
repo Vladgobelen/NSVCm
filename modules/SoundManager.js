@@ -83,6 +83,23 @@ class SoundManager {
     this.loadSettings();
   }
 
+static debugSettings() {
+    console.log('🔊 [SOUND] ========== ТЕКУЩИЕ НАСТРОЙКИ ЗВУКОВ ==========');
+    for (const type of Object.values(this.SoundTypes)) {
+        const enabled = this.isEnabled(type);
+        const label = this.SoundLabels[type] || type;
+        console.log(`🔊 [SOUND] ${label}: ${enabled ? '✅ ВКЛ' : '❌ ВЫКЛ'}`);
+    }
+    console.log('🔊 [SOUND] =============================================');
+}
+
+static isEnabled(settingType) {
+    if (!this.initialized) return true;
+    const enabled = this.settingsCache?.[settingType] !== false;
+    console.log(`🔊 [SOUND] isEnabled(${settingType}) = ${enabled}`);
+    return enabled;
+}
+
   static loadSettings() {
     try {
       const saved = localStorage.getItem(this.storageKey);
@@ -110,11 +127,6 @@ class SoundManager {
     } catch (e) {
       console.error('❌ [SoundManager] Ошибка сохранения настроек:', e);
     }
-  }
-
-  static isEnabled(settingType) {
-    if (!this.initialized) return true;
-    return this.settingsCache?.[settingType] !== false;
   }
 
   static setEnabled(settingType, enabled) {

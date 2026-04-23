@@ -1,0 +1,488 @@
+#notes-view-container {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.notes-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--bg-tertiary);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.notes-title {
+  margin: 0;
+  font-size: 14px;
+  color: #e0e0e0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notes-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.notes-mode-btn {
+  padding: 6px 12px;
+  background: none;
+  border: 1px solid #404060;
+  border-radius: 6px;
+  color: #888;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+
+.notes-mode-btn:hover {
+  background: #3d3d5c;
+  color: #e0e0e0;
+}
+
+.notes-mode-btn.active {
+  background: #5865f2;
+  border-color: #5865f2;
+  color: white;
+}
+
+.notes-close-btn {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 20px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.notes-close-btn:hover {
+  background: #404060;
+  color: #e0e0e0;
+}
+
+.new-note-btn {
+  display: block !important;
+  margin: 10px 16px !important;
+  padding: 12px 16px !important;
+  background: #5865f2 !important;
+  color: white !important;
+  border: none !important;
+  border-radius: 8px !important;
+  cursor: pointer !important;
+  font-size: 14px !important;
+  font-weight: bold !important;
+  width: calc(100% - 32px) !important;
+  min-height: 44px !important;
+  text-align: left !important;
+  box-sizing: border-box !important;
+}
+
+.new-note-btn:hover {
+  background: #4752c4 !important;
+}
+
+.notes-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.note-card {
+  background: #2d2d44;
+  border-radius: 8px;
+  padding: 12px;
+  border: 1px solid #404060;
+  transition: all 0.2s ease;
+}
+
+.note-card:hover {
+  border-color: #5865f2;
+  box-shadow: 0 2px 8px rgba(88, 101, 242, 0.2);
+}
+
+.note-card.highlighted {
+  background: rgba(88, 101, 242, 0.15);
+  border-color: #5865f2;
+}
+
+.note-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.note-author {
+  font-weight: 600;
+  color: #e0e0e0;
+  font-size: 13px;
+}
+
+.note-date {
+  font-size: 11px;
+  color: #888;
+}
+
+.note-edited {
+  font-size: 10px;
+  color: #666;
+  font-style: italic;
+}
+
+.note-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.note-card:hover .note-actions {
+  opacity: 1;
+}
+
+.note-actions button {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.note-edit-btn:hover {
+  color: #5865f2;
+  background: rgba(88, 101, 242, 0.1);
+}
+
+.note-delete-btn:hover {
+  color: #ed4245;
+  background: rgba(237, 66, 69, 0.1);
+}
+
+.note-content {
+  color: #b0b0c0;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.note-reactions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  align-items: center;
+}
+
+.note-editor {
+  background: #1a1a2e;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.note-editor-textarea {
+  width: 100%;
+  min-height: 60px;
+  max-height: 120px;
+  padding: 8px;
+  background: #2d2d44;
+  border: 1px solid #404060;
+  color: #e0e0e0;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+}
+
+.note-editor-textarea:focus {
+  border-color: #5865f2;
+}
+
+.note-editor-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.note-editor-controls button {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.2s ease;
+}
+
+.note-save {
+  background: #5865f2;
+  color: white;
+}
+
+.note-save:hover {
+  background: #4752c4;
+}
+
+.note-cancel {
+  background: #404060;
+  color: #e0e0e0;
+}
+
+.note-cancel:hover {
+  background: #505070;
+}
+
+.notes-list-panel {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.notes-list-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--bg-tertiary);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.notes-list-header h4 {
+  margin: 0;
+  font-size: 13px;
+  color: #e0e0e0;
+}
+
+.notes-list-close-btn {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.notes-list-close-btn:hover {
+  background: #404060;
+  color: #e0e0e0;
+}
+
+.notes-list-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.note-sidebar-item {
+  padding: 8px 12px;
+  background: #2d2d44;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.note-sidebar-item:hover {
+  background: #3a3a5c;
+  border-color: #404060;
+}
+
+.note-sidebar-item.active {
+  background: rgba(88, 101, 242, 0.2);
+  border-color: #5865f2;
+}
+
+.note-sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.note-sidebar-author {
+  font-weight: 600;
+  color: #e0e0e0;
+  font-size: 12px;
+}
+
+.note-sidebar-date {
+  font-size: 10px;
+  color: #888;
+}
+
+.note-sidebar-preview {
+  color: #a0a0b0;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-sidebar-reactions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+#note-thread-container {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.note-thread-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--bg-tertiary);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.note-thread-back-btn {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.note-thread-back-btn:hover {
+  background: #404060;
+  color: #e0e0e0;
+}
+
+.note-thread-title {
+  margin: 0;
+  font-size: 14px;
+  color: #e0e0e0;
+}
+
+.note-thread-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.thread-message {
+  background: #2d2d44;
+  border-radius: 8px;
+  padding: 10px 12px;
+  border-left: 3px solid #5865f2;
+}
+
+.thread-msg-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.thread-author {
+  font-weight: 600;
+  color: #e0e0e0;
+  font-size: 13px;
+}
+
+.thread-time {
+  font-size: 11px;
+  color: #888;
+}
+
+.thread-msg-content {
+  color: #b0b0c0;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.thread-msg-reactions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.note-thread-input-area {
+  padding: 12px 16px;
+  border-top: 1px solid var(--bg-tertiary);
+  display: flex;
+  gap: 8px;
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.note-thread-input {
+  flex: 1;
+  min-height: 40px;
+  max-height: 100px;
+  padding: 8px 12px;
+  background: #1a1a2e;
+  border: 1px solid #404060;
+  color: #e0e0e0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: none;
+  outline: none;
+}
+
+.note-thread-input:focus {
+  border-color: #5865f2;
+}
+
+.note-thread-send-btn {
+  background: #5865f2;
+  border: none;
+  border-radius: 8px;
+  color: white;
+  padding: 0 16px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: background 0.2s ease;
+}
+
+.note-thread-send-btn:hover {
+  background: #4752c4;
+}

@@ -1,0 +1,27 @@
+.hidden { display: none; }
+
+.no-results { padding: 16px; text-align: center; color: var(--text-muted); }
+
+.loading-state, .empty-state, .error-state { text-align: center; padding: 20px; color: #888; }
+.error-state { color: #e74c3c; }
+
+.drag-over { background-color: rgba(0, 0, 0, 0.05); outline: 2px dashed #627dea; }
+
+.error-message {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: var(--danger);
+  color: white;
+  padding: 10px 15px;
+  border-radius: 5px;
+  z-index: 1000;
+  max-width: 300px;
+  animation: slideIn 0.3s ease;
+}
+
+.notes-loading, .notes-empty { padding: 20px; text-align: center; color: #888; font-size: 13px; }
+.notes-scroll-sentinel { height: 1px; width: 100%; }
+
+.history-sentinel { height: 1px; width: 100%; margin: 0; padding: 0; overflow: hidden; visibility: hidden; }
+.history-loader { text-align: center; padding: 12px; color: #a0a0b0; font-size: 12px; }

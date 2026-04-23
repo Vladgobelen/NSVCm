@@ -1,0 +1,86 @@
+.input-area {
+  padding: 16px;
+  border-top: 1px solid var(--bg-tertiary);
+  display: flex;
+  gap: 8px;
+}
+
+.message-input {
+  width: 100%;
+  min-height: 40px;
+  max-height: 120px;
+  padding: 10px 12px;
+  background: #1a1a2e;
+  border: 1px solid #404060;
+  color: #e0e0e0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: none;
+  overflow-y: auto;
+  line-height: 1.4;
+}
+
+.message-input:focus { outline: none; border-color: #5865f2; }
+
+.send-btn {
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: white;
+  padding: 0 16px;
+  cursor: pointer;
+}
+
+.send-btn:hover { background: #4752c4; }
+
+.attach-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 18px;
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.attach-btn:hover { background: var(--bg-modifier); color: var(--text-normal); }
+
+.search-container {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--bg-tertiary);
+  gap: 8px;
+}
+
+.search-input {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 4px;
+  border: none;
+  background: var(--bg-modifier);
+  color: var(--text-normal);
+  outline: none;
+}
+
+.clear-search-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 3px;
+  font-size: 14px;
+}
+
+.clear-search-btn:hover {
+  background: var(--bg-modifier);
+  color: var(--text-normal);
+}

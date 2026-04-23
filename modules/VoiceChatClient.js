@@ -1,4 +1,3 @@
-
 import SettingsManager from './SettingsManager.js';
 import MediaManager from './MediaManager.js';
 import RoomManager from './RoomManager.js';
@@ -27,6 +26,7 @@ import NoteUIManager from './NoteUIManager.js';
 import NoteSocketHandler from './NoteSocketHandler.js';
 import MobileOnlineBar from './MobileOnlineBar.js';
 import AvatarManager from './AvatarManager.js';
+import ConsoleCommandManager from './ConsoleCommandManager.js';
 
 const NETWORK_RECONNECT_CONFIG = { BASE_DELAY: 1000, MAX_DELAY: 16000, JITTER_FACTOR: 0.2 };
 const PING_INTERVAL = 10000;
@@ -115,7 +115,156 @@ class VoiceChatClient {
     this._lastBytesReceived = new Map();
     this._trafficActiveProducers = new Set();
 
+    this.selectedMicDeviceId = null;
+    this.audioMaxBitrate = 48;
+    this.audioDTX = true;
+    this.audioNoiseSuppression = true;
+    this.audioEchoCancellation = true;
+    this.audioAutoGainControl = true;
+    this.audioRNNoise = true;
+    this.audioChannelMode = 'mono';
+    this.audioEchoCancellationType = 'browser';
+    this.audioInputGain = 1.0;
+
+    this.loadAudioSettings();
     this.init();
+  }
+
+  loadAudioSettings() {
+    try {
+      const saved = localStorage.getItem('voicechat_audio_settings');
+      if (saved) {
+        const settings = JSON.parse(saved);
+        this.selectedMicDeviceId = settings.selectedMicDeviceId || null;
+        this.audioMaxBitrate = settings.audioMaxBitrate ?? 48;
+        this.audioDTX = settings.audioDTX ?? true;
+        this.audioNoiseSuppression = settings.audioNoiseSuppression ?? true;
+        this.audioEchoCancellation = settings.audioEchoCancellation ?? true;
+        this.audioAutoGainControl = settings.audioAutoGainControl ?? true;
+        this.audioRNNoise = settings.audioRNNoise ?? true;
+        this.audioChannelMode = settings.audioChannelMode || 'mono';
+        this.audioEchoCancellationType = settings.audioEchoCancellationType || 'browser';
+        this.audioInputGain = settings.audioInputGain ?? 1.0;
+      }
+    } catch (e) {
+      console.error('Failed to load audio settings:', e);
+    }
+  }
+
+  saveAudioSettings() {
+    try {
+      const settings = {
+        selectedMicDeviceId: this.selectedMicDeviceId,
+        audioMaxBitrate: this.audioMaxBitrate,
+        audioDTX: this.audioDTX,
+        audioNoiseSuppression: this.audioNoiseSuppression,
+        audioEchoCancellation: this.audioEchoCancellation,
+        audioAutoGainControl: this.audioAutoGainControl,
+        audioRNNoise: this.audioRNNoise,
+        audioChannelMode: this.audioChannelMode,
+        audioEchoCancellationType: this.audioEchoCancellationType,
+        audioInputGain: this.audioInputGain
+      };
+      localStorage.setItem('voicechat_audio_settings', JSON.stringify(settings));
+    } catch (e) {
+      console.error('Failed to save audio settings:', e);
+    }
+  }
+
+  resetAudioSettingsToDefaults() {
+    this.selectedMicDeviceId = null;
+    this.audioMaxBitrate = 48;
+    this.audioDTX = true;
+    this.audioNoiseSuppression = true;
+    this.audioEchoCancellation = true;
+    this.audioAutoGainControl = true;
+    this.audioRNNoise = true;
+    this.audioChannelMode = 'mono';
+    this.audioEchoCancellationType = 'browser';
+    this.audioInputGain = 1.0;
+    this.saveAudioSettings();
+  }
+
+  async showMicDeviceMenu(event, buttonElement) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const existingMenu = document.querySelector('.mic-device-menu');
+    if (existingMenu) existingMenu.remove();
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputs = devices.filter(d => d.kind === 'audioinput' && d.deviceId);
+
+      const menu = document.createElement('div');
+      menu.className = 'mic-device-menu';
+      menu.style.cssText = `
+        position: fixed;
+        background: #2d2d44;
+        border: 1px solid #404060;
+        border-radius: 8px;
+        padding: 4px 0;
+        min-width: 220px;
+        z-index: 10001;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+      `;
+
+      const rect = buttonElement.getBoundingClientRect();
+      menu.style.left = `${rect.left}px`;
+      menu.style.top = `${rect.bottom + 5}px`;
+
+      if (audioInputs.length === 0) {
+        const item = document.createElement('div');
+        item.className = 'mic-device-item';
+        item.textContent = 'Микрофоны не найдены';
+        item.style.color = '#888';
+        item.style.cursor = 'default';
+        menu.appendChild(item);
+      } else {
+        const defaultItem = document.createElement('div');
+        defaultItem.className = 'mic-device-item' + (this.selectedMicDeviceId === null ? ' active' : '');
+        defaultItem.innerHTML = '<span>🎤</span><span>По умолчанию</span>';
+        defaultItem.addEventListener('click', () => {
+          this.selectedMicDeviceId = null;
+          this.saveAudioSettings();
+          UIManager.addMessage('System', '🎤 Выбран микрофон по умолчанию');
+          menu.remove();
+        });
+        menu.appendChild(defaultItem);
+
+        audioInputs.forEach(device => {
+          const item = document.createElement('div');
+          item.className = 'mic-device-item' + (this.selectedMicDeviceId === device.deviceId ? ' active' : '');
+          const label = device.label || `Микрофон ${device.deviceId.slice(0, 8)}`;
+          item.innerHTML = `<span>🎙️</span><span>${UIManager.escapeHtml(label)}</span>`;
+          item.addEventListener('click', () => {
+            this.selectedMicDeviceId = device.deviceId;
+            this.saveAudioSettings();
+            UIManager.addMessage('System', `🎤 Выбран микрофон: ${label}`);
+            menu.remove();
+          });
+          menu.appendChild(item);
+        });
+      }
+
+      document.body.appendChild(menu);
+
+      const closeHandler = (e) => {
+        if (!menu.contains(e.target) && !buttonElement.contains(e.target)) {
+          menu.remove();
+          document.removeEventListener('click', closeHandler);
+          document.removeEventListener('contextmenu', closeHandler);
+        }
+      };
+
+      setTimeout(() => {
+        document.addEventListener('click', closeHandler);
+        document.addEventListener('contextmenu', closeHandler);
+      }, 10);
+    } catch (error) {
+      console.error('Failed to enumerate devices:', error);
+      UIManager.showError('Не удалось получить список микрофонов');
+    }
   }
 
   _calculateBackoffDelay(attempt, baseDelay, maxDelay, jitterFactor) {
@@ -205,116 +354,116 @@ class VoiceChatClient {
     }
   }
 
-_attemptConsumeWithRetry(producerId, producerData) {
-  if (!this.socket || !this.socket.connected) {
-    this._scheduleConsumerRetry(producerId, producerData, 'socket_disconnected');
-    return;
-  }
-  if (!this.recvTransport || this.recvTransport.closed || this.recvTransport.connectionState === 'failed') {
-    this._scheduleConsumerRetry(producerId, producerData, 'transport_not_ready');
-    return;
-  }
-  
-  document.querySelectorAll(`audio[id^="audio-${producerId}"]`).forEach(el => el.remove());
-  
-  this.socket.emit(
-    'consume',
-    {
-      producerId,
-      rtpCapabilities: this.device.rtpCapabilities,
-      transportId: this.recvTransport.id,
-      clientId: this.clientID,
-    },
-    async (response) => {
-      if (!response?.success) {
-        const errorMsg = response?.error || 'unknown_error';
-        this._scheduleConsumerRetry(producerId, producerData, errorMsg);
-        return;
-      }
-      if (!response.consumerParameters) {
-        this._scheduleConsumerRetry(producerId, producerData, 'no_parameters');
-        return;
-      }
-      try {
-        const { consumer, audioElement } = await MediaManager.createConsumer(this, response.consumerParameters);
-        this._resetConsumerRecoveryState(producerId);
-        this.consumerState.set(response.consumerParameters.producerId, {
-          status: 'active',
-          consumer,
-          audioElement,
-          lastError: null,
-          recoveryAttempts: 0,
-        });
-        this.consumedProducerIdsRef.add(response.consumerParameters.producerId);
-
-        const members = MembersManager.getMembers();
-        let userId = response.consumerParameters.userId;
-        if (!userId) {
-          const member = members.find(
-            (m) => m.clientId === response.consumerParameters.peerId || m.userId === response.consumerParameters.peerId
-          );
-          userId = member?.userId || response.consumerParameters.peerId;
+  _attemptConsumeWithRetry(producerId, producerData) {
+    if (!this.socket || !this.socket.connected) {
+      this._scheduleConsumerRetry(producerId, producerData, 'socket_disconnected');
+      return;
+    }
+    if (!this.recvTransport || this.recvTransport.closed || this.recvTransport.connectionState === 'failed') {
+      this._scheduleConsumerRetry(producerId, producerData, 'transport_not_ready');
+      return;
+    }
+    
+    document.querySelectorAll(`audio[id^="audio-${producerId}"]`).forEach(el => el.remove());
+    
+    this.socket.emit(
+      'consume',
+      {
+        producerId,
+        rtpCapabilities: this.device.rtpCapabilities,
+        transportId: this.recvTransport.id,
+        clientId: this.clientID,
+      },
+      async (response) => {
+        if (!response?.success) {
+          const errorMsg = response?.error || 'unknown_error';
+          this._scheduleConsumerRetry(producerId, producerData, errorMsg);
+          return;
         }
+        if (!response.consumerParameters) {
+          this._scheduleConsumerRetry(producerId, producerData, 'no_parameters');
+          return;
+        }
+        try {
+          const { consumer, audioElement } = await MediaManager.createConsumer(this, response.consumerParameters);
+          this._resetConsumerRecoveryState(producerId);
+          this.consumerState.set(response.consumerParameters.producerId, {
+            status: 'active',
+            consumer,
+            audioElement,
+            lastError: null,
+            recoveryAttempts: 0,
+          });
+          this.consumedProducerIdsRef.add(response.consumerParameters.producerId);
 
-        if (userId) {
-          if (!window.producerUserMap) window.producerUserMap = new Map();
-
-          if (userId.startsWith('client_')) {
-            const domMember = Array.from(document.querySelectorAll('.member-item')).find(
-              (el) => el.dataset.clientId === userId
+          const members = MembersManager.getMembers();
+          let userId = response.consumerParameters.userId;
+          if (!userId) {
+            const member = members.find(
+              (m) => m.clientId === response.consumerParameters.peerId || m.userId === response.consumerParameters.peerId
             );
-            if (domMember?.dataset.userId) {
-              userId = domMember.dataset.userId;
-            }
+            userId = member?.userId || response.consumerParameters.peerId;
           }
 
-          window.producerUserMap.set(response.consumerParameters.producerId, userId);
-          UIManager.showVolumeSliderByUserId(response.consumerParameters.producerId, userId);
-          
-          setTimeout(async () => {
-            try {
-              const VBM = (await import('./VolumeBoostManager.js')).default;
-              await VBM._ensureAudioContext();
-              const ctx = VBM.audioCtx;
-              
-              const track = consumer.track;
-              if (track && track.readyState === 'live' && audioElement) {
-                audioElement.volume = 0;
-                audioElement.muted = true;
-                
-                const source = ctx.createMediaStreamSource(audioElement.srcObject);
-                
-                let gainNode = VBM.gainNodes.get(userId);
-                if (!gainNode) {
-                  gainNode = ctx.createGain();
-                  gainNode.gain.value = 1.0;
-                  gainNode.connect(ctx.destination);
-                  VBM.gainNodes.set(userId, gainNode);
-                }
-                
-                const oldSource = VBM.sourceNodes.get(userId);
-                if (oldSource) {
-                  try { oldSource.disconnect(); } catch(e) {}
-                }
-                
-                source.connect(gainNode);
-                VBM.sourceNodes.set(userId, source);
-              }
-            } catch (e) {
-              console.error('AudioContext setup error for', userId, e);
-            }
-          }, 500);
-        }
+          if (userId) {
+            if (!window.producerUserMap) window.producerUserMap = new Map();
 
-        if (this.diagnosticActive) {
-          this._notifyDiagnosticUpdate();
+            if (userId.startsWith('client_')) {
+              const domMember = Array.from(document.querySelectorAll('.member-item')).find(
+                (el) => el.dataset.clientId === userId
+              );
+              if (domMember?.dataset.userId) {
+                userId = domMember.dataset.userId;
+              }
+            }
+
+            window.producerUserMap.set(response.consumerParameters.producerId, userId);
+            UIManager.showVolumeSliderByUserId(response.consumerParameters.producerId, userId);
+            
+            setTimeout(async () => {
+              try {
+                const VBM = (await import('./VolumeBoostManager.js')).default;
+                await VBM._ensureAudioContext();
+                const ctx = VBM.audioCtx;
+                
+                const track = consumer.track;
+                if (track && track.readyState === 'live' && audioElement) {
+                  audioElement.volume = 0;
+                  audioElement.muted = true;
+                  
+                  const source = ctx.createMediaStreamSource(audioElement.srcObject);
+                  
+                  let gainNode = VBM.gainNodes.get(userId);
+                  if (!gainNode) {
+                    gainNode = ctx.createGain();
+                    gainNode.gain.value = 1.0;
+                    gainNode.connect(ctx.destination);
+                    VBM.gainNodes.set(userId, gainNode);
+                  }
+                  
+                  const oldSource = VBM.sourceNodes.get(userId);
+                  if (oldSource) {
+                    try { oldSource.disconnect(); } catch(e) {}
+                  }
+                  
+                  source.connect(gainNode);
+                  VBM.sourceNodes.set(userId, source);
+                }
+              } catch (e) {
+                console.error('AudioContext setup error for', userId, e);
+              }
+            }, 500);
+          }
+
+          if (this.diagnosticActive) {
+            this._notifyDiagnosticUpdate();
+          }
+        } catch (error) {
+          this._scheduleConsumerRetry(producerId, producerData, error.message);
         }
-      } catch (error) {
-        this._scheduleConsumerRetry(producerId, producerData, error.message);
       }
-    }
-  );
-}
+    );
+  }
 
   _processPendingConsumeQueue() {
     if (!this._transportReadyForConsume) return;
@@ -443,7 +592,6 @@ _attemptConsumeWithRetry(producerId, producerData) {
           this._updateAvatarSpeakingState(userId, hasTraffic);
         }
       } catch (e) {
-        // Ignore
       }
     }
 
@@ -598,7 +746,6 @@ _attemptConsumeWithRetry(producerId, producerData) {
       try {
         this.recvTransport.close();
       } catch (e) {
-        // Ignore
       }
     }
     const recvOptions = {
@@ -624,7 +771,6 @@ _attemptConsumeWithRetry(producerId, producerData) {
       try {
         this.sendTransport.close();
       } catch (e) {
-        // Ignore
       }
     }
     const sendOptions = {
@@ -798,7 +944,6 @@ _attemptConsumeWithRetry(producerId, producerData) {
         return true;
       }
     } catch (e) {
-      // Ignore
     }
 
     const lastUser = AuthManager.loadLastUser();
@@ -829,7 +974,6 @@ _attemptConsumeWithRetry(producerId, producerData) {
           return true;
         }
       } catch (e) {
-        // Ignore
       }
     }
 
@@ -897,7 +1041,6 @@ _attemptConsumeWithRetry(producerId, producerData) {
           window.ipcRenderer.sendToHost('play-sound', soundName);
           return;
         } catch (e) {
-          // Ignore
         }
       }
       window.postMessage({ type: 'ELECTRON_PLAY_SOUND', soundType: soundName, source: 'webview' }, '*');
@@ -920,6 +1063,7 @@ _attemptConsumeWithRetry(producerId, producerData) {
     InviteManager.init(this);
     AvatarManager.init(this);
     MobileOnlineBar.init();
+    ConsoleCommandManager.init(this);
     try {
       const NoteAPI = (await import('./NoteAPI.js')).default;
       const NoteUIManager = (await import('./NoteUIManager.js')).default;
@@ -1093,10 +1237,12 @@ _attemptConsumeWithRetry(producerId, producerData) {
     if (this.elements.micButton) {
       this.elements.micButton.addEventListener('click', micHandler);
       this.elements.micButton.title = 'Микрофон (основной)';
+      this.elements.micButton.addEventListener('contextmenu', (e) => this.showMicDeviceMenu(e, this.elements.micButton));
     }
     if (this.elements.micToggleBtn) {
       this.elements.micToggleBtn.addEventListener('click', micHandler);
       this.elements.micToggleBtn.title = 'Микрофон (быстрый)';
+      this.elements.micToggleBtn.addEventListener('contextmenu', (e) => this.showMicDeviceMenu(e, this.elements.micToggleBtn));
     }
     if (this.elements.messageInput) {
       this.elements.messageInput.addEventListener('keydown', (e) => {
@@ -1573,69 +1719,69 @@ _attemptConsumeWithRetry(producerId, producerData) {
     }
   }
 
-async ensureConsumer(producerId, producerData = {}) {
-  if (this.consumedProducerIdsRef.has(producerId)) return true;
-  
-  if (producerData.clientID === this.clientID) {
-    this.consumedProducerIdsRef.add(producerId);
-    return false;
-  }
-  
-  if (!this.recvTransport || this.recvTransport.closed || this.recvTransport.connectionState === 'failed') {
-    const recoveryState = this.consumerRecoveryState.get(producerId);
-    if (!recoveryState || !recoveryState.exhausted) {
-      const alreadyPending = this.pendingProducersRef.some(p => (p.id || p.producerId) === producerId);
-      if (!alreadyPending) {
-        this.pendingProducersRef.push(producerData);
-      }
-      
-      const alreadyInQueue = this._producersPendingConsume.some(item => item.producerId === producerId);
-      if (!alreadyInQueue) {
-        this._producersPendingConsume.push({ producerId, producerData, addedAt: Date.now() });
-      }
+  async ensureConsumer(producerId, producerData = {}) {
+    if (this.consumedProducerIdsRef.has(producerId)) return true;
+    
+    if (producerData.clientID === this.clientID) {
+      this.consumedProducerIdsRef.add(producerId);
+      return false;
     }
-    return false;
+    
+    if (!this.recvTransport || this.recvTransport.closed || this.recvTransport.connectionState === 'failed') {
+      const recoveryState = this.consumerRecoveryState.get(producerId);
+      if (!recoveryState || !recoveryState.exhausted) {
+        const alreadyPending = this.pendingProducersRef.some(p => (p.id || p.producerId) === producerId);
+        if (!alreadyPending) {
+          this.pendingProducersRef.push(producerData);
+        }
+        
+        const alreadyInQueue = this._producersPendingConsume.some(item => item.producerId === producerId);
+        if (!alreadyInQueue) {
+          this._producersPendingConsume.push({ producerId, producerData, addedAt: Date.now() });
+        }
+      }
+      return false;
+    }
+    
+    this._attemptConsumeWithRetry(producerId, producerData);
+    return true;
   }
-  
-  this._attemptConsumeWithRetry(producerId, producerData);
-  return true;
-}
 
-_processPendingProducers() {
-  if (this._isProcessingConsumers) return;
-  this._isProcessingConsumers = true;
-  this._transportReadyForConsume = true;
-  
-  if (!this.recvTransport || this.recvTransport.closed || this.recvTransport.connectionState === 'failed') {
-    this._isProcessingConsumers = false;
-    this._transportReadyForConsume = false;
-    return;
-  }
-  
-  const uniqueProducers = new Map();
-  for (const p of this.pendingProducersRef) {
-    const id = p.id || p.producerId;
-    if (!uniqueProducers.has(id)) {
-      uniqueProducers.set(id, p);
+  _processPendingProducers() {
+    if (this._isProcessingConsumers) return;
+    this._isProcessingConsumers = true;
+    this._transportReadyForConsume = true;
+    
+    if (!this.recvTransport || this.recvTransport.closed || this.recvTransport.connectionState === 'failed') {
+      this._isProcessingConsumers = false;
+      this._transportReadyForConsume = false;
+      return;
     }
-  }
-  const toProcess = Array.from(uniqueProducers.values());
-  this.pendingProducersRef = [];
-  
-  const promises = toProcess.map((p) =>
-    this.ensureConsumer(p.id || p.producerId, p).catch((e) => {
-      this._scheduleConsumerRetry(p.id || p.producerId, p, e.message);
-    })
-  );
-  
-  Promise.allSettled(promises).finally(() => {
-    this._isProcessingConsumers = false;
-    this._processPendingConsumeQueue();
-    if (this.pendingProducersRef.length > 0) {
-      setTimeout(() => this._processPendingProducers(), 200);
+    
+    const uniqueProducers = new Map();
+    for (const p of this.pendingProducersRef) {
+      const id = p.id || p.producerId;
+      if (!uniqueProducers.has(id)) {
+        uniqueProducers.set(id, p);
+      }
     }
-  });
-}
+    const toProcess = Array.from(uniqueProducers.values());
+    this.pendingProducersRef = [];
+    
+    const promises = toProcess.map((p) =>
+      this.ensureConsumer(p.id || p.producerId, p).catch((e) => {
+        this._scheduleConsumerRetry(p.id || p.producerId, p, e.message);
+      })
+    );
+    
+    Promise.allSettled(promises).finally(() => {
+      this._isProcessingConsumers = false;
+      this._processPendingConsumeQueue();
+      if (this.pendingProducersRef.length > 0) {
+        setTimeout(() => this._processPendingProducers(), 200);
+      }
+    });
+  }
 
   async initAutoConnect() {
     if (this._joinRoomInProgress || this.isConnected) {
@@ -1738,48 +1884,110 @@ _processPendingProducers() {
         this._updateTrayBadge();
       }
     } catch (error) {
-      // Ignore
     }
   }
 
-  setupSocketConnection() {
+setupSocketConnection() {
     const currentToken = this.token;
     if (!currentToken) return;
     if (this.socket && this.socket.connected) {
-      if (this.currentRoom && this.socketRoom !== this.currentRoom) {
-        this.destroySocket();
-      } else {
-        this.socket.emit('join-room', { roomId: this.currentRoom });
-        return;
-      }
+        if (this.currentRoom && this.socketRoom !== this.currentRoom) {
+            this.destroySocket();
+        } else {
+            this.socket.emit('join-room', { roomId: this.currentRoom });
+            return;
+        }
     }
     this.destroySocket();
     try {
-      this.socket = io(this.API_SERVER_URL, {
-        auth: {
-          token: currentToken,
-          userId: this.userId,
-          clientId: this.clientID,
-          username: this.username,
-          tokenVersion: this.tokenVersion,
-        },
-        reconnection: true,
-        reconnectionAttempts: 10,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 30000,
-        timeout: 20000,
-      });
-      this.socketRoom = this.currentRoom;
-      this.chatHandler.registerHandlers(this.socket);
-      this.mediaHandler.registerHandlers(this.socket);
-      this.systemHandler.registerHandlers(this.socket);
-      this.pollHandler.registerHandlers(this.socket);
-      this.noteHandler.registerHandlers(this.socket, this.userId, io);
-    } catch (error) {
-      UIManager.showError('Ошибка подключения к серверу');
-      this.setConnectionState(CONNECTION_STATE.ERROR, this.currentRoom);
+        this.socket = io(this.API_SERVER_URL, {
+            auth: {
+                token: currentToken,
+                userId: this.userId,
+                clientId: this.clientID,
+                username: this.username,
+                tokenVersion: this.tokenVersion,
+            },
+            reconnection: true,
+            reconnectionAttempts: 10,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 30000,
+            timeout: 20000,
+        });
+        this.socketRoom = this.currentRoom;
+        this.chatHandler.registerHandlers(this.socket);
+        this.mediaHandler.registerHandlers(this.socket);
+        this.systemHandler.registerHandlers(this.socket);
+        this.pollHandler.registerHandlers(this.socket);
+        this.noteHandler.registerHandlers(this.socket, this.userId, io);
+        
+this.socket.on('console-command', (data) => {
+    console.log('🔧 [CLIENT] Получена console-command:', data);
+    
+    const { text, senderName, senderId } = data;
+    
+    // Выполняем команду
+    const { result, error, isPublic, commandPrefix } = 
+        ConsoleCommandManager.handleRemoteCommand(text, senderName, senderId);
+    
+    if (error) {
+        // Ошибку показываем только локально
+        UIManager.addMessage('System', `❌ Ошибка ${commandPrefix}: ${error}`, null, 'system');
+        return;
     }
-  }
+    
+    if (isPublic) {
+        // 🔥 ПУБЛИЧНАЯ КОМАНДА — отправляем результат в общий чат
+        const formatted = ConsoleCommandManager.formatValue(result);
+        const maxLength = 500;
+        const truncated = formatted.length > maxLength 
+            ? formatted.substring(0, maxLength) + '...' 
+            : formatted;
+        
+        this.socket.emit('send-message', {
+            roomId: this.currentRoom,
+            text: `📟 ${this.username} выполнил ${commandPrefix}:\n${truncated}`
+        });
+    } else {
+        // 🔥 ЛОКАЛЬНАЯ КОМАНДА — показываем только у себя
+        const formatted = ConsoleCommandManager.formatValue(result);
+        UIManager.addMessage('System', `📟 ${commandPrefix}\n${formatted}`, null, 'system');
+    }
+});
+
+        
+    } catch (error) {
+        UIManager.showError('Ошибка подключения к серверу');
+        this.setConnectionState(CONNECTION_STATE.ERROR, this.currentRoom);
+    }
+}
+
+/**
+ * Обработчик удаленной консольной команды от сервера
+ * Выполняет команду на всех клиентах в комнате
+ */
+handleRemoteConsoleCommand(data) {
+    const { text, senderId, senderName } = data;
+    
+    if (!text) return;
+    
+    // Определяем префикс команды
+    const firstLine = text.split('\n')[0].trim();
+    const commandPrefix = ConsoleCommandManager.getCommandPrefix(firstLine);
+    
+    if (!commandPrefix) return;
+    
+    // Показываем, что получили команду
+    UIManager.addMessage('System', `📟 ${senderName} выполняет команду ${commandPrefix}...`, null, 'system');
+    
+    // Выполняем команду через менеджер
+    try {
+        ConsoleCommandManager.handleCommand(text, commandPrefix);
+    } catch (error) {
+        console.error('[VoiceChatClient] Remote console command error:', error);
+        UIManager.addMessage('System', `📟 Ошибка выполнения ${commandPrefix}: ${error.message}`, null, 'system');
+    }
+}
 
   _scheduleSocketReconnect(reason) {
     const key = 'socket';
@@ -1821,7 +2029,6 @@ _processPendingProducers() {
               await MediaManager.resumeMicrophone(this);
               this.updateMicButtonState();
             } catch (e) {
-              // Ignore
             }
           }, 2000);
         }
@@ -2112,7 +2319,6 @@ _processPendingProducers() {
         }
       }
     } catch (error) {
-      // Ignore
     }
   }
 
@@ -2325,7 +2531,6 @@ _processPendingProducers() {
       });
       if (!response.ok) throw new Error('Fallback reaction failed');
     } catch (error) {
-      // Ignore
     }
   }
 
@@ -2380,192 +2585,192 @@ _processPendingProducers() {
     }, 1500);
   }
 
-async joinRoom(roomId, clearUnread = true) {
-  if (this.currentRoom === roomId && this.isConnected && this.socket?.connected) {
-    this._processPendingProducers();
-    return true;
-  }
-  
-  const sidebar = document.querySelector('.sidebar');
-  const membersPanel = document.querySelector('.members-panel');
-  
-  if (sidebar) sidebar.classList.remove('open');
-  if (membersPanel) membersPanel.classList.remove('open');
-  
-  if (roomId) ScrollTracker.clearLastViewedMessage(roomId);
-  
-  this._resetAllRecoveryState();
-  this._abortMediaRequests();
-  this.setConnectionState(CONNECTION_STATE.CONNECTING, roomId);
-  
-  this._joinRoomInProgress = true;
-  this._isMediaInitializing = false;
-  this._pendingMicAction = null;
-  
-  this.pendingProducersRef = [];
-  this.consumedProducerIdsRef.clear();
-  this.consumerState.clear();
-  this._isProcessingConsumers = false;
-  this._transportReadyForConsume = false;
-  this._producersPendingConsume = [];
-  
-  try {
-    if (this.currentRoom && this.currentRoom !== roomId) {
-      if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
-    }
-    await this.disconnectFromRoom();
-    
-    const joinRes = await this._fetchWithTimeout(this.CHAT_API_URL, {
-      method: 'POST',
-      body: JSON.stringify({
-        roomId,
-        userId: this.userId,
-        token: this.token,
-        clientId: this.clientID,
-      }),
-    });
-    
-    const joinData = await joinRes.json();
-    if (!joinData.success) throw new Error(joinData.error || 'Join failed');
-    if (!joinData.mediaData) throw new Error('No media data received');
-    
-    this.clientID = joinData.clientId;
-    this.mediaData = joinData.mediaData;
-    this.currentRoom = roomId;
-    this.roomType = 'voice';
-    localStorage.setItem('lastServerId', this.currentServerId);
-    localStorage.setItem('lastRoomId', this.currentRoom);
-    this.audioProducer = null;
-    this.isMicActive = false;
-    this.isMicPaused = true;
-    
-    this.setupSocketConnection();
-    let attempts = 0;
-    while (!this.socket?.connected && attempts < 50) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      attempts++;
-    }
-    if (!this.socket?.connected) throw new Error('WebSocket не подключился');
-    
-    await new Promise((resolve) => {
-      const timeout = setTimeout(() => resolve(), 2000);
-      const joinHandler = () => {
-        clearTimeout(timeout);
-        resolve();
-      };
-      this.socket.once('join-ack', joinHandler);
-      this.socket.emit('join-room', { roomId });
-    });
-    
-    await MediaManager.connect(this, roomId, joinData.mediaData);
-    
-    if (this.socket && this.socket.connected) {
-      this.socket.emit('request-room-snapshot', { roomId }, (response) => {
-        if (response?.success && response.producers) {
-          for (const producer of response.producers) {
-            if (producer.clientID !== this.clientID && !this.consumedProducerIdsRef.has(producer.id)) {
-              this.pendingProducersRef.push(producer);
-            }
-          }
-          this._processPendingProducers();
-        }
-      });
-      
-      this.socket.emit('request-mic-states', { roomId });
+  async joinRoom(roomId, clearUnread = true) {
+    if (this.currentRoom === roomId && this.isConnected && this.socket?.connected) {
+      this._processPendingProducers();
+      return true;
     }
     
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    const sidebar = document.querySelector('.sidebar');
+    const membersPanel = document.querySelector('.members-panel');
     
-    this.updateMicButtonState();
-    await UIManager.updateRoomUI(this);
-    TextChatManager.joinTextRoom(this, roomId);
-    this.resetHistoryState();
+    if (sidebar) sidebar.classList.remove('open');
+    if (membersPanel) membersPanel.classList.remove('open');
     
-    if (!this.token) throw new Error('Токен отсутствует');
+    if (roomId) ScrollTracker.clearLastViewedMessage(roomId);
     
-    try {
-      const response = await fetch(`${this.API_SERVER_URL}/api/messages/${roomId}/view-position`, {
-        headers: { Authorization: `Bearer ${this.token}` },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        this.savedMaxSeenId = data.maxSeen || null;
-        this.savedFirstUnreadId = data.firstUnread || null;
-      }
-    } catch (e) {
-      console.error('Failed to load view position:', e.message);
-    }
+    this._resetAllRecoveryState();
+    this._abortMediaRequests();
+    this.setConnectionState(CONNECTION_STATE.CONNECTING, roomId);
     
-    ScrollTracker.setMaxSeenMessageId(roomId, this.savedMaxSeenId);
-    ScrollTracker.setFirstUnreadId(roomId, this.savedFirstUnreadId);
-    
-    this.fetchPinnedMessages(roomId);
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    
-    const result = await TextChatManager.loadMessages(this, roomId, 100);
-    if (result && result.messages?.length > 0) {
-      this.oldestMessageId = result.messages[0].id;
-      this.hasMoreHistory = result.hasMore;
-    } else {
-      this.hasMoreHistory = false;
-    }
-    
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    
-    UIManager.initScrollTracker(roomId);
-    
-    const firstUnreadId = ScrollTracker.getFirstUnreadId(roomId);
-    const maxSeenId = ScrollTracker.getMaxSeenMessageId(roomId);
-    
-    let hasRealUnread = false;
-    if (firstUnreadId) {
-      const unreadIds = ScrollTracker._unreadMessageIds.get(roomId) || [];
-      hasRealUnread = unreadIds.length > 0;
-    }
-    
-    if (hasRealUnread && firstUnreadId) {
-      await this._scrollToMessageId(roomId, firstUnreadId);
-    } else if (maxSeenId) {
-      await this._scrollToMessageId(roomId, maxSeenId);
-    } else {
-      UIManager.scrollToBottom();
-    }
-    
-    UIManager.updateScrollButtonCounter(roomId);
-    
-    if (this.hasMoreHistory) {
-      this.initHistoryObserver();
-    } else {
-      this.removeHistorySentinel();
-    }
-    
-    if (MembersManager.onlineMembers?.length > 0) {
-      MobileOnlineBar.update(MembersManager.onlineMembers);
-    }
-    
-    if (clearUnread) {
-      await this.clearUnreadForCurrentRoom();
-    }
-    
-    this.setConnectionState(CONNECTION_STATE.CONNECTED, roomId);
-    this.isConnected = true;
-    this.sendMicStateToElectron();
-    
-    this._joinRoomInProgress = false;
-    this.startTrafficMonitor();
-    
-    return true;
-    
-  } catch (error) {
-    this._joinRoomInProgress = false;
+    this._joinRoomInProgress = true;
     this._isMediaInitializing = false;
     this._pendingMicAction = null;
-    this.setConnectionState(CONNECTION_STATE.ERROR, roomId);
-    UIManager.updateStatus('Ошибка: ' + error.message, 'disconnected');
-    UIManager.showError('Не удалось занять гнездо: ' + error.message);
-    throw error;
+    
+    this.pendingProducersRef = [];
+    this.consumedProducerIdsRef.clear();
+    this.consumerState.clear();
+    this._isProcessingConsumers = false;
+    this._transportReadyForConsume = false;
+    this._producersPendingConsume = [];
+    
+    try {
+      if (this.currentRoom && this.currentRoom !== roomId) {
+        if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
+      }
+      await this.disconnectFromRoom();
+      
+      const joinRes = await this._fetchWithTimeout(this.CHAT_API_URL, {
+        method: 'POST',
+        body: JSON.stringify({
+          roomId,
+          userId: this.userId,
+          token: this.token,
+          clientId: this.clientID,
+        }),
+      });
+      
+      const joinData = await joinRes.json();
+      if (!joinData.success) throw new Error(joinData.error || 'Join failed');
+      if (!joinData.mediaData) throw new Error('No media data received');
+      
+      this.clientID = joinData.clientId;
+      this.mediaData = joinData.mediaData;
+      this.currentRoom = roomId;
+      this.roomType = 'voice';
+      localStorage.setItem('lastServerId', this.currentServerId);
+      localStorage.setItem('lastRoomId', this.currentRoom);
+      this.audioProducer = null;
+      this.isMicActive = false;
+      this.isMicPaused = true;
+      
+      this.setupSocketConnection();
+      let attempts = 0;
+      while (!this.socket?.connected && attempts < 50) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        attempts++;
+      }
+      if (!this.socket?.connected) throw new Error('WebSocket не подключился');
+      
+      await new Promise((resolve) => {
+        const timeout = setTimeout(() => resolve(), 2000);
+        const joinHandler = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+        this.socket.once('join-ack', joinHandler);
+        this.socket.emit('join-room', { roomId });
+      });
+      
+      await MediaManager.connect(this, roomId, joinData.mediaData);
+      
+      if (this.socket && this.socket.connected) {
+        this.socket.emit('request-room-snapshot', { roomId }, (response) => {
+          if (response?.success && response.producers) {
+            for (const producer of response.producers) {
+              if (producer.clientID !== this.clientID && !this.consumedProducerIdsRef.has(producer.id)) {
+                this.pendingProducersRef.push(producer);
+              }
+            }
+            this._processPendingProducers();
+          }
+        });
+        
+        this.socket.emit('request-mic-states', { roomId });
+      }
+      
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      
+      this.updateMicButtonState();
+      await UIManager.updateRoomUI(this);
+      TextChatManager.joinTextRoom(this, roomId);
+      this.resetHistoryState();
+      
+      if (!this.token) throw new Error('Токен отсутствует');
+      
+      try {
+        const response = await fetch(`${this.API_SERVER_URL}/api/messages/${roomId}/view-position`, {
+          headers: { Authorization: `Bearer ${this.token}` },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          this.savedMaxSeenId = data.maxSeen || null;
+          this.savedFirstUnreadId = data.firstUnread || null;
+        }
+      } catch (e) {
+        console.error('Failed to load view position:', e.message);
+      }
+      
+      ScrollTracker.setMaxSeenMessageId(roomId, this.savedMaxSeenId);
+      ScrollTracker.setFirstUnreadId(roomId, this.savedFirstUnreadId);
+      
+      this.fetchPinnedMessages(roomId);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      
+      const result = await TextChatManager.loadMessages(this, roomId, 100);
+      if (result && result.messages?.length > 0) {
+        this.oldestMessageId = result.messages[0].id;
+        this.hasMoreHistory = result.hasMore;
+      } else {
+        this.hasMoreHistory = false;
+      }
+      
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      
+      UIManager.initScrollTracker(roomId);
+      
+      const firstUnreadId = ScrollTracker.getFirstUnreadId(roomId);
+      const maxSeenId = ScrollTracker.getMaxSeenMessageId(roomId);
+      
+      let hasRealUnread = false;
+      if (firstUnreadId) {
+        const unreadIds = ScrollTracker._unreadMessageIds.get(roomId) || [];
+        hasRealUnread = unreadIds.length > 0;
+      }
+      
+      if (hasRealUnread && firstUnreadId) {
+        await this._scrollToMessageId(roomId, firstUnreadId);
+      } else if (maxSeenId) {
+        await this._scrollToMessageId(roomId, maxSeenId);
+      } else {
+        UIManager.scrollToBottom();
+      }
+      
+      UIManager.updateScrollButtonCounter(roomId);
+      
+      if (this.hasMoreHistory) {
+        this.initHistoryObserver();
+      } else {
+        this.removeHistorySentinel();
+      }
+      
+      if (MembersManager.onlineMembers?.length > 0) {
+        MobileOnlineBar.update(MembersManager.onlineMembers);
+      }
+      
+      if (clearUnread) {
+        await this.clearUnreadForCurrentRoom();
+      }
+      
+      this.setConnectionState(CONNECTION_STATE.CONNECTED, roomId);
+      this.isConnected = true;
+      this.sendMicStateToElectron();
+      
+      this._joinRoomInProgress = false;
+      this.startTrafficMonitor();
+      
+      return true;
+      
+    } catch (error) {
+      this._joinRoomInProgress = false;
+      this._isMediaInitializing = false;
+      this._pendingMicAction = null;
+      this.setConnectionState(CONNECTION_STATE.ERROR, roomId);
+      UIManager.updateStatus('Ошибка: ' + error.message, 'disconnected');
+      UIManager.showError('Не удалось занять гнездо: ' + error.message);
+      throw error;
+    }
   }
-}
 
   async disconnectFromRoom() {
     this.stopTrafficMonitor();
@@ -2631,7 +2836,6 @@ async joinRoom(roomId, clearUnread = true) {
             await MediaManager.resumeMicrophone(this);
             this.updateMicButtonState();
           } catch (e) {
-            // Ignore
           }
         }, 3000);
       }

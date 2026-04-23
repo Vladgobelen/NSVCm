@@ -1,0 +1,13 @@
+:root {
+  --bg-primary: #36393f;
+  --bg-secondary: #2f3136;
+  --bg-tertiary: #202225;
+  --bg-modifier: rgba(79, 84, 92, 0.16);
+  --text-normal: #dcddde;
+  --text-muted: #72767d;
+  --accent: #5865f2;
+  --success: #3ba55d;
+  --danger: #2d2d44;
+  --warning: #faa61a;
+  --border-color: var(--bg-tertiary);
+}

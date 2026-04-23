@@ -1,0 +1,89 @@
+.owner-badge,
+.not-member-badge {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+.unread-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  background: #ed4245;
+  color: white;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: bold;
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+.unread-badge.has-mention {
+  background: #ff9f43;
+  animation: pulse-mention 2s infinite;
+}
+
+#serversToggle .unread-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 18px;
+  height: 18px;
+  font-size: 10px;
+  padding: 0 5px;
+}
+
+.server-item .unread-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.room-item .room-unread-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  background: #ed4245;
+  color: white;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+.room-item .room-unread-badge.has-mention {
+  background: #ff9f43;
+  animation: pulse-mention 2s infinite;
+}
+
+.current-room-title .room-unread-badge,
+.current-room-title .title-unread-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  background: #ed4245;
+  color: white;
+  border-radius: 11px;
+  font-size: 12px;
+  font-weight: bold;
+  white-space: nowrap;
+  margin-left: 8px;
+}
+
+.current-room-title .room-unread-badge.has-mention,
+.current-room-title .title-unread-badge.has-mention {
+  background: #ff9f43;
+  animation: pulse-mention 2s infinite;
+}

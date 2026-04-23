@@ -55,32 +55,60 @@ static loadMessages(client, roomId, limit = 100, beforeId = null, targetContaine
             if (response?.success && Array.isArray(response.messages)) {
                 const textMessages = response.messages.filter(m => m.type === 'text' || m.type === undefined);
                 const textMessagesWithoutEmbed = textMessages.filter(m => !m.embed);
+                
                 if (response.messages.length > 0) {
                     const container = targetContainer || document.querySelector('.messages-container');
                     if (beforeId && container) {
                         await MessageRenderer.prependMessagesBatch(response.messages);
                     } else {
                         for (const msg of response.messages) {
-                            // ✅ ИСПРАВЛЕНИЕ: для аудио используем audioUrl
+                            // 🔥 ИСПРАВЛЕНИЕ: Правильная обработка URL для разных типов
                             let mediaUrl = null;
+                            
                             if (msg.type === 'audio') {
-                                mediaUrl = msg.audioUrl;
+                                // Проверяем все возможные поля, где может быть URL
+                                mediaUrl = msg.audioUrl || msg.url || msg.mediaUrl || msg.imageUrl;
+                                
+                                // 🔥 ОТЛАДКА
+                                if (!mediaUrl) {
+                                    console.warn('[TextChatManager] Audio message without URL:', {
+                                        id: msg.id,
+                                        type: msg.type,
+                                        hasAudioUrl: !!msg.audioUrl,
+                                        hasUrl: !!msg.url,
+                                        hasMediaUrl: !!msg.mediaUrl,
+                                        keys: Object.keys(msg)
+                                    });
+                                }
                             } else if (msg.type === 'image') {
-                                mediaUrl = msg.imageUrl;
+                                mediaUrl = msg.imageUrl || msg.url;
                             }
                             
-UIManager.addMessage(
-    msg.username, msg.text, msg.timestamp, msg.type, 
-    mediaUrl,
-    msg.id, msg.readBy || [], msg.userId, false, 
-    msg.thumbnailUrl, container, msg.replyTo,
-    msg.reactions || {}, msg.poll, msg.forwardedFrom, 
-    msg.pollRef, msg.embed,
-    msg.edited || false, msg.editedAt || null
-);
+                            UIManager.addMessage(
+                                msg.username, 
+                                msg.text, 
+                                msg.timestamp, 
+                                msg.type, 
+                                mediaUrl,  // ← это imageUrl в MessageRenderer
+                                msg.id, 
+                                msg.readBy || [], 
+                                msg.userId, 
+                                false, 
+                                msg.thumbnailUrl, 
+                                container, 
+                                msg.replyTo,
+                                msg.reactions || {}, 
+                                msg.poll, 
+                                msg.forwardedFrom, 
+                                msg.pollRef, 
+                                msg.embed,
+                                msg.edited || false, 
+                                msg.editedAt || null
+                            );
                         }
                     }
                 }
+                
                 if (textMessagesWithoutEmbed.length > 0) {
                     for (const msg of textMessagesWithoutEmbed) {
                         const url = this.extractFirstUrl(msg.text);
@@ -96,7 +124,6 @@ UIManager.addMessage(
         });
     });
 }
-
     static loadMessagesAround(client, roomId, messageId, limit = 50, targetContainer = null) {
         return new Promise((resolve, reject) => {
             if (!client.socket?.connected) return reject(new Error('WebSocket не подключен'));

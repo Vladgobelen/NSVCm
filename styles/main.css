@@ -1,0 +1,39 @@
+/* Variables */
+@import 'variables.css?v=20260421';
+
+/* Reset */
+@import 'reset.css?v=20260421';
+
+/* Scrollbar */
+@import 'scrollbar.css?v=20260421';
+
+/* Animations */
+@import 'animations.css?v=20260421';
+
+/* Helpers */
+@import 'helpers.css?v=20260421';
+
+/* Components (алфавитный порядок) */
+@import 'audio.css?v=20260421';
+@import 'badges.css?v=20260421';
+@import 'buttons.css?v=20260421';
+@import 'code.css?v=20260421';
+@import 'context-menu.css?v=20260421';
+@import 'embeds.css?v=20260421';
+@import 'inputs.css?v=20260421';
+@import 'messages.css?v=20260421';
+@import 'messages-directed.css?v=20260421';
+@import 'mobile-online.css?v=20260421';
+@import 'modals.css?v=20260421';
+@import 'notes.css?v=20260421';
+@import 'pinned.css?v=20260421';
+@import 'polls.css?v=20260421';
+@import 'reactions.css?v=20260421';
+@import 'sidebar-items.css?v=20260421';
+@import 'status.css?v=20260421';
+
+/* Layout */
+@import 'layout.css?v=20260421';
+
+/* Mobile */
+@import 'mobile.css?v=20260421';

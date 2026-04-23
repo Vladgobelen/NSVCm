@@ -284,14 +284,22 @@ class MediaManager {
         return true;
       }
 
-      const constraints = {
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-        },
-      };
+const constraints = {
+  audio: {
+    echoCancellation: client.audioEchoCancellation ?? true,
+    noiseSuppression: client.audioNoiseSuppression ?? true,
+    autoGainControl: client.audioAutoGainControl ?? true,
+    channelCount: client.audioChannelMode === 'stereo' ? 2 : 1,
+  },
+};
+
+if (client.audioEchoCancellationType === 'system') {
+  constraints.audio.echoCancellationType = 'system';
+}
+
+      if (client.selectedMicDeviceId) {
+        constraints.audio.deviceId = { exact: client.selectedMicDeviceId };
+      }
 
       if (client.stream) {
         client.stream.getTracks().forEach((t) => t.stop());
@@ -305,7 +313,7 @@ class MediaManager {
         throw new Error('No audio track available');
       }
 
-      const isNoiseSuppressionEnabled = client.isNoiseSuppressionEnabled !== false;
+      const isNoiseSuppressionEnabled = client.audioRNNoise !== false;
 
       if (isNoiseSuppressionEnabled) {
         try {
@@ -334,6 +342,21 @@ class MediaManager {
         }
       }
 
+      if (client.audioInputGain !== 1.0 && client.audioInputGain > 0) {
+        try {
+          const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          const source = audioContext.createMediaStreamSource(rawStream);
+          const gainNode = audioContext.createGain();
+          gainNode.gain.value = client.audioInputGain;
+          const destination = audioContext.createMediaStreamDestination();
+          source.connect(gainNode);
+          gainNode.connect(destination);
+          rawStream = destination.stream;
+        } catch (gainError) {
+          console.error('Failed to apply input gain:', gainError);
+        }
+      }
+
       client.stream = rawStream;
       const finalTrack = client.stream.getAudioTracks()[0];
 
@@ -343,9 +366,11 @@ class MediaManager {
 
       finalTrack.enabled = true;
 
+      const maxBitrate = (client.audioMaxBitrate || 48) * 1000;
+
       client.audioProducer = await client.sendTransport.produce({
         track: finalTrack,
-        encodings: [{ maxBitrate: 24000, dtx: true }],
+        encodings: [{ maxBitrate: maxBitrate, dtx: client.audioDTX ?? true }],
         appData: { clientID: client.clientID, roomId: client.currentRoom },
       });
 
@@ -406,7 +431,6 @@ class MediaManager {
         const RnnoiseManager = (await import('./RnnoiseManager.js')).default;
         RnnoiseManager.disable();
       } catch (e) {
-        // Ignore
       }
 
       UIManager.showNotification('❌ Ошибка микрофона: ' + error.message, 'error', 4000);
@@ -488,85 +512,85 @@ class MediaManager {
     client.isMicPaused = true;
   }
 
-static async createConsumer(client, consumerParams) {
-  if (!client.recvTransport || client.recvTransport.closed || client.recvTransport.connectionState === 'failed') {
-    throw new Error('Recv transport is missing, closed, or failed');
-  }
-
-  if (client.audioProducer?.id === consumerParams.producerId || consumerParams.clientID === client.clientID) {
-    throw new Error('Cannot consume own audio');
-  }
-
-  const existingAudio = document.getElementById(`audio-${consumerParams.producerId}`);
-  if (existingAudio) {
-    existingAudio.remove();
-  }
-
-  const consumer = await client.recvTransport.consume({
-    id: consumerParams.id,
-    producerId: consumerParams.producerId,
-    kind: consumerParams.kind,
-    rtpParameters: consumerParams.rtpParameters,
-  });
-
-  consumer.on('trackended', () => {
-    if (client._scheduleConsumerRetry) {
-      client._scheduleConsumerRetry(
-        consumerParams.producerId,
-        { producerId: consumerParams.producerId, kind: consumerParams.kind },
-        'track_ended'
-      );
+  static async createConsumer(client, consumerParams) {
+    if (!client.recvTransport || client.recvTransport.closed || client.recvTransport.connectionState === 'failed') {
+      throw new Error('Recv transport is missing, closed, or failed');
     }
-  });
 
-  consumer.on('transportclose', () => {
-    if (client._scheduleConsumerRetry) {
-      client._scheduleConsumerRetry(
-        consumerParams.producerId,
-        { producerId: consumerParams.producerId, kind: consumerParams.kind },
-        'transport_closed'
-      );
+    if (client.audioProducer?.id === consumerParams.producerId || consumerParams.clientID === client.clientID) {
+      throw new Error('Cannot consume own audio');
     }
-  });
 
-  consumer.on('producerclose', () => {
-    if (client._resetConsumerRecoveryState) {
-      client._resetConsumerRecoveryState(consumerParams.producerId);
+    const existingAudio = document.getElementById(`audio-${consumerParams.producerId}`);
+    if (existingAudio) {
+      existingAudio.remove();
     }
-  });
 
-  const audioElement = document.createElement('audio');
-  audioElement.id = `audio-${consumerParams.producerId}`;
-  audioElement.autoplay = true;
-  audioElement.playsInline = true;
-  audioElement.muted = false;
-
-  audioElement.style.cssText = `
-    position: fixed !important;
-    top: -9999px !important;
-    left: -9999px !important;
-    width: 1px !important;
-    height: 1px !important;
-    opacity: 0 !important;
-    pointer-events: none !important;
-    visibility: hidden !important;
-  `;
-
-  document.body.appendChild(audioElement);
-  audioElement.srcObject = new MediaStream([consumer.track]);
-
-  const playPromise = audioElement.play();
-  if (playPromise !== undefined) {
-    playPromise.catch(() => {
-      VolumeBoostManager.resume().catch(() => {});
-      const retryPlay = () => audioElement.play().catch(() => {});
-      document.addEventListener('click', retryPlay, { once: true });
-      document.addEventListener('touchstart', retryPlay, { once: true });
+    const consumer = await client.recvTransport.consume({
+      id: consumerParams.id,
+      producerId: consumerParams.producerId,
+      kind: consumerParams.kind,
+      rtpParameters: consumerParams.rtpParameters,
     });
-  }
 
-  return { consumer, audioElement };
-}
+    consumer.on('trackended', () => {
+      if (client._scheduleConsumerRetry) {
+        client._scheduleConsumerRetry(
+          consumerParams.producerId,
+          { producerId: consumerParams.producerId, kind: consumerParams.kind },
+          'track_ended'
+        );
+      }
+    });
+
+    consumer.on('transportclose', () => {
+      if (client._scheduleConsumerRetry) {
+        client._scheduleConsumerRetry(
+          consumerParams.producerId,
+          { producerId: consumerParams.producerId, kind: consumerParams.kind },
+          'transport_closed'
+        );
+      }
+    });
+
+    consumer.on('producerclose', () => {
+      if (client._resetConsumerRecoveryState) {
+        client._resetConsumerRecoveryState(consumerParams.producerId);
+      }
+    });
+
+    const audioElement = document.createElement('audio');
+    audioElement.id = `audio-${consumerParams.producerId}`;
+    audioElement.autoplay = true;
+    audioElement.playsInline = true;
+    audioElement.muted = false;
+
+    audioElement.style.cssText = `
+      position: fixed !important;
+      top: -9999px !important;
+      left: -9999px !important;
+      width: 1px !important;
+      height: 1px !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+      visibility: hidden !important;
+    `;
+
+    document.body.appendChild(audioElement);
+    audioElement.srcObject = new MediaStream([consumer.track]);
+
+    const playPromise = audioElement.play();
+    if (playPromise !== undefined) {
+      playPromise.catch(() => {
+        VolumeBoostManager.resume().catch(() => {});
+        const retryPlay = () => audioElement.play().catch(() => {});
+        document.addEventListener('click', retryPlay, { once: true });
+        document.addEventListener('touchstart', retryPlay, { once: true });
+      });
+    }
+
+    return { consumer, audioElement };
+  }
 
   static disconnect(client) {
     client._micInitInProgress = false;

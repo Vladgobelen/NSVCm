@@ -46,7 +46,11 @@ class RnnoiseManager {
     return this.audioContext;
   }
 
-  static async enable(originalStream) {
+  static async enable(originalStream, client = null) {
+    if (client && client.audioRNNoise === false) {
+      return originalStream;
+    }
+
     if (this.isEnabled) {
       this.disable();
     }
