@@ -50,6 +50,24 @@
   .notes-list, .notes-list-content, .note-thread-messages { padding: 8px 12px; }
   .note-thread-input-area { padding: 10px 12px; }
   .note-editor-textarea { font-size: 14px; }
+  #scroll-to-bottom-btn {
+    position: fixed !important;
+    bottom: 150px !important;
+    left: 50% !important;
+    right: auto !important;
+    transform: translateX(-50%) !important;
+    width: 50px !important;
+    height: 50px !important;
+    min-width: 50px !important;
+    min-height: 50px !important;
+    background: #5865f2 !important;
+    color: white !important;
+    border-radius: 50% !important;
+    z-index: 9999 !important;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5) !important;
+    font-size: 24px !important;
+    -webkit-tap-highlight-color: transparent !important;
+  }
 }
 
 @media (max-width: 480px) {

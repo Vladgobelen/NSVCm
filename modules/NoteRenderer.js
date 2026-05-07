@@ -1,6 +1,7 @@
-'use strict';
+import { formatTime, formatDateTime, formatShortDateTime } from "../dist/shared/formatTime.js";
+import { escapeHtml } from "../dist/shared/escapeHtml.js";
 import MessageRenderer from './MessageRenderer.js';
-import UIManager from './UIManager.js'; // Импорт для доступа к кешу имен
+import UIManager from './UIManager.js';
 
 class NoteRenderer {
   static client = null;
@@ -9,18 +10,11 @@ class NoteRenderer {
     this.client = client;
   }
 
-  static escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
-
   static formatText(text) {
     if (MessageRenderer?.escapeHtmlAndFormat) {
       return MessageRenderer.escapeHtmlAndFormat(text);
     }
-    return this.escapeHtml(text).replace(/\n/g, '<br>');
+    return escapeHtml(text).replace(/\n/g, '<br>');
   }
 
   static createNoteCard(note, type, targetId, callbacks) {
@@ -30,33 +24,21 @@ class NoteRenderer {
     el.dataset.type = type;
     el.dataset.targetId = targetId || '';
 
-    // 🔥 Улучшенное сравнение ID (приводим к строке)
     const isOwn = String(this.client?.userId) === String(note.authorId);
 
-    const createdAt = new Date(note.createdAt).toLocaleString('ru-RU', {
-      hour: '2-digit',
-      minute: '2-digit',
-      day: '2-digit',
-      month: '2-digit'
-    });
+    const createdAt = formatShortDateTime(note.createdAt);
     const isEdited = note.updatedAt && note.updatedAt !== note.createdAt;
-    const editedAt = isEdited ? new Date(note.updatedAt).toLocaleTimeString('ru-RU', {
-      hour: '2-digit',
-      minute: '2-digit'
-    }) : '';
+    const editedAt = isEdited ? formatDateTime(note.updatedAt) : '';
 
-    // 🔥 Пытаемся найти имя в кеше UIManager, если оно не пришло в note
     let authorName = note.authorName || note.username;
     if (!authorName && note.authorId) {
       authorName = UIManager.usernameCache?.get(note.authorId);
     }
     if (!authorName) {
       authorName = 'Пользователь';
-      // Запускаем асинхронную подгрузку имени для этого ID
       if (note.authorId) UIManager.fetchUsername(note.authorId);
     }
 
-    // Определяем контекст заметки
     let contextInfo = '';
     if (type === 'room' && targetId) {
       let roomName = targetId;
@@ -64,7 +46,7 @@ class NoteRenderer {
         const room = this.client.rooms.find(r => r.id === targetId);
         if (room) roomName = room.name || targetId;
       }
-      contextInfo = `<span class="note-context room" title="Публичная заметка в гнезде ${this.escapeHtml(roomName)}">📢 ${this.escapeHtml(roomName)}</span>`;
+      contextInfo = `<span class="note-context room" title="Публичная заметка в гнезде ${escapeHtml(roomName)}">📢 ${escapeHtml(roomName)}</span>`;
     } else if (type === 'personal' && targetId && String(targetId) !== String(this.client?.userId)) {
       let userName = targetId;
       if (this.client?.users) {
@@ -75,17 +57,14 @@ class NoteRenderer {
           userName = this.client.users[targetId].username || targetId;
         }
       }
-      // Попытка взять из кеша
       const cachedName = UIManager.usernameCache?.get(targetId);
       if (cachedName) userName = cachedName;
       else if (targetId) UIManager.fetchUsername(targetId);
-
-      contextInfo = `<span class="note-context personal" title="Заметка пользователя ${this.escapeHtml(userName)}">👤 ${this.escapeHtml(userName)}</span>`;
+      contextInfo = `<span class="note-context personal" title="Заметка пользователя ${escapeHtml(userName)}">👤 ${escapeHtml(userName)}</span>`;
     } else if (type === 'personal') {
       contextInfo = `<span class="note-context personal" title="Личная заметка">📌 Личное</span>`;
     }
 
-    // Кнопки действий
     const replyBtn = type === 'room' ? '<button class="note-reply-btn" title="Ответить в треде">💬</button>' : '';
     const editBtn = isOwn ? '<button class="note-edit-btn" title="Редактировать">✏️</button>' : '';
     const deleteBtn = isOwn ? '<button class="note-delete-btn" title="Удалить">🗑️</button>' : '';
@@ -93,7 +72,7 @@ class NoteRenderer {
     el.innerHTML = `
       <div class="note-card-header">
         <div class="note-header-left">
-          <span class="note-author" data-user-id="${note.authorId || ''}">${this.escapeHtml(authorName)}</span>
+          <span class="note-author" data-user-id="${note.authorId || ''}">${escapeHtml(authorName)}</span>
           ${contextInfo}
           <span class="note-date">${createdAt}${isEdited ? ` <span class="note-edited">(ред. ${editedAt})</span>` : ''}</span>
         </div>
@@ -146,12 +125,7 @@ class NoteRenderer {
     el.dataset.type = type;
 
     const preview = note.content.length > 40 ? note.content.substring(0, 40) + '...' : note.content;
-    const date = new Date(note.createdAt).toLocaleTimeString('ru-RU', {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-
-    // 🔥 Поиск имени автора
+    const date = formatTime(note.createdAt);
     let authorName = note.authorName || note.username;
     if (!authorName && note.authorId) {
       authorName = UIManager.usernameCache?.get(note.authorId);
@@ -163,10 +137,10 @@ class NoteRenderer {
 
     el.innerHTML = `
       <div class="note-sidebar-header">
-        <span class="note-sidebar-author" data-user-id="${note.authorId || ''}">${this.escapeHtml(authorName)}</span>
+        <span class="note-sidebar-author" data-user-id="${note.authorId || ''}">${escapeHtml(authorName)}</span>
         <span class="note-sidebar-date">${date}</span>
       </div>
-      <div class="note-sidebar-preview">${this.escapeHtml(preview)}</div>
+      <div class="note-sidebar-preview">${escapeHtml(preview)}</div>
       <div class="note-sidebar-reactions"></div>
     `;
 
@@ -191,15 +165,8 @@ class NoteRenderer {
     el.dataset.msgId = message.id;
     el.dataset.noteId = message.noteId;
     
-    // Проверка "свой ли" (для возможных будущих фич)
     const isOwn = String(this.client?.userId) === String(message.userId);
-    
-    const time = new Date(message.timestamp).toLocaleTimeString('ru-RU', {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-
-    // Поиск имени
+    const time = formatTime(message.timestamp);
     let authorName = message.username;
     if (!authorName && message.userId) {
       authorName = UIManager.usernameCache?.get(message.userId);
@@ -211,7 +178,7 @@ class NoteRenderer {
 
     el.innerHTML = `
       <div class="thread-msg-header">
-        <span class="thread-author" data-user-id="${message.userId || ''}">${this.escapeHtml(authorName)}</span>
+        <span class="thread-author" data-user-id="${message.userId || ''}">${escapeHtml(authorName)}</span>
         <span class="thread-time">${time}</span>
       </div>
       <div class="thread-msg-content">${this.formatText(message.text)}</div>
@@ -231,10 +198,9 @@ class NoteRenderer {
 
   static renderReactionsBlock(container, reactions, noteId, type, targetId, onReact) {
     if (!container || !reactions) return;
-    const allowed = ['👍', '👎', '❤️', '🔥', '😊', '😮', '😢', '🤦', '🙏', '🎉', '😍', '🤔', '💯', '🚀'];
+    const allowed = ['🤣', '🫡', '🤬', '💩', '😈', '👌', '✍️', '🤝', '👍', '👎', '💋', '😳', '🤩', '🤔', '🥲', '😅', '😢', '🔥', '🤦', '🦄', '🚀', '😎', '🎉', '❤️'];
     container.innerHTML = '';
     
-    // Собираем все ID для кэширования
     const allUserIds = new Set();
     for (const emoji of allowed) {
         const users = reactions[emoji];
@@ -259,7 +225,6 @@ class NoteRenderer {
       pill.style.background = reacted ? 'rgba(88,101,242,0.25)' : 'rgba(64,64,96,0.5)';
       pill.style.border = reacted ? '1px solid #5865f2' : '1px solid transparent';
       
-      // Формируем тултип с именами
       const names = users.map(uid => UIManager.usernameCache?.get(uid) || uid.substring(0, 8)).join(', ');
       pill.title = names;
 
@@ -282,7 +247,7 @@ class NoteRenderer {
     const editor = document.createElement('div');
     editor.className = 'note-editor';
     editor.innerHTML = `
-      <textarea class="note-editor-textarea" rows="3">${this.escapeHtml(note.content)}</textarea>
+      <textarea class="note-editor-textarea" rows="3">${escapeHtml(note.content)}</textarea>
       <div class="note-editor-controls">
         <button class="note-save" title="Сохранить">💾</button>
         <button class="note-cancel" title="Отмена">❌</button>

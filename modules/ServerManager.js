@@ -1,6 +1,8 @@
+import { isPrivateRoom, isPrivateServer } from "../dist/shared/roomUtils.js";
+import { escapeHtml } from "../dist/shared/escapeHtml.js";
 import UIManager from './UIManager.js';
 import RoomManager from './RoomManager.js';
-import InviteManager from './InviteManager.js';
+import InviteManager from '../dist/shared/InviteManager.js';
 
 class ServerManager {
     static async loadServers(client, forceUpdate = false) {
@@ -45,17 +47,12 @@ class ServerManager {
         }
     }
 
-    static isPrivateServer(server) {
-        return server?.type === 'private' ||
-               server?.isPrivate === true ||
-               (server?.id && server.id.startsWith('user_') && server.id.includes('_user_'));
-    }
 
     static getPrivateServerDisplayName(server, clientUserId) {
         if (!server || !server.id) {
             return server?.name || 'Приватный чат';
         }
-        if (!this.isPrivateServer(server)) {
+        if (!isPrivateServer(server)) {
             return server.name;
         }
         if (server.displayName) {
@@ -99,7 +96,7 @@ class ServerManager {
             const serverElement = document.createElement('div');
             serverElement.className = 'server-item';
             serverElement.dataset.server = server.id;
-            const isPrivate = this.isPrivateServer(server);
+            const isPrivate = isPrivateServer(server);
             const displayName = isPrivate
                 ? `👤 ${this.getPrivateServerDisplayName(server, client.userId)}`
                 : `🏠 ${server.name}`;
@@ -482,7 +479,7 @@ class ServerManager {
     static async copyServerInviteLink(client, serverId) {
         try {
             const server = client.servers.find(s => s.id === serverId);
-            const isPrivateRoom = this.isPrivateServer(server);
+            const isPrivateRoom = isPrivateServer(server);
             let invite;
             if (isPrivateRoom) {
                 const invites = await InviteManager.getRoomInvites(serverId);

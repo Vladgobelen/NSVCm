@@ -1,0 +1,26 @@
+<div class="create-poll-modal-content">
+    <div class="poll-modal-header">
+        <h3>📊 Создать опрос</h3>
+        <button class="poll-modal-close">✕</button>
+    </div>
+    <div class="poll-modal-body">
+        <div class="poll-form-group">
+            <label for="poll-question-input">Вопрос</label>
+            <input type="text" id="poll-question-input" placeholder="Введите вопрос опроса" maxlength="256">
+        </div>
+        <div class="poll-form-group">
+            <label>Варианты ответов</label>
+            <div id="poll-options-container" class="poll-options-container"></div>
+            <button id="poll-add-option-btn" class="poll-add-option-btn"><span>➕</span> Добавить вариант</button>
+        </div>
+        <div class="poll-form-group">
+            <label>Настройки</label>
+            <label><input type="checkbox" id="poll-multiple-checkbox"> <span>☑️ Разрешить множественный выбор</span></label>
+            <label><input type="checkbox" id="poll-anonymous-checkbox"> <span>👻 Анонимное голосование</span></label>
+        </div>
+    </div>
+    <div class="poll-modal-footer">
+        <button class="poll-modal-cancel">Отмена</button>
+        <button class="poll-modal-create">Создать</button>
+    </div>
+</div>

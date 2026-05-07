@@ -1,0 +1,25 @@
+.volume-tooltip {
+    position: absolute;
+    left: 50%;
+    top: -30px;
+    transform: translateX(-50%);
+    background: rgba(26, 26, 46, 0.95);
+    color: #e0e0e0;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    border: 1px solid #5865f2;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    z-index: 1002;
+    pointer-events: none;
+    animation: volumeTooltipFade 1.5s ease forwards;
+}
+
+@keyframes volumeTooltipFade {
+    0% { opacity: 0; transform: translateX(-50%) translateY(5px); }
+    15% { opacity: 1; transform: translateX(-50%) translateY(0); }
+    85% { opacity: 1; transform: translateX(-50%) translateY(0); }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-5px); }
+}

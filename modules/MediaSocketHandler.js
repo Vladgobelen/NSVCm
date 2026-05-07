@@ -1,7 +1,7 @@
 import MediaManager from './MediaManager.js';
 import MembersManager from './MembersManager.js';
 import UIManager from './UIManager.js';
-import VolumeBoostManager from './VolumeBoostManager.js';
+import VolumeBoostManager from '../dist/shared/VolumeBoostManager.js';
 
 class MediaSocketHandler {
   constructor(client) {

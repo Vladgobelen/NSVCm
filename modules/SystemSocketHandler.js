@@ -1,7 +1,6 @@
-// modules/SystemSocketHandler.js
 import UIManager from './UIManager.js';
 import MembersManager from './MembersManager.js';
-import SoundManager from './SoundManager.js';
+import SoundManager from '../dist/shared/SoundManager.js';
 import SecondaryChatManager from './SecondaryChatManager.js';
 import DiagnosticPanel from './DiagnosticPanel.js';
 
@@ -25,6 +24,7 @@ class SystemSocketHandler {
         socket.on('room-participants-updated', this.handleRoomParticipantsUpdated.bind(this));
         socket.on('room-participants', this.handleRoomParticipants.bind(this));
         socket.on('unread-update', this.handleUnreadUpdate.bind(this));
+        socket.on('unread-sync', this.handleUnreadSync.bind(this));
         socket.on('connect', this.handleConnect.bind(this));
         socket.on('disconnect', this.handleDisconnect.bind(this));
         socket.on('request-client-diagnostic', this.handleRequestClientDiagnostic.bind(this));
@@ -88,9 +88,23 @@ class SystemSocketHandler {
     }
 
     handleUnreadUpdate(data) {
-        UIManager.setUnreadCount(data.serverId, data.roomId, data.count, data.hasMention, data.personalCount || 0);
+        if (data.unread) {
+            UIManager.syncUnreadCounts(data.unread);
+            return;
+        }
+        if (data.cleared) {
+            UIManager.clearUnreadForRoom(data.serverId, data.roomId);
+        } else {
+            UIManager.setUnreadCount(data.serverId, data.roomId, data.count, data.hasMention, data.personalCount || 0);
+        }
         if (data.roomId === this.client.currentRoom) {
             UIManager.updateScrollButtonCounter(this.client.currentRoom);
+        }
+    }
+
+    handleUnreadSync(data) {
+        if (data.unread) {
+            UIManager.syncUnreadCounts(data.unread);
         }
     }
 
@@ -165,58 +179,31 @@ class SystemSocketHandler {
         UIManager.showLiveNotification(this.client, payload);
     }
 
-handlePersonalNotification(payload) {
-    console.log('🔔 [PERSONAL] ========== НАЧАЛО ОБРАБОТКИ ==========');
-    console.log('🔔 [PERSONAL] Получен payload:', JSON.stringify(payload, null, 2));
-    console.log('🔔 [PERSONAL] currentRoom:', this.client.currentRoom);
-    console.log('🔔 [PERSONAL] roomId из payload:', payload.roomId);
-    
-    let shouldShowBanner = false;
-    let soundType = null;
+    handlePersonalNotification(payload) {
+        let shouldShowBanner = false;
+        let soundType = null;
 
-    if (payload.type === 'reply') {
-        console.log('🔔 [PERSONAL] Тип: reply');
-        shouldShowBanner = SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_REPLY);
-        soundType = SoundManager.SoundTypes.SOUND_REPLY;
-        console.log('🔔 [PERSONAL] NOTIFY_REPLY enabled:', shouldShowBanner);
-    } else if (payload.type === 'mention' || payload.type === 'name_mention') {
-        console.log('🔔 [PERSONAL] Тип: mention/name_mention');
-        shouldShowBanner = SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_MENTION);
-        soundType = SoundManager.SoundTypes.SOUND_MENTION;
-        console.log('🔔 [PERSONAL] NOTIFY_MENTION enabled:', shouldShowBanner);
-    } else if (payload.isDirectMessage) {
-        console.log('🔔 [PERSONAL] Тип: direct message');
-        shouldShowBanner = SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_DM);
-        soundType = SoundManager.SoundTypes.SOUND_DM;
-        console.log('🔔 [PERSONAL] NOTIFY_DM enabled:', shouldShowBanner);
-    } else {
-        console.log('🔔 [PERSONAL] Неизвестный тип payload:', payload.type);
+        if (payload.type === 'reply') {
+            shouldShowBanner = SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_REPLY);
+            soundType = SoundManager.SoundTypes.SOUND_REPLY;
+        } else if (payload.type === 'mention' || payload.type === 'name_mention') {
+            shouldShowBanner = SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_MENTION);
+            soundType = SoundManager.SoundTypes.SOUND_MENTION;
+        } else if (payload.isDirectMessage) {
+            shouldShowBanner = SoundManager.shouldNotify(SoundManager.SoundTypes.NOTIFY_DM);
+            soundType = SoundManager.SoundTypes.SOUND_DM;
+        }
+
+        if (shouldShowBanner) {
+            UIManager.showLiveNotification(this.client, payload);
+        }
+
+        const isCurrentContext = payload.roomId === this.client.currentRoom;
+
+        if (soundType && !isCurrentContext) {
+            SoundManager.playSound(soundType);
+        }
     }
-
-    console.log('🔔 [PERSONAL] shouldShowBanner итог:', shouldShowBanner);
-    console.log('🔔 [PERSONAL] soundType итог:', soundType);
-
-    if (shouldShowBanner) {
-        console.log('🔔 [PERSONAL] ВЫЗЫВАЕМ UIManager.showLiveNotification');
-        UIManager.showLiveNotification(this.client, payload);
-    } else {
-        console.log('🔔 [PERSONAL] ПРОПУСКАЕМ баннер (shouldShowBanner = false)');
-    }
-
-    const isCurrentContext = payload.roomId === this.client.currentRoom;
-    console.log('🔔 [PERSONAL] isCurrentContext:', isCurrentContext, `(${payload.roomId} === ${this.client.currentRoom})`);
-
-    if (soundType && !isCurrentContext) {
-        console.log('🔔 [PERSONAL] ВОСПРОИЗВОДИМ звук:', soundType);
-        SoundManager.playSound(soundType);
-    } else if (soundType && isCurrentContext) {
-        console.log('🔔 [PERSONAL] ПРОПУСКАЕМ звук (текущий контекст)');
-    } else if (!soundType) {
-        console.log('🔔 [PERSONAL] Нет soundType для воспроизведения');
-    }
-    
-    console.log('🔔 [PERSONAL] ========== КОНЕЦ ОБРАБОТКИ ==========');
-}
 
     async handleInitSecondaryChat(data) {
         if (data?.roomId && !this.client.secondaryChat.enabled) {

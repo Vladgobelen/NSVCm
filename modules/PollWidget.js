@@ -1,14 +1,7 @@
-// modules/PollWidget.js
+import { escapeHtml } from "../dist/shared/escapeHtml.js";
 import UIManager from './UIManager.js';
 
 class PollWidget {
-    static _escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
     static render(container, pollData, client) {
         if (!container || !pollData || !pollData.poll) {
             console.error('[PollWidget] Недостаточно данных для рендеринга опроса');
@@ -40,7 +33,7 @@ class PollWidget {
                 optionsHtml += `
                     <div class="poll-option-result ${isVoted ? 'voted' : ''}">
                         <div class="poll-option-header">
-                            <span class="poll-option-text">${this._escapeHtml(option.text)}</span>
+                            <span class="poll-option-text">${escapeHtml(option.text)}</span>
                             <span class="poll-option-stats">
                                 <span class="poll-option-percentage">${percentage}%</span>
                                 <span class="poll-option-votes">(${votes})</span>
@@ -58,7 +51,7 @@ class PollWidget {
                     <div class="poll-option">
                         <label class="poll-option-label">
                             <input type="${inputType}" name="poll_${messageId}" value="${option.id}" class="poll-option-input">
-                            <span class="poll-option-text">${this._escapeHtml(option.text)}</span>
+                            <span class="poll-option-text">${escapeHtml(option.text)}</span>
                         </label>
                     </div>
                 `;
@@ -86,7 +79,7 @@ class PollWidget {
         container.innerHTML = `
             <div class="poll-header">
                 <span class="poll-icon">📊</span>
-                <span class="poll-question">${this._escapeHtml(poll.question)}</span>
+                <span class="poll-question">${escapeHtml(poll.question)}</span>
             </div>
             <div class="poll-options">
                 ${optionsHtml}
@@ -185,7 +178,7 @@ class PollWidget {
             resultsHtml += `
                 <div class="poll-option-result">
                     <div class="poll-option-header">
-                        <span class="poll-option-text">${this._escapeHtml(option.text)}</span>
+                        <span class="poll-option-text">${escapeHtml(option.text)}</span>
                         <span class="poll-option-stats">
                             <span class="poll-option-percentage">${percentage}%</span>
                             <span class="poll-option-votes">(${votes})</span>
@@ -201,7 +194,7 @@ class PollWidget {
         container.innerHTML = `
             <div class="poll-header">
                 <span class="poll-icon">📊</span>
-                <span class="poll-question">${this._escapeHtml(poll.question)}</span>
+                <span class="poll-question">${escapeHtml(poll.question)}</span>
             </div>
             <div class="poll-options">
                 ${resultsHtml}

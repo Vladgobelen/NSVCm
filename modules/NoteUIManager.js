@@ -1,5 +1,5 @@
 'use strict';
-import NoteStateManager from './NoteStateManager.js';
+import NoteStateManager from '../dist/shared/NoteStateManager.js';
 import NoteRenderer from './NoteRenderer.js';
 import UIManager from './UIManager.js';
 

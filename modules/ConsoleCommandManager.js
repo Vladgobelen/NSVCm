@@ -3,11 +3,11 @@
 
 import UIManager from './UIManager.js';
 import MediaManager from './MediaManager.js';
-import VolumeBoostManager from './VolumeBoostManager.js';
+import VolumeBoostManager from '../dist/shared/VolumeBoostManager.js';
 import MembersManager from './MembersManager.js';
-import RnnoiseManager from './RnnoiseManager.js';
-import AvatarManager from './AvatarManager.js';
-import SoundManager from './SoundManager.js';
+import RnnoiseManager from '../dist/shared/RnnoiseManager.js';
+import AvatarManager from '../dist/shared/AvatarManager.js';
+import SoundManager from '../dist/shared/SoundManager.js';
 
 class ConsoleCommandManager {
     static client = null;

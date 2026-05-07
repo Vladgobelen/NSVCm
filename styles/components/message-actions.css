@@ -1,0 +1,99 @@
+.message-actions-panel {
+    position: absolute;
+    background: #2d2d44;
+    border: 1px solid #404060;
+    border-radius: 8px;
+    padding: 4px;
+    display: flex;
+    gap: 4px;
+    z-index: 10000;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    animation: fadeIn 0.15s ease;
+}
+
+.message-action-btn {
+    background: transparent;
+    border: none;
+    color: #e0e0e0;
+    font-size: 18px;
+    width: 40px;
+    height: 40px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+
+.message-action-btn:hover {
+    background: #3d3d5c;
+}
+
+.message-action-btn.danger {
+    background: rgba(237, 66, 69, 0.1);
+    color: #ed4245;
+}
+
+.message-action-btn.danger:hover {
+    background: rgba(237, 66, 69, 0.2);
+}
+
+.message-editor-container {
+    margin: 8px 0;
+    width: 100%;
+}
+
+.message-editor-textarea {
+    width: 100%;
+    min-height: 60px;
+    max-height: 200px;
+    padding: 8px 10px;
+    background: #1a1a2e;
+    border: 1px solid #404060;
+    color: #e0e0e0;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+    outline: none;
+}
+
+.message-editor-textarea:focus {
+    border-color: #5865f2;
+}
+
+.message-editor-controls {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.message-editor-save-btn {
+    padding: 6px 12px;
+    background: #5865f2;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.message-editor-save-btn:hover {
+    background: #4752c4;
+}
+
+.message-editor-cancel-btn {
+    padding: 6px 12px;
+    background: #404060;
+    color: #e0e0e0;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.message-editor-cancel-btn:hover {
+    background: #505070;
+}

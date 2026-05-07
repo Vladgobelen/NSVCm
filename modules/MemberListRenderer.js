@@ -1,17 +1,11 @@
 import MembersManager from './MembersManager.js';
-import VolumeBoostManager from './VolumeBoostManager.js';
+import VolumeBoostManager from '../dist/shared/VolumeBoostManager.js';
 import ContextMenuManager from './ContextMenuManager.js';
-import AvatarManager from './AvatarManager.js';
+import AvatarManager from '../dist/shared/AvatarManager.js';
 import AvatarUploadModal from './AvatarUploadModal.js';
+import { escapeHtml } from '../dist/shared/escapeHtml.js';
 
 class MemberListRenderer {
-  static _escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
-
   static updateMembersList(members) {
     const onlineMembers = members.filter((m) => m.isOnline === true);
     const offlineMembers = members.filter((m) => m.isOnline !== true);
@@ -248,13 +242,13 @@ class MemberListRenderer {
 
     const initial = user.username.charAt(0).toUpperCase();
     const avatarHtml = avatarUrl
-      ? `<img src="${avatarUrl}" alt="${this._escapeHtml(user.username)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
-      : this._escapeHtml(initial);
+      ? `<img src="${avatarUrl}" alt="${escapeHtml(user.username)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
+      : escapeHtml(initial);
 
     memberElement.innerHTML = `
       <div class="member-avatar">${avatarHtml}</div>
       <div class="member-info">
-        <div class="member-name ${isOnline ? '' : 'offline-text'}">${this._escapeHtml(user.username)}</div>
+        <div class="member-name ${isOnline ? '' : 'offline-text'}">${escapeHtml(user.username)}</div>
         <div class="member-controls">
           <div class="member-status">
             <div class="mic-indicator ${isOnline && user.isMicActive ? 'active' : ''}" title="${user.isMicActive ? 'Микрофон включен' : 'Микрофон выключен'}" style="background-color: ${isOnline && user.isMicActive ? '#2ecc71' : isOnline ? '#e74c3c' : '#606070'}; box-shadow: ${isOnline && user.isMicActive ? '0 0 8px #2ecc71' : 'none'};"></div>
@@ -317,7 +311,7 @@ slider.addEventListener('input', (e) => {
       const avatarContainer = item.querySelector('.member-avatar');
       if (avatarContainer && !avatarContainer.querySelector('img')) {
         const username = item.querySelector('.member-name')?.textContent || '?';
-        avatarContainer.innerHTML = `<img src="${avatarUrl}" alt="${this._escapeHtml(username)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.onerror=null; this.parentElement.innerHTML='${username.charAt(0).toUpperCase()}'; delete this.parentElement.parentElement.dataset.avatarUrl;">`;
+        avatarContainer.innerHTML = `<img src="${avatarUrl}" alt="${escapeHtml(username)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.onerror=null; this.parentElement.innerHTML='${username.charAt(0).toUpperCase()}'; delete this.parentElement.parentElement.dataset.avatarUrl;">`;
       }
     });
   }

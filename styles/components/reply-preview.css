@@ -1,0 +1,14 @@
+.reply-preview-bar {
+    background: #3a3a5c;
+    border-top: 2px solid #5865f2;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+    color: #e0e0e0;
+    border-radius: 8px 8px 0 0;
+    margin-bottom: -8px;
+    position: relative;
+    z-index: 10;
+}

@@ -84,3 +84,17 @@
   background: var(--bg-modifier);
   color: var(--text-normal);
 }
+
+.send-btn {
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    padding: 0 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.send-btn:hover { background: #4752c4; }

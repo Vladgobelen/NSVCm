@@ -1,4 +1,4 @@
-import AvatarManager from './AvatarManager.js';
+import AvatarManager from '../dist/shared/AvatarManager.js';
 
 class AvatarUploadModal {
     static _modal = null;

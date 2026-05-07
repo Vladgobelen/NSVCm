@@ -1,4 +1,8 @@
 'use strict';
+import UserCacheManager from '../dist/shared/UserCacheManager.js';
+import { isPrivateRoom } from "../dist/shared/roomUtils.js";
+import { formatTime, formatDateTime, formatShortDateTime } from "../dist/shared/formatTime.js";
+import { escapeHtml } from "../dist/shared/escapeHtml.js";
 import TextChatManager from './TextChatManager.js';
 import MembersManager from './MembersManager.js';
 import RoomManager from './RoomManager.js';
@@ -7,21 +11,27 @@ import ScrollTracker from './ScrollTracker.js';
 import MessageRenderer from './MessageRenderer.js';
 import ContextMenuManager from './ContextMenuManager.js';
 import ReplyManager from './ReplyManager.js';
-import UnreadBadgeManager from './UnreadBadgeManager.js';
+import UnreadBadgeManager from '../dist/shared/UnreadBadgeManager.js';
 import SecondaryChatManager from './SecondaryChatManager.js';
 import MemberListRenderer from './MemberListRenderer.js';
 import DiagnosticPanel from './DiagnosticPanel.js';
 import ModalManager from './ModalManager.js';
-import NoteStateManager from './NoteStateManager.js';
+import NoteStateManager from '../dist/shared/NoteStateManager.js';
 import NoteUIManager from './NoteUIManager.js';
 import MobileOnlineBar from './MobileOnlineBar.js';
-import AvatarManager from './AvatarManager.js';
+import AvatarManager from '../dist/shared/AvatarManager.js';
 
 window.ScrollTracker = ScrollTracker;
 
 class UIManager {
     static client = null;
-    static usernameCache = new Map();
+static get usernameCache() {
+    return {
+        has: (userId) => UserCacheManager.has(userId),
+        get: (userId) => UserCacheManager.getUsername(userId),
+        set: (userId, username) => UserCacheManager.setUsername(userId, username)
+    };
+}
     static connectionStatusMap = new Map();
     static notificationTimer = null;
     static _tooltipsInitialized = false;
@@ -29,6 +39,10 @@ class UIManager {
     static get secondaryChat() { return SecondaryChatManager.secondaryChat; }
     static get replyTarget() { return ReplyManager.getReplyTarget(); }
     static set replyTarget(val) { val ? ReplyManager.setReplyTarget(val) : ReplyManager.clearReplyTarget(); }
+
+    static escapeHtml(text) {
+        return escapeHtml(text);
+    }
 
     static setClient(client) {
         this.client = client;
@@ -174,35 +188,7 @@ class UIManager {
     static highlightCodeBlocks(container = null) { return MessageRenderer.highlightCodeBlocks(container); }
     static handleReplyClick(messageId) { return MessageRenderer.handleReplyClick(messageId); }
 
-    static async showMessageInfo(messageId, userId, username, timestamp) {
-        try {
-            const response = await fetch(`${this.client.API_SERVER_URL}/api/messages/${this.client.currentRoom}/${messageId}/info`, { headers: { Authorization: `Bearer ${this.client.token}`, 'Content-Type': 'application/json' } });
-            if (!response.ok) throw new Error('Не удалось получить информацию');
-            const data = await response.json();
-            const message = data.message;
-            const modal = document.createElement('div');
-            modal.className = 'modal-overlay';
-            modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); display: flex; justify-content: center; align-items: center; z-index: 10001;';
-            const content = document.createElement('div');
-            content.style.cssText = 'background: #2d2d44; border-radius: 12px; padding: 24px; max-width: 500px; width: 90%; border: 1px solid #404060;';
-            let forwardedInfo = '';
-            if (message.forwardedFrom) {
-                forwardedInfo = `<div style="margin-top: 12px;"><strong>Переслано из:</strong> ${this.escapeHtml(message.forwardedFrom.serverName)} / ${this.escapeHtml(message.forwardedFrom.roomName)}</div><div style="margin-top: 4px;"><strong>Автор оригинала:</strong> ${this.escapeHtml(message.forwardedFrom.username)}</div>`;
-            }
-            let pollInfo = '';
-            if (message.type === 'poll' && message.poll) {
-                pollInfo = `<div style="margin-top: 16px; padding: 12px; background: #1a1a2e; border-radius: 8px;"><strong>📊 Опрос:</strong> ${this.escapeHtml(message.poll.question)}<br><span style="font-size: 12px; color: #888;">Вариантов: ${message.poll.options.length} | Голосов: ${message.poll.totalVotes}</span></div>`;
-            }
-            content.innerHTML = `<h3 style="margin: 0 0 20px 0; color: #e0e0e0;">📋 Информация о сообщении</h3><div style="color: #b0b0c0; line-height: 1.8;"><div><strong>ID:</strong> <code style="background: #1a1a2e; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${message.id}</code></div><div style="margin-top: 12px;"><strong>Автор:</strong> ${this.escapeHtml(message.username)}</div><div style="margin-top: 8px;"><strong>ID автора:</strong> <code style="background: #1a1a2e; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${message.userId}</code></div><div style="margin-top: 8px;"><strong>Время:</strong> ${new Date(message.timestamp).toLocaleString('ru-RU')}</div><div style="margin-top: 8px;"><strong>Тип:</strong> ${message.type || 'text'}</div><div style="margin-top: 8px;"><strong>Гнездо:</strong> <code style="background: #1a1a2e; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${message.roomId}</code></div>${forwardedInfo}${pollInfo}${message.text ? `<div style="margin-top: 16px; padding: 12px; background: #1a1a2e; border-radius: 8px;"><strong>Текст:</strong><br><span style="color: #e0e0e0;">${this.escapeHtml(message.text)}</span></div>` : ''}</div><button id="closeInfoModal" style="margin-top: 20px; padding: 10px 24px; background: #5865f2; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">Закрыть</button>`;
-            modal.appendChild(content);
-            document.body.appendChild(modal);
-            const closeBtn = content.querySelector('#closeInfoModal');
-            closeBtn.addEventListener('click', () => modal.remove());
-            modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
-        } catch (error) {
-            this.showError('Не удалось получить информацию о сообщении');
-        }
-    }
+
 
     static async confirmDeleteMessage(messageId) {
         const confirmed = confirm('Вы уверены, что хотите удалить это сообщение? Это действие нельзя отменить.');
@@ -225,7 +211,7 @@ class UIManager {
     static clearUnreadForRoom(serverId, roomId) { UnreadBadgeManager.clearUnreadForRoom(serverId, roomId); }
     static clearAllUnread() { UnreadBadgeManager.clearAllUnread(); }
     static updateServerBadges() { UnreadBadgeManager.updateServerBadges(); }
-    static updateRoomBadges() { UnreadBadgeManager.updateRoomBadges(); }
+    static updateRoomBadges(serverId) { UnreadBadgeManager.updateRoomBadges(serverId); }
     static updateTotalBadge() { UnreadBadgeManager.updateTotalBadge(); }
     static updateRoomTitleBadge(client) { UnreadBadgeManager.updateRoomTitleBadge(client || this.client); }
     static getSyncStatus() { return UnreadBadgeManager.getSyncStatus(); }
@@ -306,59 +292,18 @@ class UIManager {
             existingNotification.remove();
         }
         
-        const notification = document.createElement('div');
+        const notification = document.createElement("div");
         notification.className = `mic-notification mic-notification-${type}`;
-        notification.style.cssText = `
-            position: fixed;
-            bottom: 80px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: ${type === 'error' ? '#ed4245' : type === 'success' ? '#2ecc71' : '#5865f2'};
-            color: white;
-            padding: 10px 20px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-            z-index: 10000;
-            animation: slideUp 0.3s ease;
-            white-space: nowrap;
-        `;
         notification.textContent = message;
-        
-        if (!document.getElementById('mic-notification-styles')) {
-            const style = document.createElement('style');
-            style.id = 'mic-notification-styles';
-            style.textContent = `
-                @keyframes slideUp {
-                    from { opacity: 0; transform: translate(-50%, 20px); }
-                    to { opacity: 1; transform: translate(-50%, 0); }
-                }
-                @keyframes slideDown {
-                    from { opacity: 1; transform: translate(-50%, 0); }
-                    to { opacity: 0; transform: translate(-50%, 20px); }
-                }
-                .mic-notification.fade-out {
-                    animation: slideDown 0.3s ease forwards;
-                }
-            `;
-            document.head.appendChild(style);
-        }
-        
         document.body.appendChild(notification);
         
         if (duration > 0) {
             setTimeout(() => {
-                notification.classList.add('fade-out');
+                notification.classList.add("fade-out");
                 setTimeout(() => notification.remove(), 300);
             }, duration);
         }
-        
         return notification;
-    }
-
-    static updateMessageAvatarsForUser(userId) {
-        MessageRenderer._updateMessageAvatarsForUser(userId);
     }
 
     static updateMicButton(status) {
@@ -431,7 +376,7 @@ class UIManager {
         if (c.currentRoom) {
             const currentRoomData = c.rooms?.find(room => room.id === c.currentRoom);
             if (currentRoomData) {
-                const isPrivate = RoomManager.isPrivateRoom(c.currentRoom);
+                const isPrivate = isPrivateRoom(c.currentRoom);
                 if (isPrivate) {
                     const displayName = await RoomManager.getPrivateRoomDisplayName(c.currentRoom, c.userId, c.currentServer);
                     roomTitle = `👤 ${displayName || currentRoomData.name}`;
@@ -439,7 +384,7 @@ class UIManager {
                     roomTitle = `Гнездо: ${currentRoomData.name}`;
                 }
             } else {
-                const isPrivate = RoomManager.isPrivateRoom(c.currentRoom);
+                const isPrivate = isPrivateRoom(c.currentRoom);
                 if (isPrivate) {
                     const displayName = await RoomManager.getPrivateRoomDisplayName(c.currentRoom, c.userId, c.currentServer);
                     roomTitle = `👤 ${displayName || c.currentRoom}`;
@@ -480,8 +425,7 @@ if (c.isConnected) {
         window.postMessage({ type: 'ELECTRON_SHOW_NOTIFICATION', title: payload.sender, body: payload.roomName || 'Новое сообщение', source: 'webview' }, '*');
         const banner = document.createElement('div');
         banner.id = 'live-notification-banner';
-        banner.style.cssText = 'position: sticky; top: 0; background: #2d2d44; border-bottom: 1px solid #404060; padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; z-index: 1000; font-size: 13px; color: #e0e0e0;';
-        const time = payload.timestamp ? new Date(payload.timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+        const time = formatTime(payload.timestamp);
         let icon = '📨';
         let actionText = '';
         let senderColor = '#e0e0e0';
@@ -495,7 +439,7 @@ if (c.isConnected) {
             icon = '📨'; actionText = 'написал';
         }
         const roomDisplayName = payload.roomName || 'чат';
-        banner.innerHTML = `<div style="overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1; margin-right: 10px;">${icon} <strong style="color: ${senderColor};">${this.escapeHtml(payload.sender)}</strong><span style="opacity: 0.8;">${actionText} в <strong>${this.escapeHtml(roomDisplayName)}</strong></span><span style="opacity: 0.5; margin-left: 8px; font-size: 11px;">${time}</span></div><button id="notif-close" style="background: none; border: none; color: #e0e0e0; cursor: pointer; font-size: 16px; padding: 0 8px;">✕</button>`;
+        banner.innerHTML = `<div style="overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1; margin-right: 10px;">${icon} <strong style="color: ${senderColor};">${escapeHtml(payload.sender)}</strong><span style="opacity: 0.8;">${actionText} в <strong>${escapeHtml(roomDisplayName)}</strong></span><span style="opacity: 0.5; margin-left: 8px; font-size: 11px;">${time}</span></div><button id="notif-close" style="background: none; border: none; color: #e0e0e0; cursor: pointer; font-size: 16px; padding: 0 8px;">✕</button>`;
         const chatArea = document.querySelector('.primary-frame') || document.querySelector('.chat-area');
         if (chatArea) chatArea.prepend(banner);
         this.notificationTimer = setTimeout(() => this.hideLiveNotification(), 10000);
@@ -510,37 +454,16 @@ if (c.isConnected) {
         if (banner) banner.remove();
     }
 
-    static escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
+static async fetchUsername(userId) {
+    if (!userId) return 'Пользователь';
+    const user = await UserCacheManager.fetchUser(userId, this.client.API_SERVER_URL, this.client.token);
+    return user?.username || 'Пользователь';
+}
 
-    static async fetchUsername(userId) {
-        if (!userId) return 'Пользователь';
-        if (this.usernameCache.has(userId)) return this.usernameCache.get(userId);
-        try {
-            const response = await fetch(`${this.client.API_SERVER_URL}/api/users/${userId}`, { headers: { Authorization: `Bearer ${this.client.token}`, 'Content-Type': 'application/json' } });
-            if (response.ok) {
-                const data = await response.json();
-                const username = data.username || 'Пользователь';
-                this.usernameCache.set(userId, username);
-                return username;
-            }
-        } catch (error) {}
-        const fallback = 'Пользователь';
-        this.usernameCache.set(userId, fallback);
-        return fallback;
-    }
-
-    static async fetchUsernames(userIds) {
-        if (!Array.isArray(userIds) || userIds.length === 0) return;
-        const missing = userIds.filter(id => !this.usernameCache.has(id));
-        if (missing.length === 0) return;
-        const batchSize = 5;
-        for (let i = 0; i < missing.length; i += batchSize) await Promise.all(missing.slice(i, i + batchSize).map(uid => this.fetchUsername(uid)));
-    }
+static async fetchUsernames(userIds) {
+    if (!Array.isArray(userIds) || userIds.length === 0) return;
+    await UserCacheManager.fetchUsers(userIds, this.client.API_SERVER_URL, this.client.token);
+}
 
     static renderPinnedMessagesBar(client) {
         if (!client || !client.currentRoom) return;
@@ -601,8 +524,8 @@ if (c.isConnected) {
         bar.innerHTML = `
             <div class="pinned-message-content">
                 <span class="pinned-icon">📌</span>
-                <span class="pinned-author">${this.escapeHtml(currentMessage.username)}:</span>
-                <span class="pinned-text">${this.escapeHtml(displayText)}</span>
+                <span class="pinned-author">${escapeHtml(currentMessage.username)}:</span>
+                <span class="pinned-text">${escapeHtml(displayText)}</span>
             </div>
             <div class="pinned-actions">
                 <span class="pinned-counter">${pinned.length}</span>
@@ -678,60 +601,99 @@ if (c.isConnected) {
         });
     }
 
-    static openPinnedMessagesModal(client) {
-        if (!client || !client.currentRoom) return;
-        const roomId = client.currentRoom;
-        const pinned = client.pinnedMessages.get(roomId) || [];
-        const room = client.rooms?.find(r => r.id === roomId);
-        const roomName = room ? room.name : 'Гнездо';
-        const canManage = room && (room.ownerId === client.userId || (client.currentServer && client.currentServer.ownerId === client.userId));
-        const existingModal = document.querySelector('.pinned-messages-modal');
-        if (existingModal) existingModal.remove();
+static async showMessageInfo(messageId, userId, username, timestamp) {
+    try {
+        const response = await fetch(`${this.client.API_SERVER_URL}/api/messages/${this.client.currentRoom}/${messageId}/info`, { headers: { Authorization: `Bearer ${this.client.token}`, 'Content-Type': 'application/json' } });
+        if (!response.ok) throw new Error('Не удалось получить информацию');
+        const data = await response.json();
+        const message = data.message;
+        
         const modal = document.createElement('div');
-        modal.className = 'modal-overlay pinned-messages-modal';
-        modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); display: flex; justify-content: center; align-items: center; z-index: 10002;';
+        modal.className = 'modal-overlay';
+        
         const content = document.createElement('div');
-        content.style.cssText = 'background: #2d2d44; border-radius: 12px; padding: 0; max-width: 600px; width: 90%; max-height: 80vh; border: 1px solid #404060; display: flex; flex-direction: column; overflow: hidden;';
-        let itemsHtml = '';
-        if (pinned.length === 0) {
-            itemsHtml = '<div class="pinned-empty" style="padding: 40px; text-align: center; color: #888;">Нет закрепленных сообщений</div>';
-        } else {
-            pinned.forEach((msg, index) => {
-                const time = msg.timestamp ? new Date(msg.timestamp).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
-                const pinnedBy = msg.pinnedBy ? msg.pinnedBy.replace('user_', '').substring(0, 8) : '';
-                const pinnedTime = msg.pinnedAt ? new Date(msg.pinnedAt).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
-                itemsHtml += `<div class="pinned-message-item" data-message-id="${msg.id}" data-index="${index}"><div class="pinned-item-header"><span class="pinned-item-author">${this.escapeHtml(msg.username)}</span><span class="pinned-item-time">${time}</span></div><div class="pinned-item-text">${this.escapeHtml(msg.text || '[Изображение]')}</div><div class="pinned-item-meta"><span>📌 закрепил ${pinnedBy} в ${pinnedTime}</span>${canManage ? `<button class="pinned-item-unpin" data-message-id="${msg.id}" title="Открепить">✕</button>` : ''}</div></div>`;
-            });
+        content.className = 'message-info-modal';
+        
+        let forwardedInfo = '';
+        if (message.forwardedFrom) {
+            forwardedInfo = `<div class="message-info-section"><strong>Переслано из:</strong> ${escapeHtml(message.forwardedFrom.serverName)} / ${escapeHtml(message.forwardedFrom.roomName)}<br><strong>Автор оригинала:</strong> ${escapeHtml(message.forwardedFrom.username)}</div>`;
         }
-        content.innerHTML = `<div class="pinned-modal-header" style="padding: 16px 20px; border-bottom: 1px solid #404060; display: flex; justify-content: space-between; align-items: center;"><h3 style="margin: 0; color: #e0e0e0; font-size: 16px;">📌 Закрепленные сообщения — ${this.escapeHtml(roomName)}</h3><button class="pinned-modal-close" style="background: none; border: none; color: #888; font-size: 20px; cursor: pointer; padding: 4px 8px;">✕</button></div><div class="pinned-modal-body" style="padding: 16px 20px; overflow-y: auto; flex: 1;">${itemsHtml}</div>`;
+        let pollInfo = '';
+        if (message.type === 'poll' && message.poll) {
+            pollInfo = `<div class="message-info-section"><strong>📊 Опрос:</strong> ${escapeHtml(message.poll.question)}<br><span style="font-size: 12px; color: #888;">Вариантов: ${message.poll.options.length} | Голосов: ${message.poll.totalVotes}</span></div>`;
+        }
+        content.innerHTML = `<h3>📋 Информация о сообщении</h3><div class="message-info-body"><div><strong>ID:</strong> <code>${message.id}</code></div><div style="margin-top: 12px;"><strong>Автор:</strong> ${escapeHtml(message.username)}</div><div style="margin-top: 8px;"><strong>ID автора:</strong> <code>${message.userId}</code></div><div style="margin-top: 8px;"><strong>Время:</strong> ${formatDateTime(message.timestamp)}</div><div style="margin-top: 8px;"><strong>Тип:</strong> ${message.type || 'text'}</div><div style="margin-top: 8px;"><strong>Гнездо:</strong> <code>${message.roomId}</code></div>${forwardedInfo}${pollInfo}${message.text ? `<div class="message-info-section"><strong>Текст:</strong><br><span class="text-content">${escapeHtml(message.text)}</span></div>` : ''}</div><button class="message-info-close-btn">Закрыть</button>`;
         modal.appendChild(content);
         document.body.appendChild(modal);
-        const closeBtn = content.querySelector('.pinned-modal-close');
+        
+        const closeBtn = content.querySelector('.message-info-close-btn');
         closeBtn.addEventListener('click', () => modal.remove());
-        modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
-        content.querySelectorAll('.pinned-message-item').forEach(item => {
-            item.addEventListener('click', e => {
-                if (e.target.closest('.pinned-item-unpin')) return;
-                const messageId = item.dataset.messageId;
-                modal.remove();
-                UIManager.scrollToMessage(messageId, null, true);
+        modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+    } catch (error) {
+        this.showError('Не удалось получить информацию о сообщении');
+    }
+}
+
+static openPinnedMessagesModal(client) {
+    if (!client || !client.currentRoom) return;
+    const roomId = client.currentRoom;
+    const pinned = client.pinnedMessages.get(roomId) || [];
+    const room = client.rooms?.find(r => r.id === roomId);
+    const roomName = room ? room.name : 'Гнездо';
+    const canManage = room && (room.ownerId === client.userId || (client.currentServer && client.currentServer.ownerId === client.userId));
+    const existingModal = document.querySelector('.pinned-messages-modal');
+    if (existingModal) existingModal.remove();
+    
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    
+    const content = document.createElement('div');
+    content.className = 'pinned-messages-modal';
+    
+    let itemsHtml = '';
+    if (pinned.length === 0) {
+        itemsHtml = '<div class="pinned-empty">Нет закрепленных сообщений</div>';
+    } else {
+        pinned.forEach((msg, index) => {
+            const time = formatShortDateTime(msg.timestamp);
+            const pinnedBy = msg.pinnedBy ? msg.pinnedBy.replace('user_', '').substring(0, 8) : '';
+            const pinnedTime = formatTime(msg.pinnedAt);
+            itemsHtml += `<div class="pinned-message-item" data-message-id="${msg.id}" data-index="${index}"><div class="pinned-item-header"><span class="pinned-item-author">${escapeHtml(msg.username)}</span><span class="pinned-item-time">${time}</span></div><div class="pinned-item-text">${escapeHtml(msg.text || '[Изображение]')}</div><div class="pinned-item-meta"><span>📌 закрепил ${pinnedBy} в ${pinnedTime}</span>${canManage ? `<button class="pinned-item-unpin" data-message-id="${msg.id}" title="Открепить">✕</button>` : ''}</div></div>`;
+        });
+    }
+    content.innerHTML = `<div class="pinned-modal-header"><h3>📌 Закрепленные сообщения — ${escapeHtml(roomName)}</h3><button class="pinned-modal-close">✕</button></div><div class="pinned-modal-body">${itemsHtml}</div>`;
+    modal.appendChild(content);
+    document.body.appendChild(modal);
+    
+    const closeBtn = content.querySelector('.pinned-modal-close');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => modal.remove());
+    }
+    modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+    
+    content.querySelectorAll('.pinned-message-item').forEach(item => {
+        item.addEventListener('click', e => {
+            if (e.target.closest('.pinned-item-unpin')) return;
+            const messageId = item.dataset.messageId;
+            modal.remove();
+            UIManager.scrollToMessage(messageId, null, true);
+        });
+    });
+    if (canManage) {
+        content.querySelectorAll('.pinned-item-unpin').forEach(btn => {
+            btn.addEventListener('click', e => {
+                e.stopPropagation();
+                const messageId = btn.dataset.messageId;
+                if (client && typeof client.unpinMessage === 'function') client.unpinMessage(roomId, messageId);
+                btn.closest('.pinned-message-item')?.remove();
+                if (content.querySelectorAll('.pinned-message-item').length === 0) {
+                    const body = content.querySelector('.pinned-modal-body');
+                    if (body) body.innerHTML = '<div class="pinned-empty">Нет закрепленных сообщений</div>';
+                }
             });
         });
-        if (canManage) {
-            content.querySelectorAll('.pinned-item-unpin').forEach(btn => {
-                btn.addEventListener('click', e => {
-                    e.stopPropagation();
-                    const messageId = btn.dataset.messageId;
-                    if (client && typeof client.unpinMessage === 'function') client.unpinMessage(roomId, messageId);
-                    btn.closest('.pinned-message-item')?.remove();
-                    if (content.querySelectorAll('.pinned-message-item').length === 0) {
-                        const body = content.querySelector('.pinned-modal-body');
-                        if (body) body.innerHTML = '<div class="pinned-empty" style="padding: 40px; text-align: center; color: #888;">Нет закрепленных сообщений</div>';
-                    }
-                });
-            });
-        }
     }
+}
 
     static switchToNotesView(mode, targetId) {
         NoteUIManager.switchView(mode, targetId);

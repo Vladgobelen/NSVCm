@@ -1,4 +1,6 @@
-// modules/SecondaryChatManager.js
+import { isPrivateRoom } from "../dist/shared/roomUtils.js";
+import { buildMediaUrl } from "../dist/shared/urlBuilder.js";
+import { escapeHtml } from "../dist/shared/escapeHtml.js";
 import TextChatManager from './TextChatManager.js';
 import UIManager from './UIManager.js';
 import MessageRenderer from './MessageRenderer.js';
@@ -111,9 +113,7 @@ static async toggle(client, direction = 'side') {
         const chatArea = mainContent.querySelector('.chat-area');
         if (!chatArea) return;
 
-        // ✅ Сохраняем ID сообщения, на котором сейчас скролл
         const targetId = ScrollTracker?.getMaxSeenMessageId(client.currentRoom);
-        console.log('📌 Сохраняем позицию перед открытием фрейма:', targetId);
 
         const splitContainer = document.createElement('div');
         splitContainer.className = `chat-split-container split-${direction}`;
@@ -156,23 +156,16 @@ static async toggle(client, direction = 'side') {
         this._initEvents(client);
         await this._loadRoomOptions(client);
 
-        // ✅ Восстанавливаем скролл основного чата после всех манипуляций с DOM
         const mainContainer = primaryFrame.querySelector('.messages-container');
         if (mainContainer && targetId) {
-            // Ждем несколько кадров для стабилизации layout
             requestAnimationFrame(() => {
                 requestAnimationFrame(() => {
                     const targetEl = mainContainer.querySelector(`[data-message-id="${targetId}"]`);
                     if (targetEl) {
                         targetEl.scrollIntoView({ behavior: 'instant', block: 'start' });
-                        console.log('✅ Восстановлен скролл после открытия фрейма к', targetId);
-                        
-                        // Подсветка для наглядности
                         targetEl.style.transition = 'background 0.3s';
                         targetEl.style.background = 'rgba(88, 101, 242, 0.15)';
                         setTimeout(() => { targetEl.style.background = ''; }, 1000);
-                    } else {
-                        console.warn('❌ Целевое сообщение не найдено в DOM после перемещения');
                     }
                 });
             });
@@ -182,10 +175,8 @@ static async toggle(client, direction = 'side') {
         if (splitBtn) splitBtn.classList.add('active');
         
     } else {
-        // Закрытие вторичного чата
         if (client.secondaryChat.roomId) client.secondaryChat.roomId = null;
         
-        // ✅ Сохраняем позицию перед закрытием
         const splitContainer = document.getElementById('chat-split-container');
         const targetId = ScrollTracker?.getMaxSeenMessageId(client.currentRoom);
         
@@ -199,7 +190,6 @@ static async toggle(client, direction = 'side') {
             }
             splitContainer.remove();
             
-            // ✅ Восстанавливаем скролл после закрытия
             if (targetId) {
                 requestAnimationFrame(() => {
                     requestAnimationFrame(() => {
@@ -207,7 +197,6 @@ static async toggle(client, direction = 'side') {
                         const targetEl = mainContainer?.querySelector(`[data-message-id="${targetId}"]`);
                         if (targetEl) {
                             targetEl.scrollIntoView({ behavior: 'instant', block: 'start' });
-                            console.log('✅ Восстановлен скролл после закрытия фрейма к', targetId);
                         }
                     });
                 });
@@ -312,13 +301,13 @@ static async toggle(client, direction = 'side') {
             let listHtml = '';
 
             for (const server of servers) {
-                const isPrivateServer = server.type === 'private' || server.id?.startsWith('user_');
-                const serverName = UIManager.escapeHtml(isPrivateServer ? `🌳 ${server.displayName || server.name || 'Приватный'}` : `🌳 ${server.name}`);
+                const isPrivateSrv = server.type === 'private' || server.id?.startsWith('user_');
+                const serverName = escapeHtml(isPrivateSrv ? `🌳 ${server.displayName || server.name || 'Приватный'}` : `🌳 ${server.name}`);
                 
                 optionsHtml += `<optgroup label="${serverName}">`;
                 listHtml += `<div class="secondary-room-group" data-server-id="${server.id}"><div class="secondary-room-group-title">${serverName}</div>`;
 
-                if (isPrivateServer) {
+                if (isPrivateSrv) {
                     const roomId = server.id;
                     optionsHtml += `<option value="${roomId}">${serverName} <span class="room-type-badge">🔒</span></option>`;
                     listHtml += `<div class="secondary-room-item" data-room-id="${roomId}">${serverName} <span class="room-type-badge">🔒</span></div>`;
@@ -326,9 +315,9 @@ static async toggle(client, direction = 'side') {
                     const serverRooms = client.rooms?.filter((r) => r.serverId === server.id) || [];
                     for (const room of serverRooms) {
                         const roomId = room.id || '';
-                        const roomName = UIManager.escapeHtml(room.name || room.id || 'Гнездо');
-                        const isPrivateRoom = room.type === 'private' || roomId.startsWith('user_');
-                        const badge = isPrivateRoom ? '<span class="room-type-badge">🔒</span>' : '';
+                        const roomName = escapeHtml(room.name || room.id || 'Гнездо');
+                        const isPrivateRm = room.type === 'private' || roomId.startsWith('user_');
+                        const badge = isPrivateRm ? '<span class="room-type-badge">🔒</span>' : '';
                         optionsHtml += `<option value="${roomId}">${roomName}${badge}</option>`;
                         listHtml += `<div class="secondary-room-item" data-room-id="${roomId}">${roomName}${badge}</div>`;
                     }
@@ -501,17 +490,15 @@ static async toggle(client, direction = 'side') {
             }
 
             let serverId = roomId;
-            const isPrivate = roomId.startsWith('user_') && roomId.includes('_user_');
+            const isPrivate = isPrivateRoom(roomId);
             if (!isPrivate) {
                 const room = client.rooms?.find((r) => r.id === roomId);
                 if (room?.serverId) serverId = room.serverId;
             }
             UIManager.clearUnreadForRoom(serverId, roomId);
 if (messagesContainer) {
-    // Ждем полной отрисовки всех элементов
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-            // Учитываем загрузку картинок
             const images = messagesContainer.querySelectorAll('img');
             if (images.length > 0) {
                 let loadedCount = 0;
@@ -529,7 +516,6 @@ if (messagesContainer) {
                         img.addEventListener('error', checkAllLoaded, { once: true });
                     }
                 });
-                // Таймаут на случай зависших картинок
                 setTimeout(() => {
                     messagesContainer.scrollTop = messagesContainer.scrollHeight;
                 }, 500);
@@ -566,12 +552,8 @@ static addMessage(user, text, timestamp = null, type = 'text', imageUrl = null, 
     let fullImageUrl = imageUrl;
     let fullThumbnailUrl = thumbnailUrl;
     
-    if (fullImageUrl && fullImageUrl.startsWith('/')) {
-        fullImageUrl = (client?.API_SERVER_URL || '') + fullImageUrl;
-    }
-    if (fullThumbnailUrl && fullThumbnailUrl.startsWith('/')) {
-        fullThumbnailUrl = (client?.API_SERVER_URL || '') + fullThumbnailUrl;
-    }
+    if (fullImageUrl) fullImageUrl = buildMediaUrl(client, fullImageUrl);
+    if (fullThumbnailUrl) fullThumbnailUrl = buildMediaUrl(client, fullThumbnailUrl);
 
     if (client && type !== 'image' && user !== client.username) {
         client.playSound('message');
@@ -602,7 +584,7 @@ static addMessage(user, text, timestamp = null, type = 'text', imageUrl = null, 
 
     if (this.secondaryChat.roomId) {
         let serverId = this.secondaryChat.roomId;
-        const isPrivate = this.secondaryChat.roomId.startsWith('user_') && this.secondaryChat.roomId.includes('_user_');
+        const isPrivate = isPrivateRoom(this.secondaryChat.roomId);
         if (!isPrivate && window.voiceClient) {
             const room = window.voiceClient.rooms?.find((r) => r.id === this.secondaryChat.roomId);
             if (room?.serverId) serverId = room.serverId;

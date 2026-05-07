@@ -1,31 +1,34 @@
-import SettingsManager from './SettingsManager.js';
+import MobileRoomsBar from '../dist/shared/MobileRoomsBar.js';
+import SettingsManager from '../dist/shared/SettingsManager.js';
+import { isPrivateRoom } from "../dist/shared/roomUtils.js";
+import { formatTime } from "../dist/shared/formatTime.js";
 import MediaManager from './MediaManager.js';
 import RoomManager from './RoomManager.js';
 import ServerManager from './ServerManager.js';
 import UIManager from './UIManager.js';
-import Utils from './Utils.js';
+import { generateClientID } from '../dist/shared/Utils.js';
 import TextChatManager from './TextChatManager.js';
-import InviteManager from './InviteManager.js';
+import InviteManager from '../dist/shared/InviteManager.js';
 import MembersManager from './MembersManager.js';
 import AuthManager from './AuthManager.js';
-import VolumeBoostManager from './VolumeBoostManager.js';
+import VolumeBoostManager from '../dist/shared/VolumeBoostManager.js';
 import ModalManager from './ModalManager.js';
 import SecondaryChatManager from './SecondaryChatManager.js';
 import DiagnosticPanel from './DiagnosticPanel.js';
 import MessageRenderer from './MessageRenderer.js';
 import CreatePollModal from './CreatePollModal.js';
-import SoundManager from './SoundManager.js';
+import SoundManager from '../dist/shared/SoundManager.js';
 import ScrollTracker from './ScrollTracker.js';
 import ChatSocketHandler from './ChatSocketHandler.js';
 import MediaSocketHandler from './MediaSocketHandler.js';
 import SystemSocketHandler from './SystemSocketHandler.js';
 import PollSocketHandler from './PollSocketHandler.js';
-import NoteStateManager from './NoteStateManager.js';
+import NoteStateManager from '../dist/shared/NoteStateManager.js';
 import NoteAPI from './NoteAPI.js';
 import NoteUIManager from './NoteUIManager.js';
 import NoteSocketHandler from './NoteSocketHandler.js';
 import MobileOnlineBar from './MobileOnlineBar.js';
-import AvatarManager from './AvatarManager.js';
+import AvatarManager from '../dist/shared/AvatarManager.js';
 import ConsoleCommandManager from './ConsoleCommandManager.js';
 
 const NETWORK_RECONNECT_CONFIG = { BASE_DELAY: 1000, MAX_DELAY: 16000, JITTER_FACTOR: 0.2 };
@@ -44,7 +47,7 @@ class VoiceChatClient {
     window._voiceClientInstance = this;
     this.API_SERVER_URL = 'https://ns.fiber-gate.ru';
     this.CHAT_API_URL = `${this.API_SERVER_URL}/api/join`;
-    this.clientID = Utils.generateClientID();
+    this.clientID = generateClientID();
     this.device = null;
     this.sendTransport = null;
     this.recvTransport = null;
@@ -54,6 +57,8 @@ class VoiceChatClient {
     this.stream = null;
     this.isMicActive = false;
     this.isMicPaused = false;
+    this.isGlobalMuted = false;
+    this._savedGains = new Map();
     this.currentRoom = null;
     this.currentServerId = null;
     this.currentServer = null;
@@ -129,6 +134,27 @@ class VoiceChatClient {
     this.loadAudioSettings();
     this.init();
   }
+
+async toggleGlobalMute() {
+    this.isGlobalMuted = !this.isGlobalMuted;
+    const VBM = (await import('../dist/shared/VolumeBoostManager.js')).default;
+    
+    if (this.isGlobalMuted) {
+        for (const [userId, gainNode] of VBM.gainNodes) {
+            this._savedGains.set(userId, gainNode.gain.value);
+            gainNode.gain.value = 0;
+        }
+        UIManager.addMessage('System', '🔇 Входящий войс отключён');
+    } else {
+        for (const [userId, savedGain] of this._savedGains) {
+            VBM.setGain(userId, savedGain);
+        }
+        this._savedGains.clear();
+        UIManager.addMessage('System', '🔊 Входящий войс включён');
+    }
+    
+    this.updateMicButtonState();
+}
 
   loadAudioSettings() {
     try {
@@ -210,8 +236,8 @@ class VoiceChatClient {
       `;
 
       const rect = buttonElement.getBoundingClientRect();
-      menu.style.left = `${rect.left}px`;
-      menu.style.top = `${rect.bottom + 5}px`;
+      let left = rect.left;
+      let top = rect.bottom + 5;
 
       if (audioInputs.length === 0) {
         const item = document.createElement('div');
@@ -247,7 +273,32 @@ class VoiceChatClient {
         });
       }
 
+      const separator = document.createElement('div');
+      separator.style.cssText = 'height: 1px; background: #404060; margin: 4px 0;';
+      menu.appendChild(separator);
+
+      const muteItem = document.createElement('div');
+      muteItem.className = 'mic-device-item';
+      muteItem.innerHTML = '<span>' + (this.isGlobalMuted ? '🔊' : '🔇') + '</span><span>' + (this.isGlobalMuted ? 'Включить войс' : 'Отключить войс') + '</span>';
+      muteItem.addEventListener('click', () => {
+        this.toggleGlobalMute();
+        menu.remove();
+      });
+      menu.appendChild(muteItem);
+
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
       document.body.appendChild(menu);
+
+      const menuRect = menu.getBoundingClientRect();
+      if (left + menuRect.width > window.innerWidth) {
+        left = window.innerWidth - menuRect.width - 10;
+      }
+      if (top + menuRect.height > window.innerHeight) {
+        top = rect.top - menuRect.height - 5;
+      }
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
 
       const closeHandler = (e) => {
         if (!menu.contains(e.target) && !buttonElement.contains(e.target)) {
@@ -422,7 +473,7 @@ class VoiceChatClient {
             
             setTimeout(async () => {
               try {
-                const VBM = (await import('./VolumeBoostManager.js')).default;
+                const VBM = (await import('../dist/shared/VolumeBoostManager.js')).default;
                 await VBM._ensureAudioContext();
                 const ctx = VBM.audioCtx;
                 
@@ -936,71 +987,26 @@ class VoiceChatClient {
     }
   }
 
-  async _refreshToken() {
-    try {
-      const isValid = await AuthManager.validateToken(this, this.userId, this.token, this.tokenVersion);
-
-      if (isValid) {
-        return true;
-      }
-    } catch (e) {
-    }
-
+async _refreshToken() {
     const lastUser = AuthManager.loadLastUser();
-    if (lastUser && lastUser.username === this.username) {
-      try {
-        const response = await fetch(`${this.API_SERVER_URL}/api/auth/refresh`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: this.userId,
-            refreshToken: lastUser.refreshToken || this.token,
-            tokenVersion: this.tokenVersion,
-          }),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          this.token = data.token;
-          this.tokenVersion = data.tokenVersion || this.tokenVersion;
-
-          AuthManager.saveLastUser({
-            username: this.username,
-            userId: this.userId,
-            token: this.token,
-            tokenVersion: this.tokenVersion,
-          });
-
-          return true;
-        }
-      } catch (e) {
-      }
-    }
-
-    const currentRoomId = this.currentRoom;
-    const currentServerId = this.currentServerId;
-
+    if (!lastUser) return false;
+    
+    // Показываем модалку авторизации
     AuthManager.showAuthModal(this);
-
+    
     return new Promise((resolve) => {
-      const checkInterval = setInterval(() => {
-        if (this.token && this.userId) {
-          clearInterval(checkInterval);
-
-          if (currentRoomId && this.currentRoom !== currentRoomId) {
-            this.joinRoom(currentRoomId, true).catch(console.error);
-          }
-
-          resolve(true);
-        }
-      }, 500);
-
-      setTimeout(() => {
-        clearInterval(checkInterval);
-        resolve(false);
-      }, 30000);
+        const checkInterval = setInterval(() => {
+            if (this.token && this.userId) {
+                clearInterval(checkInterval);
+                resolve(true);
+            }
+        }, 500);
+        setTimeout(() => {
+            clearInterval(checkInterval);
+            resolve(false);
+        }, 30000);
     });
-  }
+}
 
   logToRoomChat(message, type = 'system') {
     if (!this.currentRoom || !this.socket) return false;
@@ -1055,6 +1061,11 @@ class VoiceChatClient {
   async init() {
     this.initElements();
     this.initEventListeners();
+    window.addEventListener('beforeunload', () => {
+        if (this.currentRoom && this.socket?.connected) {
+            this.socket.emit('leave-room', { roomId: this.currentRoom });
+        }
+    });
     this.setupElectronBridge();
     UIManager.setClient(this);
     SoundManager.init(this);
@@ -1063,6 +1074,7 @@ class VoiceChatClient {
     InviteManager.init(this);
     AvatarManager.init(this);
     MobileOnlineBar.init();
+    MobileRoomsBar.init(this);
     ConsoleCommandManager.init(this);
     try {
       const NoteAPI = (await import('./NoteAPI.js')).default;
@@ -1102,34 +1114,6 @@ class VoiceChatClient {
     this.elements.backBtn = document.querySelector('.back-btn');
     this.elements.splitToggleBtn = document.querySelector('.split-toggle-btn');
     this.elements.pollCreateBtn = document.querySelector('.poll-create-btn');
-    if (!this.elements.splitToggleBtn) {
-      const headerControls = document.querySelector('.header-controls');
-      const micBtn = headerControls?.querySelector('.mic-toggle-btn');
-      if (headerControls) {
-        const splitBtn = document.createElement('button');
-        splitBtn.className = 'split-toggle-btn';
-        splitBtn.innerHTML = '🔲';
-        splitBtn.title = 'Разделить чат';
-        splitBtn.id = 'splitToggleBtn';
-        if (micBtn) headerControls.insertBefore(splitBtn, micBtn);
-        else headerControls.appendChild(splitBtn);
-        this.elements.splitToggleBtn = splitBtn;
-      }
-    }
-    if (!this.elements.pollCreateBtn) {
-      const headerControls = document.querySelector('.header-controls');
-      if (headerControls) {
-        const pollBtn = document.createElement('button');
-        pollBtn.className = 'poll-create-btn';
-        pollBtn.innerHTML = '📊';
-        pollBtn.title = 'Создать опрос';
-        pollBtn.id = 'pollCreateBtn';
-        const splitBtn = headerControls.querySelector('.split-toggle-btn');
-        if (splitBtn) headerControls.insertBefore(pollBtn, splitBtn);
-        else headerControls.appendChild(pollBtn);
-        this.elements.pollCreateBtn = pollBtn;
-      }
-    }
     if (this.elements.messagesContainer) {
       let sentinel = this.elements.messagesContainer.querySelector('.history-sentinel');
       if (!sentinel) {
@@ -1138,7 +1122,7 @@ class VoiceChatClient {
         sentinel.style.cssText = 'height: 1px; width: 1px; margin: 0; padding: 0; overflow: hidden; visibility: hidden;';
         this.elements.messagesContainer.prepend(sentinel);
         this.elements.historySentinel = sentinel;
-      }
+    }
     }
     if (this.elements.clearSearchBtn) {
       this.elements.clearSearchBtn.addEventListener('click', () => ServerManager.clearSearchAndShowAllServers(this));
@@ -1266,21 +1250,45 @@ class VoiceChatClient {
         el.style.height = Math.min(el.scrollHeight, 120) + 'px';
       });
     }
-    if (this.elements.sendButton) {
-      this.elements.sendButton.addEventListener('click', () => {
-        const text = this.elements.messageInput.value.trim();
-        if (text) {
-          if (text.startsWith('/poll')) {
-            this.handlePollCommand(text);
-          } else {
-            this.sendMessage(text);
-          }
-          this.elements.messageInput.value = '';
-          this.elements.messageInput.style.height = '40px';
-          this.elements.messageInput.focus();
-        }
-      });
+
+if (this.elements.sendButton) {
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    
+    if (isIOS) {
+        this.elements.sendButton.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const input = this.elements.messageInput;
+            const text = input.value.trim();
+            if (text) {
+                if (text.startsWith('/poll')) {
+                    this.handlePollCommand(text);
+                } else {
+                    this.sendMessage(text);
+                }
+                input.value = '';
+                input.style.height = '40px';
+            }
+            input.focus();
+        }, { passive: false });
+    } else {
+        this.elements.sendButton.addEventListener('click', (e) => {
+            e.preventDefault();
+            const input = this.elements.messageInput;
+            const text = input.value.trim();
+            if (text) {
+                if (text.startsWith('/poll')) {
+                    this.handlePollCommand(text);
+                } else {
+                    this.sendMessage(text);
+                }
+                input.value = '';
+                input.style.height = '40px';
+            }
+            input.focus();
+        });
     }
+}
+
     if (this.elements.toggleSidebarBtn) {
       this.elements.toggleSidebarBtn.addEventListener('click', () => this.elements.sidebar.classList.toggle('open'));
     }
@@ -1331,17 +1339,7 @@ class VoiceChatClient {
     }
     const headerControls = document.querySelector('.header-controls');
     if (headerControls) {
-      let diagBtn = document.querySelector('.diag-toggle-btn');
-      if (!diagBtn) {
-        diagBtn = document.createElement('button');
-        diagBtn.className = 'diag-toggle-btn';
-        diagBtn.innerHTML = '📊';
-        diagBtn.title = 'Диагностика комнаты';
-        diagBtn.style.cssText = 'background:none; border:none; font-size:18px; cursor:pointer; margin-right:8px;';
-        const micBtn = headerControls.querySelector('.mic-toggle-btn');
-        if (micBtn) headerControls.insertBefore(diagBtn, micBtn);
-        else headerControls.appendChild(diagBtn);
-      }
+      const diagBtn = document.querySelector(".diag-toggle-btn");
       diagBtn.addEventListener('click', () => {
         if (this.diagnosticActive) this.stopDiagnostic();
         else this.startDiagnostic();
@@ -1783,7 +1781,7 @@ class VoiceChatClient {
     });
   }
 
-  async initAutoConnect() {
+async initAutoConnect() {
     if (this._joinRoomInProgress || this.isConnected) {
       return;
     }
@@ -1793,9 +1791,23 @@ class VoiceChatClient {
       if (autoLoggedIn) {
         await ServerManager.loadServers(this, false);
 
-        await AvatarManager.fetchUser(this.userId);
-
         await UIManager.fetchUsernames([this.userId]);
+        
+        try {
+            const lastRoomRes = await fetch(`${this.API_SERVER_URL}/api/users/me/last-room`, {
+                headers: { 'Authorization': `Bearer ${this.token}` }
+            });
+            if (lastRoomRes.ok) {
+                const lastRoomData = await lastRoomRes.json();
+                if (lastRoomData.lastRoom?.serverId && lastRoomData.lastRoom?.roomId) {
+                    localStorage.setItem('lastServerId', lastRoomData.lastRoom.serverId);
+                    localStorage.setItem('lastRoomId', lastRoomData.lastRoom.roomId);
+                }
+            }
+        } catch (e) {
+            // fallback to localStorage
+        }
+        
         if (this.pendingInviteCode || InviteManager.getPendingInvite()) {
           const inviteApplied = await InviteManager.applyPendingInvite();
           if (inviteApplied) {
@@ -1804,6 +1816,25 @@ class VoiceChatClient {
           }
           this.clearPendingInvite();
         }
+        
+        if (this.currentServerId) {
+      console.log("DEBUG: currentServerId:", this.currentServerId, "servers:", this.servers.length);
+          const serverExists = this.servers.some((s) => s.id === this.currentServerId);
+          if (!serverExists) {
+            const joined = await ServerManager.joinServer(this, this.currentServerId);
+            if (!joined) return;
+          }
+          this.currentServer = this.servers.find((s) => s.id === this.currentServerId);
+          await RoomManager.loadRoomsForServer(this, this.currentServerId);
+          
+          const lastRoomId = localStorage.getItem('lastRoomId');
+          if (lastRoomId && this.rooms?.some((r) => r.id === lastRoomId)) {
+            this.currentRoom = lastRoomId;
+            await this.reconnectToRoom(lastRoomId);
+          }
+          return;
+        }
+        
         const lastServerId = localStorage.getItem('lastServerId');
         const lastRoomId = localStorage.getItem('lastRoomId');
         if (this.currentRoom === lastRoomId && this.isConnected) {
@@ -2495,10 +2526,7 @@ handleRemoteConsoleCommand(data) {
           tempEl.dataset.messageId = result.message.id;
           const timeEl = tempEl.querySelector('.message-time');
           if (timeEl && result.message.timestamp) {
-            timeEl.textContent = new Date(result.message.timestamp).toLocaleTimeString('ru-RU', {
-              hour: '2-digit',
-              minute: '2-digit',
-            });
+            timeEl.textContent = formatTime(result.message.timestamp);
           }
         }
       }
@@ -2619,6 +2647,7 @@ handleRemoteConsoleCommand(data) {
         if (this.socket) this.socket.emit('leave-room', { roomId: this.currentRoom });
       }
       await this.disconnectFromRoom();
+      console.log("CLIENT disconnectFromRoom called, currentRoom:", this.currentRoom);
       
       const joinRes = await this._fetchWithTimeout(this.CHAT_API_URL, {
         method: 'POST',
@@ -2640,6 +2669,17 @@ handleRemoteConsoleCommand(data) {
       this.roomType = 'voice';
       localStorage.setItem('lastServerId', this.currentServerId);
       localStorage.setItem('lastRoomId', this.currentRoom);
+	fetch(`${this.API_SERVER_URL}/api/users/me/last-room`, {
+	    method: 'POST',
+	    headers: {
+	        'Content-Type': 'application/json',
+	        'Authorization': `Bearer ${this.token}`
+	    },
+	    body: JSON.stringify({
+	        serverId: this.currentServerId,
+	        roomId: roomId
+	    })
+	}).catch(() => {});
       this.audioProducer = null;
       this.isMicActive = false;
       this.isMicPaused = true;
@@ -2707,7 +2747,7 @@ handleRemoteConsoleCommand(data) {
       this.fetchPinnedMessages(roomId);
       await new Promise((resolve) => setTimeout(resolve, 150));
       
-      const result = await TextChatManager.loadMessages(this, roomId, 100);
+      const result = await TextChatManager.loadMessages(this, roomId, 20);
       if (result && result.messages?.length > 0) {
         this.oldestMessageId = result.messages[0].id;
         this.hasMoreHistory = result.hasMore;
@@ -2746,6 +2786,7 @@ handleRemoteConsoleCommand(data) {
       
       if (MembersManager.onlineMembers?.length > 0) {
         MobileOnlineBar.update(MembersManager.onlineMembers);
+	MobileRoomsBar.update();
       }
       
       if (clearUnread) {

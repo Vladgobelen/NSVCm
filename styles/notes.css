@@ -486,3 +486,21 @@
 .note-thread-send-btn:hover {
   background: #4752c4;
 }
+
+.note-thread-send-btn {
+    background: #5865f2;
+    border: none;
+    border-radius: 8px;
+    color: white;
+    padding: 0 16px;
+    cursor: pointer;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s ease;
+}
+
+.note-thread-send-btn:hover {
+    background: #4752c4;
+}

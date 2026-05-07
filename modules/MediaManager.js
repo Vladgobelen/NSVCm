@@ -1,6 +1,6 @@
-import VolumeBoostManager from './VolumeBoostManager.js';
+import VolumeBoostManager from '../dist/shared/VolumeBoostManager.js';
 import UIManager from './UIManager.js';
-import RnnoiseManager from './RnnoiseManager.js';
+import RnnoiseManager from '../dist/shared/RnnoiseManager.js';
 
 const TRANSPORT_CONNECT_TIMEOUT = 20000;
 const PRODUCE_TIMEOUT = 15000;
@@ -248,195 +248,215 @@ class MediaManager {
     }
   }
 
-  static async _doInitMicrophone(client) {
+static async _doInitMicrophone(client) {
     try {
-      if (!client.sendTransport) {
-        throw new Error('Send transport not initialized');
-      }
-
-      if (client.sendTransport.connectionState !== 'connected') {
-        const notification = UIManager.showNotification('🔗 Устанавливаем защищённое соединение...', 'info', 0);
-
-        try {
-          await this._waitForTransportReady(client.sendTransport, 'send', 3000);
-
-          if (notification) {
-            notification.textContent = '✅ Защищённое соединение установлено!';
-            notification.style.background = '#2ecc71';
-            setTimeout(() => {
-              notification.classList.add('fade-out');
-              setTimeout(() => notification.remove(), 300);
-            }, 2000);
-          }
-        } catch (e) {
-          if (notification) {
-            notification.textContent = '🌐 Продолжаем подключение...';
-            notification.style.background = '#faa61a';
-            setTimeout(() => {
-              notification.classList.add('fade-out');
-              setTimeout(() => notification.remove(), 300);
-            }, 2000);
-          }
+        if (!client.sendTransport) {
+            throw new Error('Send transport not initialized');
         }
-      }
 
-      if (client.audioProducer && !client.audioProducer.closed) {
-        return true;
-      }
-
-const constraints = {
-  audio: {
-    echoCancellation: client.audioEchoCancellation ?? true,
-    noiseSuppression: client.audioNoiseSuppression ?? true,
-    autoGainControl: client.audioAutoGainControl ?? true,
-    channelCount: client.audioChannelMode === 'stereo' ? 2 : 1,
-  },
-};
-
-if (client.audioEchoCancellationType === 'system') {
-  constraints.audio.echoCancellationType = 'system';
-}
-
-      if (client.selectedMicDeviceId) {
-        constraints.audio.deviceId = { exact: client.selectedMicDeviceId };
-      }
-
-      if (client.stream) {
-        client.stream.getTracks().forEach((t) => t.stop());
-        client.stream = null;
-      }
-
-      let rawStream = await navigator.mediaDevices.getUserMedia(constraints);
-      const track = rawStream.getAudioTracks()[0];
-
-      if (!track) {
-        throw new Error('No audio track available');
-      }
-
-      const isNoiseSuppressionEnabled = client.audioRNNoise !== false;
-
-      if (isNoiseSuppressionEnabled) {
-        try {
-          const RnnoiseManager = (await import('./RnnoiseManager.js')).default;
-          const isAvailable = await RnnoiseManager.isAvailable();
-
-          if (isAvailable) {
-            const noiseNotification = UIManager.showNotification('🎧 Включаем шумоподавление...', 'info', 2000);
-            const processedStream = await RnnoiseManager.enable(rawStream);
-            rawStream = processedStream;
-
-            if (noiseNotification) {
-              noiseNotification.textContent = '✅ Шумоподавление активировано';
-              noiseNotification.style.background = '#2ecc71';
-              setTimeout(() => {
-                noiseNotification.classList.add('fade-out');
-                setTimeout(() => noiseNotification.remove(), 300);
-              }, 1500);
+        if (client.sendTransport.connectionState !== 'connected') {
+            const notification = UIManager.showNotification('🔗 Устанавливаем защищённое соединение...', 'info', 0);
+            try {
+                await this._waitForTransportReady(client.sendTransport, 'send', 3000);
+                if (notification) {
+                    notification.textContent = '✅ Защищённое соединение установлено!';
+                    notification.style.background = '#2ecc71';
+                    setTimeout(() => {
+                        notification.classList.add('fade-out');
+                        setTimeout(() => notification.remove(), 300);
+                    }, 2000);
+                }
+            } catch (e) {
+                if (notification) {
+                    notification.textContent = '🌐 Продолжаем подключение...';
+                    notification.style.background = '#faa61a';
+                    setTimeout(() => {
+                        notification.classList.add('fade-out');
+                        setTimeout(() => notification.remove(), 300);
+                    }, 2000);
+                }
             }
-          } else {
-            UIManager.showNotification('⚠️ Шумоподавление недоступно', 'error', 3000);
-          }
-        } catch (noiseError) {
-          console.error('Failed to apply RNNoise:', noiseError);
-          UIManager.showNotification('⚠️ Шумоподавление не включено', 'error', 3000);
         }
-      }
 
-      if (client.audioInputGain !== 1.0 && client.audioInputGain > 0) {
-        try {
-          const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-          const source = audioContext.createMediaStreamSource(rawStream);
-          const gainNode = audioContext.createGain();
-          gainNode.gain.value = client.audioInputGain;
-          const destination = audioContext.createMediaStreamDestination();
-          source.connect(gainNode);
-          gainNode.connect(destination);
-          rawStream = destination.stream;
-        } catch (gainError) {
-          console.error('Failed to apply input gain:', gainError);
+        if (client.audioProducer && !client.audioProducer.closed) {
+            return true;
         }
-      }
 
-      client.stream = rawStream;
-      const finalTrack = client.stream.getAudioTracks()[0];
+        const constraints = {
+            audio: {
+                echoCancellation: client.audioEchoCancellation ?? true,
+                noiseSuppression: client.audioNoiseSuppression ?? true,
+                autoGainControl: client.audioAutoGainControl ?? true,
+                channelCount: client.audioChannelMode === 'stereo' ? 2 : 1,
+            },
+        };
 
-      if (!finalTrack) {
-        throw new Error('No audio track available after processing');
-      }
-
-      finalTrack.enabled = true;
-
-      const maxBitrate = (client.audioMaxBitrate || 48) * 1000;
-
-      client.audioProducer = await client.sendTransport.produce({
-        track: finalTrack,
-        encodings: [{ maxBitrate: maxBitrate, dtx: client.audioDTX ?? true }],
-        appData: { clientID: client.clientID, roomId: client.currentRoom },
-      });
-
-      if (!client.audioProducer || client.audioProducer.closed) {
-        throw new Error('Producer creation failed or closed immediately');
-      }
-
-      client.audioProducer.on('transportclose', () => {
-        client.audioProducer = null;
-        client.isMicActive = false;
-        client.isMicPaused = true;
-        if (client.updateMicButtonState) {
-          client.updateMicButtonState();
+        if (client.audioEchoCancellationType === 'system') {
+            constraints.audio.echoCancellationType = 'system';
         }
-      });
 
-      client.audioProducer.on('trackended', () => {
-        client.audioProducer = null;
-        client.isMicActive = false;
-        client.isMicPaused = true;
-        if (client.updateMicButtonState) {
-          client.updateMicButtonState();
+        if (client.selectedMicDeviceId) {
+            constraints.audio.deviceId = { exact: client.selectedMicDeviceId };
         }
-      });
 
-      client.isMicActive = true;
-      client.isMicPaused = false;
+        if (client.stream) {
+            client.stream.getTracks().forEach((t) => t.stop());
+            client.stream = null;
+        }
 
-      if (client.socket) {
-        client.socket.emit('new-producer-notification', {
-          roomId: client.currentRoom,
-          producerId: client.audioProducer.id,
-          clientID: client.clientID,
-          userId: client.userId,
-          kind: 'audio',
+        let rawStream = await navigator.mediaDevices.getUserMedia(constraints);
+        const track = rawStream.getAudioTracks()[0];
+
+        if (!track) {
+            throw new Error('No audio track available');
+        }
+
+        // 🔥 НОВОЕ: Noise Gate + RNNoise + Gain в одной WebAudio цепочке
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioContext.createMediaStreamSource(rawStream);
+        
+        // Узел 1: Noise Gate (обрезает клацанья и шорохи)
+        const gateProcessor = audioContext.createScriptProcessor(512, 1, 1);
+        let isOpen = false;
+        let closeTimer = null;
+        const THRESHOLD = 0.02; // Порог срабатывания
+        const HOLD_MS = 300;     // Задержка закрытия
+        
+        gateProcessor.onaudioprocess = (e) => {
+            const input = e.inputBuffer.getChannelData(0);
+            const output = e.outputBuffer.getChannelData(0);
+            let sum = 0;
+            for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+            const rms = Math.sqrt(sum / input.length);
+            
+            if (rms > THRESHOLD) {
+                isOpen = true;
+                if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+                output.set(input);
+            } else if (isOpen) {
+                output.set(input);
+                if (!closeTimer) closeTimer = setTimeout(() => { isOpen = false; }, HOLD_MS);
+            } else {
+                output.fill(0);
+            }
+        };
+
+        // Узел 2: Gain (усиление микрофона)
+        const gainNode = audioContext.createGain();
+        gainNode.gain.value = client.audioInputGain ?? 1.0;
+
+        // Узел 3: Выход
+        const destination = audioContext.createMediaStreamDestination();
+
+        // Цепочка: source → gate → gain → destination
+        source.connect(gateProcessor);
+        gateProcessor.connect(gainNode);
+        gainNode.connect(destination);
+
+        // 🔥 RNNoise применяем ПОВЕРХ цепочки, если включён
+        let processedStream = destination.stream;
+        const isNoiseSuppressionEnabled = client.audioRNNoise !== false;
+
+        if (isNoiseSuppressionEnabled) {
+            try {
+                const RnnoiseManager = (await import('../dist/shared/RnnoiseManager.js')).default;
+                const isAvailable = await RnnoiseManager.isAvailable();
+
+                if (isAvailable) {
+                    const noiseNotification = UIManager.showNotification('🎧 Включаем шумоподавление...', 'info', 2000);
+                    const rnnoiseStream = await RnnoiseManager.enable(processedStream);
+                    processedStream = rnnoiseStream;
+
+                    if (noiseNotification) {
+                        noiseNotification.textContent = '✅ Шумоподавление активировано';
+                        noiseNotification.style.background = '#2ecc71';
+                        setTimeout(() => {
+                            noiseNotification.classList.add('fade-out');
+                            setTimeout(() => noiseNotification.remove(), 300);
+                        }, 1500);
+                    }
+                } else {
+                    UIManager.showNotification('⚠️ Шумоподавление недоступно', 'error', 3000);
+                }
+            } catch (noiseError) {
+                console.error('Failed to apply RNNoise:', noiseError);
+                UIManager.showNotification('⚠️ Шумоподавление не включено', 'error', 3000);
+            }
+        }
+
+        client.stream = processedStream;
+        const finalTrack = client.stream.getAudioTracks()[0];
+
+        if (!finalTrack) {
+            throw new Error('No audio track available after processing');
+        }
+
+        finalTrack.enabled = true;
+
+        // Сохраняем ссылки для очистки
+        client.__noiseGate = { processor: gateProcessor, gainNode, source, audioContext };
+
+        const maxBitrate = (client.audioMaxBitrate || 48) * 1000;
+
+        client.audioProducer = await client.sendTransport.produce({
+            track: finalTrack,
+            encodings: [{ maxBitrate: maxBitrate, dtx: client.audioDTX ?? true }],
+            appData: { clientID: client.clientID, roomId: client.currentRoom },
         });
 
-        client.socket.emit('mic-indicator-state', {
-          roomId: client.currentRoom,
-          isActive: true,
-        });
-      }
+        if (!client.audioProducer || client.audioProducer.closed) {
+            throw new Error('Producer creation failed or closed immediately');
+        }
 
-      return true;
+        client.audioProducer.on('transportclose', () => {
+            client.audioProducer = null;
+            client.isMicActive = false;
+            client.isMicPaused = true;
+            if (client.updateMicButtonState) client.updateMicButtonState();
+        });
+
+        client.audioProducer.on('trackended', () => {
+            client.audioProducer = null;
+            client.isMicActive = false;
+            client.isMicPaused = true;
+            if (client.updateMicButtonState) client.updateMicButtonState();
+        });
+
+        client.isMicActive = true;
+        client.isMicPaused = false;
+
+        if (client.socket) {
+            client.socket.emit('new-producer-notification', {
+                roomId: client.currentRoom,
+                producerId: client.audioProducer.id,
+                clientID: client.clientID,
+                userId: client.userId,
+                kind: 'audio',
+            });
+            client.socket.emit('mic-indicator-state', { roomId: client.currentRoom, isActive: true });
+        }
+
+        return true;
     } catch (error) {
-      console.error('Failed to init microphone:', error.message);
+        console.error('Failed to init microphone:', error.message);
+        client.isMicActive = false;
+        client.isMicPaused = true;
+        client.audioProducer = null;
 
-      client.isMicActive = false;
-      client.isMicPaused = true;
-      client.audioProducer = null;
+        if (client.stream) {
+            client.stream.getTracks().forEach((t) => t.stop());
+            client.stream = null;
+        }
 
-      if (client.stream) {
-        client.stream.getTracks().forEach((t) => t.stop());
-        client.stream = null;
-      }
+        try {
+            const RnnoiseManager = (await import('../dist/shared/RnnoiseManager.js')).default;
+            RnnoiseManager.disable();
+        } catch (e) {}
 
-      try {
-        const RnnoiseManager = (await import('./RnnoiseManager.js')).default;
-        RnnoiseManager.disable();
-      } catch (e) {
-      }
-
-      UIManager.showNotification('❌ Ошибка микрофона: ' + error.message, 'error', 4000);
-      throw error;
+        UIManager.showNotification('❌ Ошибка микрофона: ' + error.message, 'error', 4000);
+        throw error;
     }
-  }
+}
 
   static _waitForTransportReady(transport, type, timeoutMs = 5000) {
     return new Promise((resolve, reject) => {

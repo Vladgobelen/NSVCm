@@ -1,3 +1,4 @@
+import { createCloseButton, createModalOverlay } from "../dist/shared/DomHelpers.js";
 import UIManager from './UIManager.js';
 
 class CreatePollModal {
@@ -17,109 +18,74 @@ class CreatePollModal {
         this._options = [];
         this._nextOptionId = 0;
 
-        this._modal = document.createElement('div');
-        this._modal.className = 'modal-overlay create-poll-modal-overlay';
-        this._modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); display: flex; justify-content: center; align-items: center; z-index: 10001;';
-
         const content = document.createElement('div');
         content.className = 'create-poll-modal-content';
         content.style.cssText = 'background: #2d2d44; border-radius: 12px; padding: 0; max-width: 500px; width: 90%; max-height: 80vh; border: 1px solid #404060; display: flex; flex-direction: column; overflow: hidden;';
 
-        content.innerHTML = `
-            <div class="poll-modal-header" style="padding: 16px 20px; border-bottom: 1px solid #404060; display: flex; justify-content: space-between; align-items: center;">
-                <h3 style="margin: 0; color: #e0e0e0; font-size: 16px;">📊 Создать опрос</h3>
-                <button class="poll-modal-close" style="background: none; border: none; color: #888; font-size: 20px; cursor: pointer; padding: 4px 8px;">✕</button>
-            </div>
-            <div class="poll-modal-body" style="padding: 16px 20px; overflow-y: auto; flex: 1;">
-                <div class="poll-form-group">
-                    <label for="poll-question-input" style="display: block; margin-bottom: 6px; color: #b0b0c0; font-size: 13px;">Вопрос</label>
-                    <input type="text" id="poll-question-input" placeholder="Введите вопрос опроса" maxlength="256" style="width: 100%; padding: 10px 12px; background: #1a1a2e; border: 1px solid #404060; color: #e0e0e0; border-radius: 6px; font-size: 14px; outline: none;">
-                </div>
-                <div class="poll-form-group" style="margin-top: 16px;">
-                    <label style="display: block; margin-bottom: 6px; color: #b0b0c0; font-size: 13px;">Варианты ответов</label>
-                    <div id="poll-options-container" class="poll-options-container" style="display: flex; flex-direction: column; gap: 8px;">
-                    </div>
-                    <button id="poll-add-option-btn" class="poll-add-option-btn" style="margin-top: 8px; padding: 8px 12px; background: #404060; color: #e0e0e0; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%;">
-                        <span>➕</span> Добавить вариант
-                    </button>
-                </div>
-                <div class="poll-form-group" style="margin-top: 16px;">
-                    <label style="display: block; margin-bottom: 10px; color: #b0b0c0; font-size: 13px;">Настройки</label>
-                    <div style="display: flex; flex-direction: column; gap: 10px;">
-                        <label style="display: flex; align-items: center; gap: 8px; color: #e0e0e0; font-size: 13px; cursor: pointer;">
-                            <input type="checkbox" id="poll-multiple-checkbox" style="width: 16px; height: 16px; cursor: pointer;">
-                            <span>☑️ Разрешить множественный выбор</span>
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 8px; color: #e0e0e0; font-size: 13px; cursor: pointer;">
-                            <input type="checkbox" id="poll-anonymous-checkbox" style="width: 16px; height: 16px; cursor: pointer;">
-                            <span>👻 Анонимное голосование</span>
-                        </label>
-                    </div>
-                </div>
-            </div>
-            <div class="poll-modal-footer" style="padding: 12px 16px; border-top: 1px solid #404060; display: flex; justify-content: flex-end; gap: 8px;">
-                <button class="poll-modal-cancel" style="padding: 8px 16px; background: #404060; color: #e0e0e0; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">Отмена</button>
-                <button class="poll-modal-create" style="padding: 8px 24px; background: #5865f2; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">Создать</button>
-            </div>
-        `;
-
-        this._modal.appendChild(content);
+        this._modal = createModalOverlay(content, () => this.close());
         document.body.appendChild(this._modal);
 
-        const questionInput = content.querySelector('#poll-question-input');
-        const optionsContainer = content.querySelector('#poll-options-container');
-        const addOptionBtn = content.querySelector('#poll-add-option-btn');
-        const multipleCheckbox = content.querySelector('#poll-multiple-checkbox');
-        const anonymousCheckbox = content.querySelector('#poll-anonymous-checkbox');
-        const closeBtn = content.querySelector('.poll-modal-close');
-        const cancelBtn = content.querySelector('.poll-modal-cancel');
-        const createBtn = content.querySelector('.poll-modal-create');
+        fetch("/templates/poll-modal.html")
+            .then(response => response.text())
+            .then(html => {
+                content.innerHTML = html;
+                initModal();
+            });
 
-        if (preset) {
-            if (preset.question) {
-                questionInput.value = preset.question;
-            }
-            if (preset.options && Array.isArray(preset.options)) {
-                preset.options.forEach(opt => {
-                    this._addOptionInput(optionsContainer, opt);
-                });
-            }
-            if (preset.multiple) {
-                multipleCheckbox.checked = true;
-            }
-        }
+        const initModal = () => {
+            const questionInput = content.querySelector('#poll-question-input');
+            const optionsContainer = content.querySelector('#poll-options-container');
+            const addOptionBtn = content.querySelector('#poll-add-option-btn');
+            const multipleCheckbox = content.querySelector('#poll-multiple-checkbox');
+            const anonymousCheckbox = content.querySelector('#poll-anonymous-checkbox');
+            const cancelBtn = content.querySelector('.poll-modal-cancel');
+            const createBtn = content.querySelector('.poll-modal-create');
 
-        if (this._options.length === 0) {
-            this._addOptionInput(optionsContainer, '');
-            this._addOptionInput(optionsContainer, '');
-        }
+            const header = content.querySelector('.poll-modal-header');
+            if (header) {
+                const existingClose = header.querySelector('.poll-modal-close');
+                if (existingClose) existingClose.remove();
+                header.appendChild(createCloseButton(() => this.close()));
+            }
 
-        addOptionBtn.addEventListener('click', () => {
-            if (this._options.length < 10) {
+            if (preset) {
+                if (preset.question) questionInput.value = preset.question;
+                if (preset.options && Array.isArray(preset.options)) {
+                    preset.options.forEach(opt => {
+                        this._addOptionInput(optionsContainer, opt);
+                    });
+                }
+                if (preset.multiple) multipleCheckbox.checked = true;
+            }
+
+            if (this._options.length === 0) {
                 this._addOptionInput(optionsContainer, '');
-            } else {
-                UIManager.showError('Максимум 10 вариантов');
+                this._addOptionInput(optionsContainer, '');
             }
-        });
 
-        closeBtn.addEventListener('click', () => this.close());
-        cancelBtn.addEventListener('click', () => this.close());
-        this._modal.addEventListener('click', (e) => {
-            if (e.target === this._modal) this.close();
-        });
+            addOptionBtn.addEventListener('click', () => {
+                if (this._options.length < 10) {
+                    this._addOptionInput(optionsContainer, '');
+                } else {
+                    UIManager.showError('Максимум 10 вариантов');
+                }
+            });
 
-        createBtn.addEventListener('click', () => {
-            this._handleCreate(questionInput, multipleCheckbox, anonymousCheckbox);
-        });
+            cancelBtn.addEventListener('click', () => this.close());
 
-        questionInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
+            createBtn.addEventListener('click', () => {
                 this._handleCreate(questionInput, multipleCheckbox, anonymousCheckbox);
-            }
-        });
+            });
 
-        questionInput.focus();
+            questionInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this._handleCreate(questionInput, multipleCheckbox, anonymousCheckbox);
+                }
+            });
+
+            questionInput.focus();
+        };
     }
 
     static _addOptionInput(container, value = '') {

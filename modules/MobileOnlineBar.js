@@ -1,6 +1,5 @@
-// modules/MobileOnlineBar.js
-import AvatarManager from './AvatarManager.js';
-import VolumeBoostManager from './VolumeBoostManager.js';
+import AvatarManager from '../dist/shared/AvatarManager.js';
+import VolumeBoostManager from '../dist/shared/VolumeBoostManager.js';
 
 class MobileOnlineBar {
     static _container = null;
@@ -31,12 +30,43 @@ class MobileOnlineBar {
         this._container.style.top = '140px';
         
         this._container.addEventListener('wheel', (e) => {
-            e.stopPropagation();
-            this._container.scrollTop += e.deltaY;
+            const icon = e.target.closest('.mobile-online-icon');
+            if (icon) {
+                e.preventDefault();
+                const userId = icon.dataset.userId;
+                if (userId) {
+                    const delta = e.deltaY > 0 ? -0.05 : 0.05;
+                    let currentGain = VolumeBoostManager.getGain(userId);
+                    if (currentGain === null) currentGain = 1.0;
+                    const newGain = Math.max(0, Math.min(4.0, currentGain + delta));
+                    VolumeBoostManager.setGain(userId, newGain);
+                    this._updateVolumeFill(icon, newGain);
+                    this._syncMemberVolumeSlider(userId, newGain);
+                }
+            }
         }, { passive: false });
         
         document.body.appendChild(this._container);
     }
+
+static _updateVolumeFill(icon, gain) {
+    const percentage = Math.round(gain * 100);
+    const fillPercent = Math.min(100, (gain / 4.0) * 100);
+    
+    let fillBar = icon.querySelector('.volume-fill-bar');
+    if (!fillBar) {
+        fillBar = document.createElement('div');
+        fillBar.className = 'volume-fill-bar';
+        fillBar.style.cssText = 'position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);pointer-events:none;transition:height 0.15s ease;border-radius:0 0 50% 50%;';
+        icon.appendChild(fillBar);
+    }
+    fillBar.style.height = `${fillPercent}%`;
+    
+    if (!icon.dataset.originalTitle) {
+        icon.dataset.originalTitle = icon.title || '';
+    }
+    icon.title = `${icon.dataset.originalTitle} — 🔊 ${percentage}%`;
+}
 
     static _bindSidebarObserver() {
         const sidebar = document.querySelector('.sidebar');
@@ -153,11 +183,14 @@ class MobileOnlineBar {
                     icon.dataset.userId = userId;
                     icon.title = member.username;
                     this._container.appendChild(icon);
-                    
                     this._fillIconContent(icon, member);
-                    this._setupVolumeWheel(icon, userId); // 🔥 НОВОЕ: добавляем обработчик колеса
+                    
+                    const savedGain = VolumeBoostManager.getGain(userId);
+                    if (savedGain !== null && savedGain !== 1.0) {
+                        this._updateVolumeFill(icon, savedGain);
+                    }
                 } else {
-                    if (icon.title !== member.username) {
+                    if (icon.title !== member.username && !icon.dataset.originalTitle) {
                         icon.title = member.username;
                     }
                     
@@ -174,11 +207,6 @@ class MobileOnlineBar {
                             icon.textContent = expectedText;
                         }
                     }
-                    
-                    // 🔥 НОВОЕ: убеждаемся что обработчик колеса установлен
-                    if (!icon._hasVolumeWheel) {
-                        this._setupVolumeWheel(icon, userId);
-                    }
                 }
             }
             
@@ -189,98 +217,6 @@ class MobileOnlineBar {
         }
     }
 
-    // 🔥 НОВЫЙ МЕТОД: обработка колеса мыши для регулировки громкости
-    static _setupVolumeWheel(icon, userId) {
-        if (icon._hasVolumeWheel) return;
-        
-        icon.addEventListener('wheel', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            
-            // Определяем направление: вверх = увеличение, вниз = уменьшение
-            const delta = e.deltaY > 0 ? -0.05 : 0.05;
-            
-            // Получаем текущую громкость или начинаем с 1.0 (100%)
-            let currentGain = VolumeBoostManager.getGain(userId);
-            if (currentGain === null) {
-                currentGain = 1.0;
-            }
-            
-            // Вычисляем новое значение в пределах от 0 до 4.0 (0-400%)
-            let newGain = Math.max(0, Math.min(4.0, currentGain + delta));
-            
-            // Устанавливаем новую громкость
-            VolumeBoostManager.setGain(userId, newGain);
-            
-            // Показываем всплывающую подсказку с текущим уровнем
-            this._showVolumeTooltip(icon, newGain);
-            
-            // Синхронизируем с бегунком в панели участников
-            this._syncMemberVolumeSlider(userId, newGain);
-        }, { passive: false });
-        
-        icon._hasVolumeWheel = true;
-    }
-
-    // 🔥 НОВЫЙ МЕТОД: показ всплывающей подсказки с уровнем громкости
-    static _showVolumeTooltip(icon, gain) {
-        // Удаляем старую подсказку если есть
-        const existingTooltip = icon.querySelector('.volume-tooltip');
-        if (existingTooltip) {
-            existingTooltip.remove();
-        }
-        
-        const percentage = Math.round(gain * 100);
-        
-        const tooltip = document.createElement('div');
-        tooltip.className = 'volume-tooltip';
-        tooltip.textContent = `🔊 ${percentage}%`;
-        tooltip.style.cssText = `
-            position: absolute;
-            left: 50%;
-            top: -30px;
-            transform: translateX(-50%);
-            background: rgba(26, 26, 46, 0.95);
-            color: #e0e0e0;
-            padding: 4px 8px;
-            border-radius: 12px;
-            font-size: 11px;
-            font-weight: 600;
-            white-space: nowrap;
-            border: 1px solid #5865f2;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-            z-index: 1002;
-            pointer-events: none;
-            animation: volumeTooltipFade 1.5s ease forwards;
-        `;
-        
-        // Добавляем анимацию если её нет
-        if (!document.getElementById('volume-tooltip-style')) {
-            const style = document.createElement('style');
-            style.id = 'volume-tooltip-style';
-            style.textContent = `
-                @keyframes volumeTooltipFade {
-                    0% { opacity: 0; transform: translateX(-50%) translateY(5px); }
-                    15% { opacity: 1; transform: translateX(-50%) translateY(0); }
-                    85% { opacity: 1; transform: translateX(-50%) translateY(0); }
-                    100% { opacity: 0; transform: translateX(-50%) translateY(-5px); }
-                }
-            `;
-            document.head.appendChild(style);
-        }
-        
-        icon.style.position = 'relative';
-        icon.appendChild(tooltip);
-        
-        // Автоматически удаляем через 1.5 секунды
-        setTimeout(() => {
-            if (tooltip.parentNode) {
-                tooltip.remove();
-            }
-        }, 1500);
-    }
-
-    // 🔥 НОВЫЙ МЕТОД: синхронизация с бегунком в панели участников
     static _syncMemberVolumeSlider(userId, gain) {
         const membersList = document.querySelector('.members-list');
         if (!membersList) return;

@@ -102,6 +102,17 @@ min-width: 44px;
 }
 }
 </style>
+<style>
+    @font-face {
+        font-family: 'Noto Color Emoji';
+        src: url('/fonts/NotoColorEmoji.ttf') format('truetype');
+        font-display: swap;
+        unicode-range: U+1F000-1FFFF, U+2600-27BF, U+FE00-FE0F;
+    }
+    * {
+        font-family: inherit, 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji';
+    }
+</style>
 </head>
 <body>
 <div class="app">
@@ -135,6 +146,9 @@ min-width: 44px;
 <div class="current-room-title">Выберите гнездо</div>
 <div class="header-controls">
 <button class="notes-btn" id="notesToggle" title="Заметки">📝</button>
+            <button class="split-toggle-btn" id="splitToggleBtn" title="Разделить чат">🔲</button>
+            <button class="poll-create-btn" id="pollCreateBtn" title="Создать опрос">📊</button>
+            <button class="diag-toggle-btn" title="Диагностика комнаты">📊</button>
 <button class="mic-toggle-btn connected">🎤</button>
 <button class="settings-btn">⚙</button>
 <button class="toggle-members-btn">👥</button>

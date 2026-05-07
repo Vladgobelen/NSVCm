@@ -1,7 +1,8 @@
 import UIManager from './UIManager.js';
 import SecondaryChatManager from './SecondaryChatManager.js';
-import SoundManager from './SoundManager.js';
+import SoundManager from '../dist/shared/SoundManager.js';
 import MessageRenderer from './MessageRenderer.js';
+import { formatDateTime } from "../dist/shared/formatTime.js";
 
 class ChatSocketHandler {
   constructor(client) {
@@ -88,7 +89,7 @@ handleMessageEdited(data) {
                     const badge = document.createElement('span');
                     badge.className = 'message-edited-badge';
                     badge.innerHTML = '✏️';
-                    badge.title = editedAt ? `Отредактировано: ${new Date(editedAt).toLocaleString('ru-RU')}` : 'Отредактировано';
+		    badge.title = editedAt ? `Отредактировано: ${formatDateTime(editedAt)}` : 'Отредактировано';
                     // Вставляем перед кнопками
                     const editBtn = header.querySelector('.message-edit-btn');
                     if (editBtn) {
@@ -97,7 +98,7 @@ handleMessageEdited(data) {
                         header.appendChild(badge);
                     }
                 } else {
-                    existingBadge.title = editedAt ? `Отредактировано: ${new Date(editedAt).toLocaleString('ru-RU')}` : 'Отредактировано';
+		    existingBadge.title = editedAt ? `Отредактировано: ${formatDateTime(editedAt)}` : 'Отредактировано';
                 }
             }
             

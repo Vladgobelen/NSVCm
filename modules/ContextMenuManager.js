@@ -1,58 +1,19 @@
 'use strict';
 
+import { escapeHtml } from "../dist/shared/escapeHtml.js";
+import { createContextMenu } from "../dist/shared/ContextMenuBuilder.js";
 import ServerManager from './ServerManager.js';
 import UIManager from './UIManager.js';
 import ForwardModal from './ForwardModal.js';
 
 class ContextMenuManager {
     static contextMenu = null;
-    static currentReactionMessageId = null;
 
     static hideContextMenu() {
         if (this.contextMenu) {
             this.contextMenu.remove();
             this.contextMenu = null;
         }
-    }
-
-    static _createBaseMenu(x, y, minWidth = '200px') {
-        if (this.contextMenu) this.hideContextMenu();
-        const menu = document.createElement('div');
-        menu.className = 'message-context-menu';
-        menu.style.cssText = `position: fixed; background: #2d2d44; border: 1px solid #404060; border-radius: 8px; padding: 8px 0; min-width: ${minWidth}; z-index: 10000; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);`;
-        document.body.appendChild(menu);
-        this.contextMenu = menu;
-        const rect = menu.getBoundingClientRect();
-        let posX = x;
-        let posY = y;
-        if (posX + rect.width > window.innerWidth) posX = window.innerWidth - rect.width - 10;
-        if (posY + rect.height > window.innerHeight) posY = window.innerHeight - rect.height - 10;
-        menu.style.left = `${posX}px`;
-        menu.style.top = `${posY}px`;
-        const closeHandler = () => {
-            this.hideContextMenu();
-            document.removeEventListener('click', closeHandler);
-        };
-        setTimeout(() => document.addEventListener('click', closeHandler), 100);
-        return menu;
-    }
-
-    static _addMenuItem(menu, html, onClick, isDelete = false) {
-        const item = document.createElement('div');
-        item.className = 'context-menu-item';
-        item.innerHTML = html;
-        item.style.cssText = `padding: 10px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #e0e0e0; transition: background 0.2s; ${isDelete ? 'color: #ed4245;' : ''}`;
-        item.addEventListener('mouseenter', () => item.style.background = isDelete ? 'rgba(237, 66, 69, 0.1)' : '#3d3d5c');
-        item.addEventListener('mouseleave', () => item.style.background = 'transparent');
-        item.addEventListener('click', () => { onClick(); this.hideContextMenu(); });
-        menu.appendChild(item);
-        return item;
-    }
-
-    static _addSeparator(menu) {
-        const sep = document.createElement('div');
-        sep.style.cssText = 'height: 1px; background: #404060; margin: 4px 0;';
-        menu.appendChild(sep);
     }
 
     static _extractCoordinates(event) {
@@ -108,12 +69,9 @@ class ContextMenuManager {
         event.preventDefault();
         event.stopPropagation();
         const { x, y } = this._extractCoordinates(event);
-        const menu = this._createBaseMenu(x, y);
         const client = window.voiceClient;
-        if (!client) {
-            this.hideContextMenu();
-            return;
-        }
+        if (!client) return;
+
         const isOwnMessage = client.userId === userId;
         const canDelete = this._canDeleteMessage(client, messageId, userId, messageObj);
         const canPin = this._canManagePinnedMessages(client, client.currentRoom);
@@ -124,26 +82,39 @@ class ContextMenuManager {
         const isPollClosed = isPoll && messageObj.poll && messageObj.poll.settings && messageObj.poll.settings.closed;
         const isForwardedPoll = isPoll && messageObj && messageObj.pollRef;
 
-        this._addMenuItem(menu, '↩️ Ответить', () => {
+        const items = [];
+
+        items.push({ label: 'Ответить', icon: '↩️', onClick: () => {
             if (messageObj) UIManager.setReplyTarget(messageObj);
-        });
-        this._addMenuItem(menu, '📤 Переслать', () => {
+        }});
+
+        items.push({ label: 'Переслать', icon: '📤', onClick: () => {
             if (messageObj && messageId) {
                 ForwardModal.open(client, messageId, client.currentRoom, messageObj);
             }
-        });
-        this._addMenuItem(menu, 'ℹ️ Информация', () => {
+        }});
+
+        items.push({ label: 'Информация', icon: 'ℹ️', onClick: () => {
             UIManager.showMessageInfo(messageId, userId, username, timestamp);
-        });
+        }});
+
         if (userId && userId !== client.userId && !isForwardedPoll) {
-            this._addMenuItem(menu, '💬 Личка', () => {
-                ServerManager.createDirectRoom(client, userId, username);
-            });
+            items.push({ label: 'Личка', icon: '💬', onClick: () => {
+                const existing = client.servers.find(s => s.id?.startsWith("user_") && s.id?.includes(userId));
+                if (existing) {
+                    client.currentServerId = existing.id;
+                    client.currentServer = existing;
+                    localStorage.setItem("lastServerId", existing.id);
+                    client.joinRoom(existing.id);
+                } else {
+                    ServerManager.createDirectRoom(client, userId, username);
+                }
+            }});
         }
+
         if (isPoll) {
-            this._addSeparator(menu);
             if (!isPollClosed && hasVoted) {
-                this._addMenuItem(menu, '📊 Показать результаты', () => {
+                items.push({ label: 'Показать результаты', icon: '📊', onClick: () => {
                     const msgEl = document.querySelector(`.message[data-message-id="${messageId}"]`);
                     if (msgEl) {
                         const container = msgEl.querySelector('.poll-container');
@@ -151,40 +122,41 @@ class ContextMenuManager {
                             window.PollWidget.showResults(container, messageObj);
                         }
                     }
-                });
+                }});
             }
             if (canManagePoll && !isPollClosed) {
-                this._addMenuItem(menu, '🔒 Закрыть опрос', () => {
+                items.push({ label: 'Закрыть опрос', icon: '🔒', onClick: () => {
                     if (client && typeof client.closePoll === 'function') {
                         client.closePoll(client.currentRoom, messageId);
                     }
-                });
+                }});
             }
         }
-        if (canPin || canDelete) {
-            this._addSeparator(menu);
-        }
+
         if (canPin) {
             if (isPinned) {
-                this._addMenuItem(menu, '📌 Открепить', () => {
+                items.push({ label: 'Открепить', icon: '📌', onClick: () => {
                     if (client && typeof client.unpinMessage === 'function') {
                         client.unpinMessage(client.currentRoom, messageId);
                     }
-                });
+                }});
             } else {
-                this._addMenuItem(menu, '📌 Закрепить', () => {
+                items.push({ label: 'Закрепить', icon: '📌', onClick: () => {
                     if (client && typeof client.pinMessage === 'function') {
                         client.pinMessage(client.currentRoom, messageId);
                     }
-                });
+                }});
             }
         }
+
         if (canDelete) {
-            const deleteText = isForwardedPoll ? '🗑️ Удалить пересланный опрос' : '🗑️ Удалить';
-            this._addMenuItem(menu, deleteText, () => {
+            const deleteLabel = isForwardedPoll ? 'Удалить пересланный опрос' : 'Удалить';
+            items.push({ label: deleteLabel, icon: '🗑️', onClick: () => {
                 UIManager.confirmDeleteMessage(messageId);
-            }, true);
+            }, isDanger: true });
         }
+
+        createContextMenu(x, y, items);
     }
 
     static showMemberContextMenu(event, userId, username) {
@@ -193,70 +165,87 @@ class ContextMenuManager {
         const client = window.voiceClient;
         if (!userId || (client && userId === client.userId)) return;
         const { x, y } = this._extractCoordinates(event);
-        const menu = this._createBaseMenu(x, y, '150px');
-        this._addMenuItem(menu, '💬 Личка', () => {
-            ServerManager.createDirectRoom(client, userId, username);
-        });
-        this._addMenuItem(menu, '📝 Заметки', () => {
-            if (client && typeof client.openUserPublicNotes === 'function') {
-                client.openUserPublicNotes(userId);
-            }
-        });
+
+        const items = [
+            { label: 'Личка', icon: '💬', onClick: () => {
+                const existing = client.servers.find(s => s.id?.startsWith("user_") && s.id?.includes(userId));
+                if (existing) {
+                    client.currentServerId = existing.id;
+                    client.currentServer = existing;
+                    localStorage.setItem("lastServerId", existing.id);
+                    client.joinRoom(existing.id);
+                } else {
+                    ServerManager.createDirectRoom(client, userId, username);
+                }
+            }},
+            { label: 'Заметки', icon: '📝', onClick: () => {
+                if (client && typeof client.openUserPublicNotes === 'function') {
+                    client.openUserPublicNotes(userId);
+                }
+            }}
+        ];
+
+        createContextMenu(x, y, items);
     }
 
     static showPinnedMessageContextMenu(event, messageId, messageObj) {
         event.preventDefault();
         event.stopPropagation();
         const { x, y } = this._extractCoordinates(event);
-        const menu = this._createBaseMenu(x, y);
         const client = window.voiceClient;
-        if (!client) {
-            this.hideContextMenu();
-            return;
-        }
+        if (!client) return;
+
         const canPin = this._canManagePinnedMessages(client, client.currentRoom);
-        this._addMenuItem(menu, '↩️ Перейти к сообщению', () => {
-            UIManager.scrollToMessage(messageId, null, true);
-        });
+
+        const items = [
+            { label: 'Перейти к сообщению', icon: '↩️', onClick: () => {
+                UIManager.scrollToMessage(messageId, null, true);
+            }}
+        ];
+
         if (messageObj && messageObj.forwardedFrom) {
-            this._addMenuItem(menu, '🔗 Перейти к источнику', () => {
+            items.push({ label: 'Перейти к источнику', icon: '🔗', onClick: () => {
                 if (client && typeof client.jumpToForwardSource === 'function') {
                     client.jumpToForwardSource(messageObj.forwardedFrom);
                 }
-            });
+            }});
         }
+
         if (canPin) {
-            this._addSeparator(menu);
-            this._addMenuItem(menu, '📌 Открепить', () => {
+            items.push({ label: 'Открепить', icon: '📌', onClick: () => {
                 if (client && typeof client.unpinMessage === 'function') {
                     client.unpinMessage(client.currentRoom, messageId);
                 }
-            });
+            }});
         }
+
+        createContextMenu(x, y, items);
     }
 
     static showForwardedMessageContextMenu(event, messageId, messageObj) {
         event.preventDefault();
         event.stopPropagation();
         const { x, y } = this._extractCoordinates(event);
-        const menu = this._createBaseMenu(x, y);
         const client = window.voiceClient;
-        if (!client) {
-            this.hideContextMenu();
-            return;
-        }
+        if (!client) return;
+
         const canDelete = this._canDeleteMessage(client, messageId, messageObj?.userId, messageObj);
-        this._addMenuItem(menu, '🔗 Перейти к источнику', () => {
-            if (client && typeof client.jumpToForwardSource === 'function' && messageObj.forwardedFrom) {
-                client.jumpToForwardSource(messageObj.forwardedFrom);
-            }
-        });
+
+        const items = [
+            { label: 'Перейти к источнику', icon: '🔗', onClick: () => {
+                if (client && typeof client.jumpToForwardSource === 'function' && messageObj.forwardedFrom) {
+                    client.jumpToForwardSource(messageObj.forwardedFrom);
+                }
+            }}
+        ];
+
         if (canDelete) {
-            this._addSeparator(menu);
-            this._addMenuItem(menu, '🗑️ Удалить пересланное сообщение', () => {
+            items.push({ label: 'Удалить пересланное сообщение', icon: '🗑️', onClick: () => {
                 UIManager.confirmDeleteMessage(messageId);
-            }, true);
+            }, isDanger: true });
         }
+
+        createContextMenu(x, y, items);
     }
 }
 

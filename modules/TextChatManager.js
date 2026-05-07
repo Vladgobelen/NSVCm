@@ -1,3 +1,4 @@
+import { isPrivateRoom } from "../dist/shared/roomUtils.js";
 // modules/TextChatManager.js
 import MessageRenderer from './MessageRenderer.js';
 import UIManager from './UIManager.js';
@@ -370,7 +371,7 @@ const el = MessageRenderer._createMessageElement(
 
     static async markMessagesAsRead(client, roomId, lastViewedMessageId) {
         if (!roomId || !client?.token) return;
-        const isPrivate = roomId.startsWith('user_') && roomId.includes('_user_');
+        const isPrivate = isPrivateRoom(roomId);
         const serverId = isPrivate ? roomId : (client.currentServerId || roomId);
         try {
             const response = await fetch(`${client.API_SERVER_URL}/api/messages/${roomId}/mark-read`, {
@@ -388,7 +389,7 @@ const el = MessageRenderer._createMessageElement(
 
     static async markMessagesAboveAsRead(client, roomId, messageId) {
         if (!roomId || !messageId || !client?.token) return false;
-        const isPrivate = roomId.startsWith('user_') && roomId.includes('_user_');
+        const isPrivate = isPrivateRoom(roomId);
         const serverId = isPrivate ? roomId : (client.currentServerId || roomId);
         try {
             const response = await fetch(`${client.API_SERVER_URL}/api/messages/${roomId}/mark-above-read`, {
@@ -414,7 +415,7 @@ const el = MessageRenderer._createMessageElement(
 
     static async markAllMessagesAsRead(client, roomId) {
         if (!roomId || !client?.token) return false;
-        const isPrivate = roomId.startsWith('user_') && roomId.includes('_user_');
+        const isPrivate = isPrivateRoom(roomId);
         const serverId = isPrivate ? roomId : (client.currentServerId || roomId);
         try {
             const response = await fetch(`${client.API_SERVER_URL}/api/messages/${roomId}/mark-all-read`, {

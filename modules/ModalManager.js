@@ -1,5 +1,5 @@
-import SoundManager from './SoundManager.js';
-import SettingsManager from './SettingsManager.js';
+import SoundManager from '../dist/shared/SoundManager.js';
+import SettingsManager from '../dist/shared/SettingsManager.js';
 
 class ModalManager {
     static _activeErrors = new Map();

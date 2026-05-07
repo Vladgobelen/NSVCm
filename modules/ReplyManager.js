@@ -1,4 +1,5 @@
-import MessageRenderer from './MessageRenderer.js';
+import { escapeHtml } from "../dist/shared/escapeHtml.js";
+import { formatDateTime } from "../dist/shared/formatTime.js";
 
 class ReplyManager {
     static replyTarget = null;
@@ -21,23 +22,9 @@ class ReplyManager {
         const bar = document.createElement('div');
         bar.className = 'reply-preview-bar';
         bar.innerHTML = `
-            <span class="reply-target-user">${MessageRenderer.escapeHtml(msg.username)}</span>
-            <span class="reply-target-text">${MessageRenderer.escapeHtml(msg.text?.substring(0, 60) || '')}...</span>
+            <span class="reply-target-user">${escapeHtml(msg.username)}</span>
+            <span class="reply-target-text">${escapeHtml(msg.text?.substring(0, 60) || '')}...</span>
             <button class="reply-close-btn">✕</button>
-        `;
-        bar.style.cssText = `
-            background: #3a3a5c;
-            border-top: 2px solid #5865f2;
-            padding: 8px 12px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            font-size: 13px;
-            color: #e0e0e0;
-            border-radius: 8px 8px 0 0;
-            margin-bottom: -8px;
-            position: relative;
-            z-index: 10;
         `;
 
         const inputArea = document.querySelector('.input-area') || document.querySelector('.secondary-input-area');
@@ -83,14 +70,14 @@ class ReplyManager {
         content.style.cssText = 'background: #2d2d44; border-radius: 12px; padding: 24px; max-width: 500px; width: 90%; border: 1px solid #404060;';
 
         const textBlock = message.text 
-            ? `<div style="margin-top: 12px; background: #1a1a2e; padding: 10px; border-radius: 6px; white-space: pre-wrap;">${MessageRenderer.escapeHtml(message.text)}</div>` 
+            ? `<div style="margin-top: 12px; background: #1a1a2e; padding: 10px; border-radius: 6px; white-space: pre-wrap;">${escapeHtml(message.text)}</div>` 
             : '';
 
         content.innerHTML = `
             <h3 style="margin: 0 0 20px 0; color: #e0e0e0;">↩️ Исходное сообщение</h3>
             <div style="color: #b0b0c0; line-height: 1.8;">
-                <div style="margin-top: 12px;"><strong>Автор:</strong> ${MessageRenderer.escapeHtml(message.username)}</div>
-                <div style="margin-top: 8px;"><strong>Время:</strong> ${new Date(message.timestamp).toLocaleString('ru-RU')}</div>
+                <div style="margin-top: 12px;"><strong>Автор:</strong> ${escapeHtml(message.username)}</div>
+                <div style="margin-top: 8px;"><strong>Время:</strong> ${formatDateTime(message.timestamp)}</div>
                 ${textBlock}
             </div>
             <button class="reply-modal-close" style="margin-top: 20px; padding: 10px 24px; background: #5865f2; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">Закрыть</button>

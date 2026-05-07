@@ -1,15 +1,17 @@
+import { isPrivateRoom, isPrivateServer } from "../dist/shared/roomUtils.js";
+import { formatDate } from "../dist/shared/formatTime.js";
 import UIManager from './UIManager.js';
 import MediaManager from './MediaManager.js';
 import TextChatManager from './TextChatManager.js';
 import MembersManager from './MembersManager.js';
-import InviteManager from './InviteManager.js';
+import InviteManager from '../dist/shared/InviteManager.js';
 import ServerManager from './ServerManager.js';
 
 class RoomManager {
   static async loadRoomsForServer(client, serverId) {
     try {
       const server = client.servers.find(s => s.id === serverId);
-      const isPrivateRoom = ServerManager.isPrivateServer(server);
+      const isPrivateRoom = isPrivateServer(server);
 
       if (isPrivateRoom) {
         client.currentServerId = serverId;
@@ -54,6 +56,7 @@ class RoomManager {
       client.rooms = data.rooms;
       await this.cacheRoomUsernames(client, data.rooms);
       this.renderRooms(client, data.rooms);
+      UIManager.updateRoomBadges(client.currentServerId);
     } catch (error) {
       UIManager.updateStatus('Ошибка загрузки гнёзд', 'error');
       UIManager.showError('Не удалось загрузить гнёзда: ' + error.message);
@@ -63,7 +66,7 @@ class RoomManager {
   static async cacheRoomUsernames(client, rooms) {
     const userIdsToCache = new Set();
     for (const room of rooms) {
-      if (this.isPrivateRoom(room.id)) {
+      if (isPrivateRoom(room.id)) {
         const participants = this.getPrivateRoomParticipants(room.id);
         for (const userId of participants) {
           if (userId && userId !== client.userId && !UIManager.usernameCache.has(userId)) {
@@ -199,7 +202,7 @@ class RoomManager {
             <input type="text" id="inviteLinkInput" value="${inviteLink}" readonly>
             <button onclick="navigator.clipboard.writeText('${inviteLink}').then(() => alert('Ссылка скопирована!'))">Копировать</button>
           </div>
-          <p>Ссылка действительна до: ${new Date(invite.expiresAt).toLocaleDateString()}</p>
+            <p>Ссылка действительна до: ${formatDate(invite.expiresAt)}</p>
         `, () => {
           UIManager.closeModal();
         });
@@ -268,14 +271,9 @@ class RoomManager {
     }
   }
 
-  static isPrivateRoom(roomId) {
-    if (!roomId) return false;
-    if (roomId.includes('bot_system')) return true;
-    return roomId.startsWith('user_') && roomId.includes('_user_');
-  }
 
   static async getPrivateRoomDisplayName(roomId, currentUserId, server) {
-    if (!this.isPrivateRoom(roomId)) return null;
+    if (!isPrivateRoom(roomId)) return null;
     let otherUserId = null;
 
     if (server?.participantIds && Array.isArray(server.participantIds)) {
@@ -304,7 +302,7 @@ class RoomManager {
   }
 
   static getPrivateRoomParticipants(roomId) {
-    if (!this.isPrivateRoom(roomId)) return [null, null];
+    if (!isPrivateRoom(roomId)) return [null, null];
     const parts = roomId.split('_user_');
     if (parts.length === 2) {
       const user1 = parts[0];
@@ -315,7 +313,7 @@ class RoomManager {
   }
 
   static async checkPrivateRoomAccess(client, roomId) {
-    if (!this.isPrivateRoom(roomId)) return true;
+    if (!isPrivateRoom(roomId)) return true;
     const [user1, user2] = this.getPrivateRoomParticipants(roomId);
     return client.userId === user1 || client.userId === user2;
   }
@@ -372,16 +370,18 @@ class RoomManager {
   static async renderRooms(client, rooms) {
     const roomsList = document.querySelector('.rooms-list');
     if (!roomsList) return;
+    document.querySelectorAll(".room-unread-badge").forEach(b => b.remove());
     roomsList.innerHTML = '';
 
     for (const room of rooms) {
       const roomElement = document.createElement('div');
       roomElement.className = 'room-item';
       roomElement.dataset.room = room.id;
+      roomElement.dataset.serverId = room.serverId || client.currentServerId;
 
       const isOwner = room.ownerId === client.userId;
       const isMember = client.currentServer?.members?.includes(client.userId);
-      const isPrivate = this.isPrivateRoom(room.id);
+      const isPrivate = isPrivateRoom(room.id);
       let displayName = room.name;
 
       if (isPrivate) {

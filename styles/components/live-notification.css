@@ -1,0 +1,14 @@
+#live-notification-banner {
+    position: sticky;
+    top: 0;
+    background: #2d2d44;
+    border-bottom: 1px solid #404060;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    z-index: 1000;
+    font-size: 13px;
+    color: #e0e0e0;
+}

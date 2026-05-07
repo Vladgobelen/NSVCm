@@ -1,4 +1,6 @@
-// modules/ForwardModal.js
+import { isPrivateRoom, isPrivateServer } from "../dist/shared/roomUtils.js";
+import { escapeHtml } from "../dist/shared/escapeHtml.js";
+import { createCloseButton, createModalOverlay, addOutsideClickHandler } from "../dist/shared/DomHelpers.js";
 import UIManager from './UIManager.js';
 
 class ForwardModal {
@@ -24,10 +26,6 @@ class ForwardModal {
     }
 
     static async render(client, sourceRoomId, messageObj = null) {
-        const modal = document.createElement('div');
-        modal.className = 'forward-modal-overlay';
-        modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); display: flex; justify-content: center; align-items: center; z-index: 10001;';
-
         const content = document.createElement('div');
         content.className = 'forward-modal-content';
         content.style.cssText = 'background: #2d2d44; border-radius: 12px; padding: 0; max-width: 500px; width: 90%; max-height: 70vh; border: 1px solid #404060; display: flex; flex-direction: column; overflow: hidden;';
@@ -35,7 +33,6 @@ class ForwardModal {
         content.innerHTML = `
             <div class="forward-modal-header" style="padding: 16px 20px; border-bottom: 1px solid #404060; display: flex; justify-content: space-between; align-items: center;">
                 <h3 style="margin: 0; color: #e0e0e0; font-size: 16px;">📤 Переслать сообщение</h3>
-                <button class="forward-modal-close" style="background: none; border: none; color: #888; font-size: 20px; cursor: pointer; padding: 4px 8px; border-radius: 4px;">✕</button>
             </div>
             <div class="forward-modal-search" style="padding: 12px 16px; border-bottom: 1px solid #404060;">
                 <input type="text" id="forward-search-input" placeholder="Поиск деревьев и гнёзд..." style="width: 100%; padding: 10px 12px; background: #1a1a2e; border: 1px solid #404060; color: #e0e0e0; border-radius: 6px; font-size: 14px; outline: none;">
@@ -50,28 +47,20 @@ class ForwardModal {
             </div>
         `;
 
-        modal.appendChild(content);
+        const header = content.querySelector('.forward-modal-header');
+        if (header) {
+            header.appendChild(createCloseButton(() => this.close()));
+        }
+
+        const modal = createModalOverlay(content, () => this.close());
         document.body.appendChild(modal);
         this.modal = modal;
 
-        // Закрытие по клику на оверлей
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) this.close();
-        });
-
-        // Кнопка закрытия
-        const closeBtn = content.querySelector('.forward-modal-close');
-        if (closeBtn) {
-            closeBtn.addEventListener('click', () => this.close());
-        }
-
-        // Кнопка отмены
         const cancelBtn = content.querySelector('.forward-modal-cancel');
         if (cancelBtn) {
             cancelBtn.addEventListener('click', () => this.close());
         }
 
-        // Поиск
         const searchInput = content.querySelector('#forward-search-input');
         if (searchInput) {
             searchInput.addEventListener('input', (e) => {
@@ -80,7 +69,6 @@ class ForwardModal {
             });
         }
 
-        // Загружаем данные и рендерим дерево
         await this.loadServersAndRooms(client);
         this.renderTree(client, content, sourceRoomId);
     }
@@ -88,7 +76,6 @@ class ForwardModal {
     static async loadServersAndRooms(client) {
         if (!client) return;
 
-        // Сохраняем уже загруженные комнаты для каждого сервера
         if (!this.serversData) {
             this.serversData = new Map();
         }
@@ -96,8 +83,7 @@ class ForwardModal {
         for (const server of client.servers) {
             if (!server || !server.id) continue;
 
-            // Проверяем, нужно ли загружать комнаты
-            const isPrivate = this.isPrivateServer(server);
+            const isPrivate = isPrivateServer(server);
             const needRooms = !this.serversData.has(server.id) || 
                               (isPrivate && this.serversData.get(server.id)?.rooms === undefined);
 
@@ -105,7 +91,6 @@ class ForwardModal {
                 try {
                     let rooms = [];
                     if (isPrivate) {
-                        // Для приватных серверов комната = сам сервер
                         const displayName = this.getPrivateServerDisplayName(server, client.userId);
                         rooms = [{
                             id: server.id,
@@ -114,7 +99,6 @@ class ForwardModal {
                             type: 'private'
                         }];
                     } else {
-                        // Обычные серверы - запрашиваем комнаты
                         const response = await fetch(`${client.API_SERVER_URL}/api/servers/${server.id}/rooms`, {
                             headers: {
                                 'Authorization': `Bearer ${client.token}`,
@@ -143,12 +127,6 @@ class ForwardModal {
                 }
             }
         }
-    }
-
-    static isPrivateServer(server) {
-        return server?.type === 'private' ||
-               server?.isPrivate === true ||
-               (server?.id && server.id.startsWith('user_') && server.id.includes('_user_'));
     }
 
     static getPrivateServerDisplayName(server, currentUserId) {
@@ -193,7 +171,6 @@ class ForwardModal {
         let hasResults = false;
         let html = '<div class="forward-tree">';
 
-        // Сортируем серверы: сначала не приватные, потом приватные
         const serversList = Array.from(this.serversData.values());
         const publicServers = serversList.filter(s => !s.isPrivate);
         const privateServers = serversList.filter(s => s.isPrivate);
@@ -206,7 +183,6 @@ class ForwardModal {
                 ? `👤 ${this.getPrivateServerDisplayName(server, client.userId)}`
                 : `🌳 ${server.name}`;
             
-            // Фильтр по поиску
             const searchMatch = this.searchTerm === '' || 
                                 serverName.toLowerCase().includes(this.searchTerm) ||
                                 rooms.some(r => r.name && r.name.toLowerCase().includes(this.searchTerm));
@@ -215,7 +191,6 @@ class ForwardModal {
             
             hasResults = true;
             
-            // 🔥 ИСПРАВЛЕНИЕ: Приватные сервера всегда развернуты по умолчанию
             const isExpanded = isPrivate ? true : this.expandedServers.has(server.id);
             const expandIcon = isExpanded ? '▼' : '▶';
             
@@ -223,7 +198,7 @@ class ForwardModal {
                 <div class="forward-tree-server" data-server-id="${server.id}">
                     <div class="forward-tree-server-header" style="padding: 8px 0; font-weight: 600; color: #e0e0e0; display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; border-radius: 4px;">
                         <span class="forward-tree-expand" style="font-size: 12px; width: 16px; text-align: center;">${expandIcon}</span>
-                        <span>${this.escapeHtml(serverName)}</span>
+                        <span>${escapeHtml(serverName)}</span>
                     </div>
                     <div class="forward-tree-rooms" style="margin-left: 22px; ${isExpanded ? '' : 'display: none;'}">
             `;
@@ -232,10 +207,8 @@ class ForwardModal {
                 for (const room of rooms) {
                     if (!room || !room.id) continue;
                     
-                    // Пропускаем текущую комнату
                     if (room.id === sourceRoomId) continue;
                     
-                    // Фильтр по поиску
                     if (this.searchTerm !== '' && 
                         !room.name?.toLowerCase().includes(this.searchTerm) &&
                         !serverName.toLowerCase().includes(this.searchTerm)) {
@@ -247,7 +220,7 @@ class ForwardModal {
                     html += `
                         <div class="forward-tree-room" data-room-id="${room.id}" style="padding: 8px 0; cursor: pointer; color: #b0b0c0; display: flex; align-items: center; gap: 6px; transition: background 0.2s ease; border-radius: 4px; padding-left: 8px;">
                             <span>📋</span>
-                            <span>${this.escapeHtml(roomName)}</span>
+                            <span>${escapeHtml(roomName)}</span>
                         </div>
                     `;
                 }
@@ -271,7 +244,6 @@ class ForwardModal {
 
         container.innerHTML = html;
 
-        // Добавляем обработчики
         container.querySelectorAll('.forward-tree-server-header').forEach(header => {
             const serverDiv = header.closest('.forward-tree-server');
             const serverId = serverDiv?.dataset.serverId;
@@ -305,7 +277,6 @@ class ForwardModal {
                 this.close();
             });
             
-            // Hover эффекты
             roomEl.addEventListener('mouseenter', () => {
                 roomEl.style.background = '#3d3d5c';
                 roomEl.style.color = '#e0e0e0';
@@ -317,13 +288,6 @@ class ForwardModal {
         });
     }
 
-    static escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
     static close() {
         if (this.modal) {
             this.modal.remove();
@@ -331,7 +295,6 @@ class ForwardModal {
         }
         this.onSelectCallback = null;
         this.searchTerm = '';
-        // Не очищаем expandedServers при закрытии, чтобы сохранить состояние
     }
 }
 
